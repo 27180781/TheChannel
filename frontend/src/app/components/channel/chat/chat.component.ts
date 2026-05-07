@@ -20,7 +20,7 @@ import { ActivatedRoute } from '@angular/router';
 import { NotificationsService } from '../../../services/notifications.service';
 import { User } from '../../../models/user.model';
 import { AdminService } from '../../../services/admin.service';
-import { ChatItem, MagnetAdsService } from '../../../services/magnet-ads.service';
+import { MagnetAdsService } from '../../../services/magnet-ads.service';
 
 type LoadMsgOpt = {
   scrollDown?: boolean;
@@ -56,7 +56,7 @@ type ScrollOpt = {
 export class ChatComponent implements OnInit, OnDestroy {
   private eventSource!: EventSource;
   messages: ChatMessage[] = [];
-  items: ChatItem[] = [];
+  adSlotsAfter: Set<number> = new Set();
   scheduledMessages!: ChatMessage[];
   hideScheduledMessages: boolean = false;
   userInfo?: User;
@@ -237,22 +237,11 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
 
   private rebuildItems() {
-    const fallback = (): ChatItem[] => this.messages.map(m => ({
-      kind: 'message',
-      message: m,
-      trackKey: `m-${m.id}`,
-    }));
-
     try {
-      const built = this.magnetAds.buildItems(this.messages);
-      if (built.length === 0 && this.messages.length > 0) {
-        this.items = fallback();
-      } else {
-        this.items = built;
-      }
+      this.adSlotsAfter = this.magnetAds.computeAdSlots(this.messages);
     } catch (e) {
-      console.error('rebuildItems failed, falling back to plain messages:', e);
-      this.items = fallback();
+      console.error('computeAdSlots failed, ads will not be shown:', e);
+      this.adSlotsAfter = new Set();
     }
   }
 
