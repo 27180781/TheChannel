@@ -12,6 +12,7 @@ import {
   NbToastrService
 } from "@nebular/theme";
 import { MessageComponent } from "./message/message.component";
+import { MagnetAdSlotComponent } from "./magnet-ad-slot/magnet-ad-slot.component";
 import { firstValueFrom, interval } from 'rxjs';
 import { ChatMessage, ChatService } from '../../../services/chat.service';
 import { AuthService } from '../../../services/auth.service';
@@ -19,6 +20,7 @@ import { ActivatedRoute } from '@angular/router';
 import { NotificationsService } from '../../../services/notifications.service';
 import { User } from '../../../models/user.model';
 import { AdminService } from '../../../services/admin.service';
+import { ChatItem, MagnetAdsService } from '../../../services/magnet-ads.service';
 
 type LoadMsgOpt = {
   scrollDown?: boolean;
@@ -45,7 +47,8 @@ type ScrollOpt = {
     NbButtonModule,
     NbListModule,
     NbBadgeModule,
-    MessageComponent
+    MessageComponent,
+    MagnetAdSlotComponent
   ],
   templateUrl: './chat.component.html',
   styleUrl: './chat.component.scss'
@@ -53,6 +56,7 @@ type ScrollOpt = {
 export class ChatComponent implements OnInit, OnDestroy {
   private eventSource!: EventSource;
   messages: ChatMessage[] = [];
+  items: ChatItem[] = [];
   scheduledMessages!: ChatMessage[];
   hideScheduledMessages: boolean = false;
   userInfo?: User;
@@ -73,6 +77,7 @@ export class ChatComponent implements OnInit, OnDestroy {
     private _adminService: AdminService,
     private toastrService: NbToastrService,
     private notificationService: NotificationsService,
+    private magnetAds: MagnetAdsService,
     private zone: NgZone,
     private router: ActivatedRoute,
   ) {
@@ -131,6 +136,8 @@ export class ChatComponent implements OnInit, OnDestroy {
   ngOnInit() {
     this.chatService.getEmojisList(true);
 
+    this.magnetAds.loadSettings().then(() => this.rebuildItems());
+
     this.initializeMessageListener();
     this.keepAliveSSE();
 
@@ -172,6 +179,7 @@ export class ChatComponent implements OnInit, OnDestroy {
           if (this.hasNewMessages) break;
           this.zone.run(() => {
             this.messages.unshift(message.message);
+            this.rebuildItems();
             this.thereNewMessages = !(message.message.author === this.userInfo?.username);
             this.setLastReadMessage(message.message.id!.toString());
             if (this.userInfo?.privileges?.['writer'] && this.scheduledMessages && message.message.author === "Scheduled") {
@@ -187,11 +195,13 @@ export class ChatComponent implements OnInit, OnDestroy {
                 this.messages[index].deleted = true;
                 this.messages[index].last_edit = message.message.last_edit;
               }
+              this.rebuildItems();
             });
             break;
           };
           this.zone.run(() => {
             this.messages = this.messages.filter(m => m.id !== message.message.id);
+            this.rebuildItems();
           });
           break;
         case 'edit-message':
@@ -203,6 +213,7 @@ export class ChatComponent implements OnInit, OnDestroy {
               // TOTO: Find the closest message to attach the retrieved message to
               //  const closestIndex = this.messages.reduce
             }
+            this.rebuildItems();
           });
           break;
         case 'reaction':
@@ -221,6 +232,10 @@ export class ChatComponent implements OnInit, OnDestroy {
   ngOnDestroy() {
     this.chatService.sseClose();
     clearInterval(this.subLastHeartbeat);
+  }
+
+  private rebuildItems() {
+    this.items = this.magnetAds.buildItems(this.messages);
   }
 
   async keepAliveSSE() {
@@ -313,6 +328,7 @@ export class ChatComponent implements OnInit, OnDestroy {
           this.hasOldMessages = response.length >= this.limit;
         }
         this.offset = Math.min(...this.messages.map(m => m.id!));
+        this.rebuildItems();
         setTimeout(() => {
           opt.messageId && this.scrollToId({ messageId: opt.messageId, smooth: false, mark: opt.mark });
         }, 300);

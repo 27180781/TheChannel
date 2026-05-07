@@ -74,6 +74,7 @@ func main() {
 		r.Get("/firebase-messaging-sw.js", getFirebaseMessagingSW)
 		r.Route("/api", func(api chi.Router) {
 			api.Get("/ads/settings", getAdsSettings)
+			api.Get("/ads/magnet", getMagnetAdsSettings)
 			api.Get("/emojis/list", getEmojisList)
 			api.Get("/channel/notifications-config", getNotificationsConfig)
 			api.Post("/channel/notifications-subscribe", subscribeNotifications)

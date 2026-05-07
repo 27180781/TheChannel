@@ -6,6 +6,7 @@ import { PrivilegDashboardComponent } from "./privileg-dashboard/privileg-dashbo
 import { ChannelInfoFormComponent } from "../channel/channel-info-form/channel-info-form.component";
 import { ReportsComponent } from "./reports/reports.component";
 import { StatisticsComponent } from "./statistics/statistics.component";
+import { MagnetAdsComponent } from "./magnet-ads/magnet-ads.component";
 
 @Component({
   selector: 'admin-dashboard',
@@ -19,7 +20,8 @@ import { StatisticsComponent } from "./statistics/statistics.component";
     PrivilegDashboardComponent,
     ChannelInfoFormComponent,
     ReportsComponent,
-    StatisticsComponent
+    StatisticsComponent,
+    MagnetAdsComponent
 ],
   templateUrl: './admin-panel.component.html',
   styleUrls: ['./admin-panel.component.scss']
@@ -34,6 +36,7 @@ export class AdminPanelComponent implements OnInit {
   readonly closedReports = "closed-reports";
   readonly allReports = "all-reports";
   readonly statistics = "statistics";
+  readonly magnetAds = "magnet-ads";
 
   selectedMenuItem = this.info;
 
@@ -58,6 +61,10 @@ export class AdminPanelComponent implements OnInit {
     {
       title: "אימוג'ים",
       icon: 'smiling-face-outline',
+    },
+    {
+      title: 'שילוב פרסומות ממגנט',
+      icon: 'pricetags-outline',
     },
     {
       title: 'דיווחים',
@@ -116,6 +123,9 @@ export class AdminPanelComponent implements OnInit {
           break;
         case 'bar-chart-outline':
           this.selectedMenuItem = this.statistics;
+          break;
+        case 'pricetags-outline':
+          this.selectedMenuItem = this.magnetAds;
           break;
       }
     });

@@ -1,0 +1,19 @@
+:host {
+  display: block;
+  width: 100%;
+}
+
+.magnet-ad-host {
+  display: block;
+  width: 100%;
+  min-height: 1px;
+
+  &.collapsed {
+    display: none;
+  }
+
+  ::ng-deep .magnet-ad-content {
+    display: block;
+    width: 100%;
+  }
+}

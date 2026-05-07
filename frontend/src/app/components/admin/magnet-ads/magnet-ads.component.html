@@ -1,0 +1,116 @@
+<div class="magnet-page">
+
+  <nb-card>
+    <nb-card-header class="card-header">
+      <nb-icon icon="pricetags-outline"></nb-icon>
+      <span>שילוב פרסומות ממגנט</span>
+    </nb-card-header>
+
+    <nb-card-body>
+      <p class="intro">
+        מגנט היא פלטפורמת פרסומות חיצונית. ניתן להדביק כאן את קוד ההטמעה (HTML/JS) שקיבלתם
+        ממגנט, והוא יוצג בין ההודעות בערוץ. ההטמעה היא בצד הגולש בלבד - הפרסומת תיטען רק
+        כשהגולש גולל ומגיע אליה, וכל פעם נקראת מחדש כך שהתוכן עשוי להשתנות בכל גלילה.
+        אם אין תשובת שרת מהפרסום - לא יוצג כלום.
+      </p>
+
+      <div class="setting-block">
+        <nb-toggle [(checked)]="enabled">
+          <span class="bold">הפעלת שילוב פרסומות מגנט</span>
+        </nb-toggle>
+        <p class="hint">כיבוי יסיר לחלוטין את הצגת הפרסומות בערוץ.</p>
+      </div>
+
+      <div class="setting-block">
+        <label class="bold" for="snippet">קוד הטמעה ממגנט (HTML/JavaScript)</label>
+        <p class="hint">
+          הדביקו את קוד ההטמעה שקיבלתם ממגנט. הקוד יוטמע כפי שהוא בכל מיקום פרסומת בערוץ
+          (תגיות &lt;script&gt; ירוצו בכל הצגה).
+        </p>
+        <textarea
+          nbInput
+          fullWidth
+          id="snippet"
+          rows="8"
+          dir="ltr"
+          [(ngModel)]="snippet"
+          placeholder='<div id="magnet-ad"></div>&#10;<script src="https://magnet.example/embed.js"></script>'>
+        </textarea>
+      </div>
+    </nb-card-body>
+  </nb-card>
+
+  <nb-card>
+    <nb-card-header class="card-header">
+      <nb-icon icon="clock-outline"></nb-icon>
+      <span>תדירות הצגה</span>
+    </nb-card-header>
+
+    <nb-card-body>
+      <p class="intro">בחרו את שיטת התזמון להצגת פרסומות בין ההודעות.</p>
+
+      <div class="mode-options">
+        <nb-radio
+          name="magnet-mode"
+          value="by_messages"
+          [checked]="mode === 'by_messages'"
+          (valueChange)="mode = $any($event)">
+          הצגה לפי כמות הודעות
+        </nb-radio>
+        <nb-radio
+          name="magnet-mode"
+          value="by_time"
+          [checked]="mode === 'by_time'"
+          (valueChange)="mode = $any($event)">
+          הצגה לפי זמן
+        </nb-radio>
+      </div>
+
+      @if (mode === 'by_messages') {
+        <div class="mode-section">
+          <div class="setting-block">
+            <label class="bold" for="per-messages">הצגת פרסומת כל X הודעות</label>
+            <p class="hint">בכל X הודעות תוצג פרסומת אחת. לדוגמא: ערך 5 = פרסומת אחרי כל 5 הודעות.</p>
+            <input nbInput type="number" min="1" id="per-messages" [(ngModel)]="perMessages">
+          </div>
+
+          <div class="setting-block">
+            <label class="bold" for="min-time">החרגה: זמן מינימום בין פרסומות (שניות)</label>
+            <p class="hint">
+              גם אם עברו X הודעות, אם הפרסומת הקודמת הוצגה לפני פחות מהזמן הזה - לא תוצג שוב.
+              הזינו 0 (או השאירו ריק) כדי לבטל את ההחרגה.
+            </p>
+            <input nbInput type="number" min="0" id="min-time" [(ngModel)]="minTimeSeconds">
+          </div>
+        </div>
+      }
+
+      @if (mode === 'by_time') {
+        <div class="mode-section">
+          <div class="setting-block">
+            <label class="bold" for="per-seconds">הצגת פרסומת כל X שניות</label>
+            <p class="hint">פרסומת תוצג בערוץ אחת לכל פרק זמן. לדוגמא: ערך 60 = פרסומת בכל דקה.</p>
+            <input nbInput type="number" min="1" id="per-seconds" [(ngModel)]="perSeconds">
+          </div>
+
+          <div class="setting-block">
+            <label class="bold" for="min-msgs">החרגה: מספר מינימום הודעות חדשות מהפרסומת הקודמת</label>
+            <p class="hint">
+              גם אם עבר הזמן, אם לא נוספו לפחות X הודעות חדשות מאז הפרסומת הקודמת - לא תוצג שוב.
+              הזינו 0 (או השאירו ריק) כדי לבטל את ההחרגה.
+            </p>
+            <input nbInput type="number" min="0" id="min-msgs" [(ngModel)]="minMessagesSince">
+          </div>
+        </div>
+      }
+    </nb-card-body>
+  </nb-card>
+
+  <div class="save-bar">
+    <button nbButton status="primary" (click)="save()" [disabled]="inProgress">
+      <nb-icon icon="save-outline"></nb-icon>
+      {{ inProgress ? 'שומר...' : 'שמור הגדרות מגנט' }}
+    </button>
+  </div>
+
+</div>

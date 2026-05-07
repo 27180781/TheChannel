@@ -41,6 +41,13 @@ type SettingConfig struct {
 	MaxFileSize             int64
 	CustomTitle             string
 	ContactUs               string
+	MagnetEnabled           bool
+	MagnetSnippet           string
+	MagnetMode              string
+	MagnetPerMessages       int64
+	MagnetMinTimeSeconds    int64
+	MagnetPerSeconds        int64
+	MagnetMinMessagesSince  int64
 }
 
 type Setting struct {
@@ -186,6 +193,27 @@ func (s *Settings) ToConfig() *SettingConfig {
 
 		case "contact_us":
 			config.ContactUs = setting.GetString()
+
+		case "magnet_enabled":
+			config.MagnetEnabled = setting.GetBool()
+
+		case "magnet_snippet":
+			config.MagnetSnippet = setting.GetString()
+
+		case "magnet_mode":
+			config.MagnetMode = setting.GetString()
+
+		case "magnet_per_messages":
+			config.MagnetPerMessages = setting.GetInt()
+
+		case "magnet_min_time_seconds":
+			config.MagnetMinTimeSeconds = setting.GetInt()
+
+		case "magnet_per_seconds":
+			config.MagnetPerSeconds = setting.GetInt()
+
+		case "magnet_min_messages_since":
+			config.MagnetMinMessagesSince = setting.GetInt()
 		}
 	}
 
