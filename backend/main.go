@@ -104,6 +104,7 @@ func main() {
 				protected.Post("/privilegs-users/set", protectedWithPrivilege(Admin, setPrivilegeUsers))
 				protected.Get("/settings/get", protectedWithPrivilege(Admin, getSettings))
 				protected.Post("/settings/set", protectedWithPrivilege(Admin, setSettings))
+				protected.Get("/magnet/stats", protectedWithPrivilege(Admin, getMagnetStats))
 				protected.Get("/reports/get", protectedWithPrivilege(Admin, getReports))
 				protected.Post("/reports/set", protectedWithPrivilege(Admin, setReports))
 			})

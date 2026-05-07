@@ -15,6 +15,19 @@ import { Setting } from '../../../models/setting.model';
 
 type MagnetMode = 'by_messages' | 'by_time';
 
+interface MagnetStatsBucket {
+  today: number;
+  week: number;
+  month: number;
+}
+
+interface MagnetStatsResponse {
+  site?: { id?: string; domain?: string };
+  currency?: string;
+  clicks?: MagnetStatsBucket;
+  earnings?: MagnetStatsBucket;
+}
+
 const MAGNET_KEYS = [
   'magnet_enabled',
   'magnet_snippet',
@@ -23,6 +36,7 @@ const MAGNET_KEYS = [
   'magnet_min_time_seconds',
   'magnet_per_seconds',
   'magnet_min_messages_since',
+  'magnet_api_key',
 ] as const;
 
 @Component({
@@ -48,9 +62,15 @@ export class MagnetAdsComponent implements OnInit {
   minTimeSeconds = 0;
   perSeconds = 60;
   minMessagesSince = 0;
+  apiKey = '';
 
   otherSettings: Setting[] = [];
   inProgress = false;
+
+  stats: MagnetStatsResponse | null = null;
+  statsLoading = false;
+  statsError = '';
+  statsLoadedAt: Date | null = null;
 
   constructor(
     private adminService: AdminService,
@@ -93,6 +113,9 @@ export class MagnetAdsComponent implements OnInit {
         case 'magnet_min_messages_since':
           this.minMessagesSince = this.toInt(v, 0);
           break;
+        case 'magnet_api_key':
+          this.apiKey = v == null ? '' : String(v);
+          break;
       }
     }
   }
@@ -129,9 +152,58 @@ export class MagnetAdsComponent implements OnInit {
       if (this.minMessagesSince > 0) out.push({ key: 'magnet_min_messages_since', value: String(this.minMessagesSince) as any });
     }
 
+    if (this.apiKey?.trim()) out.push({ key: 'magnet_api_key', value: this.apiKey.trim() as any });
+
     this.adminService.setSettings(out)
       .then(() => this.toast.success('', 'הגדרות מגנט נשמרו בהצלחה'))
       .catch(() => this.toast.danger('', 'שגיאה בשמירת ההגדרות'))
       .finally(() => this.inProgress = false);
+  }
+
+  async loadStats() {
+    this.statsLoading = true;
+    this.statsError = '';
+
+    try {
+      const res = await fetch('/api/admin/magnet/stats', { credentials: 'include' });
+      const text = await res.text();
+      let data: any = null;
+      try { data = text ? JSON.parse(text) : null; } catch {}
+
+      if (!res.ok) {
+        if (res.status === 400) {
+          this.statsError = data?.message || 'מפתח API לא תקין או חסר. שמרו תחילה מפתח תקין ונסו שוב.';
+        } else if (res.status === 404) {
+          this.statsError = 'האתר לא נמצא במערכת מגנט או שאינו מאושר.';
+        } else if (res.status === 401 || res.status === 403) {
+          this.statsError = 'אין הרשאה לגשת לנתוני מגנט.';
+        } else {
+          this.statsError = data?.message || `שגיאה בקבלת נתונים (HTTP ${res.status})`;
+        }
+        this.stats = null;
+        return;
+      }
+
+      this.stats = data as MagnetStatsResponse;
+      this.statsLoadedAt = new Date();
+    } catch {
+      this.statsError = 'שגיאת רשת בקריאה לשרת מגנט';
+      this.stats = null;
+    } finally {
+      this.statsLoading = false;
+    }
+  }
+
+  formatMoney(n: number | undefined, currency: string | undefined): string {
+    if (n === null || n === undefined) return '-';
+    const code = (currency || 'ILS').toUpperCase();
+    const symbol = code === 'ILS' ? '₪' : code === 'USD' ? '$' : code === 'EUR' ? '€' : code + ' ';
+    const formatted = Number(n).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return code === 'ILS' ? `${formatted} ${symbol}` : `${symbol}${formatted}`;
+  }
+
+  formatNumber(n: number | undefined): string {
+    if (n === null || n === undefined) return '-';
+    return Number(n).toLocaleString('he-IL');
   }
 }

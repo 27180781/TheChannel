@@ -48,6 +48,7 @@ type SettingConfig struct {
 	MagnetMinTimeSeconds    int64
 	MagnetPerSeconds        int64
 	MagnetMinMessagesSince  int64
+	MagnetApiKey            string
 }
 
 type Setting struct {
@@ -214,6 +215,9 @@ func (s *Settings) ToConfig() *SettingConfig {
 
 		case "magnet_min_messages_since":
 			config.MagnetMinMessagesSince = setting.GetInt()
+
+		case "magnet_api_key":
+			config.MagnetApiKey = setting.GetString()
 		}
 	}
 
