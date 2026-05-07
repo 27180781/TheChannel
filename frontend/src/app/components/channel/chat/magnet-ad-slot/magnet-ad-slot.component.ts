@@ -6,11 +6,14 @@ import {
   OnDestroy,
   ViewChild,
 } from '@angular/core';
+import { NbUserModule } from '@nebular/theme';
 import { MagnetAdsService } from '../../../../services/magnet-ads.service';
+import { ChatService } from '../../../../services/chat.service';
 
 @Component({
   selector: 'app-magnet-ad-slot',
   standalone: true,
+  imports: [NbUserModule],
   templateUrl: './magnet-ad-slot.component.html',
   styleUrl: './magnet-ad-slot.component.scss',
 })
@@ -24,7 +27,10 @@ export class MagnetAdSlotComponent implements AfterViewInit, OnDestroy {
   private collapseTimer?: any;
   collapsed = false;
 
-  constructor(private magnet: MagnetAdsService) {}
+  constructor(
+    private magnet: MagnetAdsService,
+    public chatService: ChatService,
+  ) {}
 
   ngAfterViewInit(): void {
     if (typeof IntersectionObserver === 'undefined') {
