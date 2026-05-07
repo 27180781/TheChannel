@@ -136,7 +136,9 @@ export class ChatComponent implements OnInit, OnDestroy {
   ngOnInit() {
     this.chatService.getEmojisList(true);
 
-    this.magnetAds.loadSettings().then(() => this.rebuildItems());
+    this.magnetAds.loadSettings()
+      .catch(() => null)
+      .then(() => this.rebuildItems());
 
     this.initializeMessageListener();
     this.keepAliveSSE();
@@ -235,7 +237,23 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
 
   private rebuildItems() {
-    this.items = this.magnetAds.buildItems(this.messages);
+    const fallback = (): ChatItem[] => this.messages.map(m => ({
+      kind: 'message',
+      message: m,
+      trackKey: `m-${m.id}`,
+    }));
+
+    try {
+      const built = this.magnetAds.buildItems(this.messages);
+      if (built.length === 0 && this.messages.length > 0) {
+        this.items = fallback();
+      } else {
+        this.items = built;
+      }
+    } catch (e) {
+      console.error('rebuildItems failed, falling back to plain messages:', e);
+      this.items = fallback();
+    }
   }
 
   async keepAliveSSE() {

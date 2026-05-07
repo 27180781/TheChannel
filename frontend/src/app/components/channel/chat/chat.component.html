@@ -23,22 +23,37 @@
       }
     </nb-list-item>
 
-    @for (item of items; track item.trackKey) {
-      @if (item.kind === 'message') {
+    @if (items.length > 0) {
+      @for (item of items; track item.trackKey) {
+        @if (item.kind === 'message') {
+          <nb-list-item class="d-flex flex-column align-items-start">
+            <!-- last read indicator -->
+            @if (item.message.id === lastReadMessageId + 1) {
+            <div class="last-read-indicator">
+              <div class="line"></div>
+              <div class="last-read-indicator-text">לא נקראו</div>
+              <div class="line"></div>
+            </div>
+            }
+            <app-message class="overflow-auto" [message]="item.message" [id]="item.message.id"></app-message>
+          </nb-list-item>
+        } @else {
+          <nb-list-item class="d-flex flex-column align-items-stretch magnet-ad-item">
+            <app-magnet-ad-slot [slotKey]="item.trackKey"></app-magnet-ad-slot>
+          </nb-list-item>
+        }
+      }
+    } @else {
+      @for (message of messages; track message.id) {
         <nb-list-item class="d-flex flex-column align-items-start">
-          <!-- last read indicator -->
-          @if (item.message.id === lastReadMessageId + 1) {
+          @if (message.id === lastReadMessageId + 1) {
           <div class="last-read-indicator">
             <div class="line"></div>
             <div class="last-read-indicator-text">לא נקראו</div>
             <div class="line"></div>
           </div>
           }
-          <app-message class="overflow-auto" [message]="item.message" [id]="item.message.id"></app-message>
-        </nb-list-item>
-      } @else {
-        <nb-list-item class="d-flex flex-column align-items-stretch magnet-ad-item">
-          <app-magnet-ad-slot [slotKey]="item.trackKey"></app-magnet-ad-slot>
+          <app-message class="overflow-auto" [message]="message" [id]="message.id"></app-message>
         </nb-list-item>
       }
     }
