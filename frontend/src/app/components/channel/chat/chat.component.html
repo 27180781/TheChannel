@@ -35,11 +35,6 @@
       }
       <app-message class="overflow-auto" [message]="message" [id]="message.id"></app-message>
     </nb-list-item>
-    @if (adSlotsAfter.has(message.id!)) {
-    <nb-list-item class="d-flex flex-column align-items-stretch magnet-ad-item">
-      <app-magnet-ad-slot [slotKey]="'ad-after-' + message.id"></app-magnet-ad-slot>
-    </nb-list-item>
-    }
     }
 
     @if (messages.length === 0) {
