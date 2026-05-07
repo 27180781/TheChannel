@@ -12,6 +12,7 @@ import {
   NbToastrService
 } from "@nebular/theme";
 import { MessageComponent } from "./message/message.component";
+import { MagnetAdSlotComponent } from "./magnet-ad-slot/magnet-ad-slot.component";
 import { firstValueFrom, interval } from 'rxjs';
 import { ChatMessage, ChatService } from '../../../services/chat.service';
 import { AuthService } from '../../../services/auth.service';
@@ -46,7 +47,8 @@ type ScrollOpt = {
     NbButtonModule,
     NbListModule,
     NbBadgeModule,
-    MessageComponent
+    MessageComponent,
+    MagnetAdSlotComponent
   ],
   templateUrl: './chat.component.html',
   styleUrl: './chat.component.scss'

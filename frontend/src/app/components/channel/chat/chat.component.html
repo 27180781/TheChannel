@@ -36,7 +36,7 @@
       <app-message class="overflow-auto" [message]="message" [id]="message.id"></app-message>
       @if (adSlotsAfter.has(message.id!)) {
       <div class="magnet-ad-item">
-        <div data-magnet-placeholder>magnet ad placeholder</div>
+        <app-magnet-ad-slot [slotKey]="'ad-after-' + message.id"></app-magnet-ad-slot>
       </div>
       }
     </nb-list-item>
