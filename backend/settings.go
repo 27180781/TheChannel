@@ -49,6 +49,7 @@ type SettingConfig struct {
 	MagnetPerSeconds        int64
 	MagnetMinMessagesSince  int64
 	MagnetApiKey            string
+	AnalyticsHead           string
 }
 
 type Setting struct {
@@ -218,6 +219,9 @@ func (s *Settings) ToConfig() *SettingConfig {
 
 		case "magnet_api_key":
 			config.MagnetApiKey = setting.GetString()
+
+		case "analytics_head":
+			config.AnalyticsHead = setting.GetString()
 		}
 	}
 

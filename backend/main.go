@@ -137,6 +137,10 @@ func serveSpaFile(w http.ResponseWriter, r *http.Request) {
 		content = bytes.ReplaceAll(content, []byte("<title></title>"), []byte(settingConfig.CustomTitle))
 	}
 
+	if settingConfig.AnalyticsHead != "" {
+		content = bytes.Replace(content, []byte("</head>"), []byte(settingConfig.AnalyticsHead+"</head>"), 1)
+	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(content)
 }

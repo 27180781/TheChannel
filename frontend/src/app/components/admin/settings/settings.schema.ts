@@ -49,6 +49,21 @@ export const SETTINGS_SCHEMA: SettingsCategorySchema[] = [
     ],
   },
   {
+    id: 'analytics',
+    title: 'אנליטיקס וטראקינג',
+    icon: 'activity-outline',
+    description: 'קוד שיוטמע בתוך תגית <head> בכל עמוד באתר. מתאים לתגיות Google Analytics, Google Tag Manager, Meta Pixel וכדומה.',
+    fields: [
+      {
+        key: 'analytics_head',
+        label: 'קוד אנליטיקס להטמעה ב-<head>',
+        description: 'הדביקו כאן את כל קטע ה-HTML/JS שקיבלתם משירות האנליטיקס (כולל תגיות <script>). הקוד יוזרק כמו שהוא לתוך <head> של כל עמוד.',
+        type: 'textarea',
+        placeholder: '<!-- Google tag (gtag.js) -->\n<script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXX"></script>\n<script>\n  window.dataLayer = window.dataLayer || [];\n  function gtag(){dataLayer.push(arguments);}\n  gtag(\'js\', new Date());\n  gtag(\'config\', \'G-XXXXXXX\');\n</script>',
+      },
+    ],
+  },
+  {
     id: 'auth',
     title: 'הזדהות ואבטחה',
     icon: 'shield-outline',
