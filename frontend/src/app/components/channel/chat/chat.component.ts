@@ -19,6 +19,7 @@ import { ActivatedRoute } from '@angular/router';
 import { NotificationsService } from '../../../services/notifications.service';
 import { User } from '../../../models/user.model';
 import { AdminService } from '../../../services/admin.service';
+import { MagnetAdsService } from '../../../services/magnet-ads.service';
 
 type LoadMsgOpt = {
   scrollDown?: boolean;
@@ -53,6 +54,7 @@ type ScrollOpt = {
 export class ChatComponent implements OnInit, OnDestroy {
   private eventSource!: EventSource;
   messages: ChatMessage[] = [];
+  adSlotsAfter: Set<number> = new Set();
   scheduledMessages!: ChatMessage[];
   hideScheduledMessages: boolean = false;
   userInfo?: User;
@@ -73,6 +75,7 @@ export class ChatComponent implements OnInit, OnDestroy {
     private _adminService: AdminService,
     private toastrService: NbToastrService,
     private notificationService: NotificationsService,
+    private magnetAds: MagnetAdsService,
     private zone: NgZone,
     private router: ActivatedRoute,
   ) {
@@ -130,6 +133,10 @@ export class ChatComponent implements OnInit, OnDestroy {
 
   ngOnInit() {
     this.chatService.getEmojisList(true);
+
+    this.magnetAds.loadSettings()
+      .catch(() => null)
+      .then(() => this.rebuildItems());
 
     this.initializeMessageListener();
     this.keepAliveSSE();
@@ -223,6 +230,15 @@ export class ChatComponent implements OnInit, OnDestroy {
     clearInterval(this.subLastHeartbeat);
   }
 
+  private rebuildItems() {
+    try {
+      this.adSlotsAfter = this.magnetAds.computeAdSlots(this.messages);
+    } catch (e) {
+      console.error('computeAdSlots failed, ads will not be shown:', e);
+      this.adSlotsAfter = new Set();
+    }
+  }
+
   async keepAliveSSE() {
     clearInterval(this.subLastHeartbeat);
     this.subLastHeartbeat = interval(10000)
@@ -313,6 +329,7 @@ export class ChatComponent implements OnInit, OnDestroy {
           this.hasOldMessages = response.length >= this.limit;
         }
         this.offset = Math.min(...this.messages.map(m => m.id!));
+        this.rebuildItems();
         setTimeout(() => {
           opt.messageId && this.scrollToId({ messageId: opt.messageId, smooth: false, mark: opt.mark });
         }, 300);
