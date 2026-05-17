@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -14,9 +15,15 @@ type AdsSettings struct {
 }
 
 func getAdsSettings(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	slug := channelSlugFromCtx(r)
+	cfg := getChannelConfig(ctx, slug)
+
 	settings := AdsSettings{
-		Src:   settingConfig.AdSrc,
-		Width: settingConfig.AdWidth,
+		Src:   cfg.AdSrc,
+		Width: cfg.AdWidth,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -34,17 +41,23 @@ type MagnetAdsSettings struct {
 }
 
 func getMagnetAdsSettings(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	slug := channelSlugFromCtx(r)
+	cfg := getChannelConfig(ctx, slug)
+
 	settings := MagnetAdsSettings{
-		Enabled:              settingConfig.MagnetEnabled,
-		Mode:                 settingConfig.MagnetMode,
-		PerMessages:          settingConfig.MagnetPerMessages,
-		MinTimeSeconds:       settingConfig.MagnetMinTimeSeconds,
-		PerSeconds:           settingConfig.MagnetPerSeconds,
-		MinMessagesSinceLast: settingConfig.MagnetMinMessagesSince,
+		Enabled:              cfg.MagnetEnabled,
+		Mode:                 cfg.MagnetMode,
+		PerMessages:          cfg.MagnetPerMessages,
+		MinTimeSeconds:       cfg.MagnetMinTimeSeconds,
+		PerSeconds:           cfg.MagnetPerSeconds,
+		MinMessagesSinceLast: cfg.MagnetMinMessagesSince,
 	}
 
 	if settings.Enabled {
-		settings.Snippet = settingConfig.MagnetSnippet
+		settings.Snippet = cfg.MagnetSnippet
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -56,6 +69,7 @@ const magnetStatsURL = "https://rucltqmtefvlrjhbedqu.supabase.co/functions/v1/pu
 var magnetStatsClient = &http.Client{Timeout: 15 * time.Second}
 
 func getMagnetStats(w http.ResponseWriter, r *http.Request) {
+	// Magnet stats uses global settingConfig
 	apiKey := settingConfig.MagnetApiKey
 	if apiKey == "" {
 		http.Error(w, `{"error":"missing_api_key","message":"Magnet API key is not configured"}`, http.StatusBadRequest)

@@ -16,27 +16,6 @@ import (
 
 var rootStaticFolder = os.Getenv("ROOT_STATIC_FOLDER")
 
-func protectedWithPrivilege(Privilege Privilege, handler http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !checkPrivilege(r, Privilege) {
-			http.Error(w, "User not authorized or not privilege", http.StatusUnauthorized)
-			return
-		}
-		handler(w, r)
-	}
-}
-
-func ifRequireAuth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Check every time
-		if settingConfig.RequireAuth {
-			checkLogin(next).ServeHTTP(w, r)
-		} else {
-			next.ServeHTTP(w, r)
-		}
-	})
-}
-
 func main() {
 	gob.Register(Session{})
 	initializePrivilegeUsers()
@@ -54,64 +33,92 @@ func main() {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 
-	// Protected with api key
-	r.Post("/api/import/post", addNewPost)
-
+	// Auth routes
 	r.Get("/auth/google", getGoogleAuthValues)
 	r.Post("/auth/login", login)
 	r.Post("/auth/logout", logout)
+
+	// Global assets
 	r.Get("/assets/favicon.ico", getFavicon)
 	r.Get("/favicon.ico", getFavicon)
+	r.Get("/firebase-messaging-sw.js", getFirebaseMessagingSW)
 
+	// User info (global, requires login)
 	r.Group(func(r chi.Router) {
 		r.Use(checkLogin)
-		r.Post("/api/reactions/set-reactions", setReactions)
-		r.Post("/api/messages/report", reportMessage)
+		r.Get("/api/user-info", getUserInfo)
 	})
 
-	r.Group(func(r chi.Router) {
-		r.Use(ifRequireAuth)
-		r.Get("/firebase-messaging-sw.js", getFirebaseMessagingSW)
-		r.Route("/api", func(api chi.Router) {
-			api.Get("/ads/settings", getAdsSettings)
-			api.Get("/ads/magnet", getMagnetAdsSettings)
-			api.Get("/emojis/list", getEmojisList)
-			api.Get("/channel/notifications-config", getNotificationsConfig)
-			api.Post("/channel/notifications-subscribe", subscribeNotifications)
+	// Super admin routes
+	r.Route("/api/super-admin", func(r chi.Router) {
+		r.Use(checkLogin)
+		r.Use(requireSuperAdmin)
 
-			api.Get("/channel/info", getChannelInfo)
-			api.Get("/messages", getMessages)
-			api.Get("/events", getEvents)
-			api.Get("/files/{fileid}", serveFile)
-			api.Get("/user-info", getUserInfo)
+		r.Get("/channels", listChannels)
+		r.Post("/channels/create", createChannel)
+		r.Get("/channels/{slug}", getSuperAdminChannel)
+		r.Delete("/channels/{slug}", deleteChannel)
+		r.Put("/channels/{slug}/features", updateChannelFeatures)
+		r.Get("/channels/{slug}/users", superAdminGetChannelUsers)
+		r.Post("/channels/{slug}/users", superAdminSetChannelUsers)
+		r.Get("/users/list", getPrivilegeUsersList)
+		r.Post("/users/set", setPrivilegeUsers)
+		r.Get("/global-settings/get", getGlobalSettings)
+		r.Post("/global-settings/set", setGlobalSettings)
+		r.Get("/magnet/stats", getMagnetStats)
+		r.Post("/statistics/reset", resetStatistics)
+	})
 
-			api.Route("/admin", func(protected chi.Router) {
-				// ⚠️ WARNING: Route not check privilege use protectedWithPrivilege to check privilege.
+	// Per-channel API import (with API key, no channel middleware needed - slug from URL)
+	r.Post("/api/channel/{slug}/import/post", addNewPost)
 
-				protected.Post("/new", protectedWithPrivilege(Writer, addMessage))
-				protected.Post("/edit-message", protectedWithPrivilege(Writer, updateMessage))
-				protected.Get("/delete-message/{id}", protectedWithPrivilege(Writer, deleteMessage))
-				protected.Post("/upload", protectedWithPrivilege(Writer, uploadFile))
-				protected.Get("/scheduled-messages/get", protectedWithPrivilege(Writer, getScheduledMessages))
-				protected.Post("/scheduled-messages/update", protectedWithPrivilege(Writer, updateScheduledMessages))
+	// Per-channel routes
+	r.Route("/api/channel/{slug}", func(r chi.Router) {
+		r.Use(channelMiddleware)
+		r.Use(channelIfRequireAuth)
 
-				protected.Post("/edit-channel-info", protectedWithPrivilege(Moderator, editChannelInfo))
-				protected.Get("/statistics", protectedWithPrivilege(Moderator, getStatistics))
-				protected.Post("/set-emojis", protectedWithPrivilege(Moderator, setEmojis))
+		r.Get("/info", getChannelInfo)
+		r.Get("/messages", getMessages)
+		r.Get("/events", getEvents)
+		r.Get("/files/{fileid}", serveFile)
+		r.Get("/emojis/list", getEmojisList)
+		r.Get("/notifications-config", getNotificationsConfig)
+		r.Get("/ads/settings", getAdsSettings)
+		r.Get("/ads/magnet", getMagnetAdsSettings)
 
-				protected.Post("/statistics/reset", protectedWithPrivilege(Admin, resetStatistics))
-				protected.Get("/privilegs-users/get-list", protectedWithPrivilege(Admin, getPrivilegeUsersList))
-				protected.Post("/privilegs-users/set", protectedWithPrivilege(Admin, setPrivilegeUsers))
-				protected.Get("/settings/get", protectedWithPrivilege(Admin, getSettings))
-				protected.Post("/settings/set", protectedWithPrivilege(Admin, setSettings))
-				protected.Get("/magnet/stats", protectedWithPrivilege(Admin, getMagnetStats))
-				protected.Get("/reports/get", protectedWithPrivilege(Admin, getReports))
-				protected.Post("/reports/set", protectedWithPrivilege(Admin, setReports))
+		r.Group(func(r chi.Router) {
+			r.Use(checkLogin)
+			r.Post("/notifications-subscribe", subscribeNotifications)
+			r.Post("/reactions/set-reactions", setReactions)
+			r.Post("/messages/report", reportMessage)
+			r.Get("/user-info", getUserInfo)
+
+			r.Route("/admin", func(r chi.Router) {
+				// Writer level
+				r.Post("/new", protectedWithChannelRole(RoleWriter, addMessage))
+				r.Post("/edit-message", protectedWithChannelRole(RoleWriter, updateMessage))
+				r.Get("/delete-message/{id}", protectedWithChannelRole(RoleWriter, deleteMessage))
+				r.Post("/upload", protectedWithChannelRole(RoleWriter, uploadFile))
+				r.Get("/scheduled-messages/get", protectedWithChannelRole(RoleWriter, getScheduledMessages))
+				r.Post("/scheduled-messages/update", protectedWithChannelRole(RoleWriter, updateScheduledMessages))
+
+				// Moderator level
+				r.Post("/edit-channel-info", protectedWithChannelRole(RoleModerator, editChannelInfo))
+				r.Get("/statistics", protectedWithChannelRole(RoleModerator, getStatistics))
+				r.Post("/set-emojis", protectedWithChannelRole(RoleModerator, setEmojis))
+				r.Get("/reports/get", protectedWithChannelRole(RoleModerator, getReports))
+				r.Post("/reports/set", protectedWithChannelRole(RoleModerator, setReports))
+
+				// Owner level
+				r.Get("/settings/get", protectedWithChannelRole(RoleOwner, getSettings))
+				r.Post("/settings/set", protectedWithChannelRole(RoleOwner, setSettings))
+				r.Get("/users/get", protectedWithChannelRole(RoleOwner, getChannelUsers))
+				r.Post("/users/set", protectedWithChannelRole(RoleOwner, setChannelUsers))
 			})
 		})
 	})
 
-	if settingConfig.RootStaticFolder != "" {
+	if settingConfig != nil && settingConfig.RootStaticFolder != "" {
 		r.Handle("/assets/*", http.StripPrefix("/assets/", http.FileServer(http.Dir(settingConfig.RootStaticFolder))))
 		r.NotFound(serveSpaFile)
 	}
@@ -126,6 +133,10 @@ func main() {
 }
 
 func serveSpaFile(w http.ResponseWriter, r *http.Request) {
+	if settingConfig == nil || settingConfig.RootStaticFolder == "" {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
 	htmlPath := filepath.Join(settingConfig.RootStaticFolder, "index.html")
 	content, err := os.ReadFile(htmlPath)
 	if err != nil {

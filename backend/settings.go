@@ -57,6 +57,7 @@ type Setting struct {
 	Value any    `json:"value"`
 }
 
+// settingConfig is the global config (FCM/VAPID/global notifications)
 var settingConfig *SettingConfig
 
 type Settings []Setting
@@ -65,7 +66,7 @@ func init() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	s, err := dbGetSettings(ctx)
+	s, err := dbGetGlobalSettings(ctx)
 	if err != nil {
 		panic("Failed to load settings from database: " + err.Error())
 	}
@@ -243,9 +244,21 @@ func (s *Setting) GetInt() int64 {
 	return i
 }
 
+// getChannelConfig loads per-channel settings from DB and returns a SettingConfig
+func getChannelConfig(ctx context.Context, slug string) *SettingConfig {
+	s, err := dbGetSettings(ctx, slug)
+	if err != nil {
+		return &SettingConfig{FcmJson: &FcmJsonConfing{}}
+	}
+	return s.ToConfig()
+}
+
+// Per-channel settings handlers (owner level)
 func setSettings(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	slug := channelSlugFromCtx(r)
 
 	var newSettings Settings
 	if err := json.NewDecoder(r.Body).Decode(&newSettings); err != nil {
@@ -253,12 +266,10 @@ func setSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := dbSetSettings(ctx, &newSettings); err != nil {
+	if err := dbSetSettings(ctx, slug, &newSettings); err != nil {
 		http.Error(w, "error saving settings", http.StatusInternalServerError)
 		return
 	}
-
-	settingConfig = newSettings.ToConfig()
 
 	res := Response{
 		Success: true,
@@ -271,7 +282,9 @@ func getSettings(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	s, err := dbGetSettings(ctx)
+	slug := channelSlugFromCtx(r)
+
+	s, err := dbGetSettings(ctx, slug)
 	if err != nil {
 		http.Error(w, "error getting settings", http.StatusInternalServerError)
 		return
@@ -279,4 +292,43 @@ func getSettings(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(s)
+}
+
+// Global settings handlers (super admin level)
+func getGlobalSettings(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	s, err := dbGetGlobalSettings(ctx)
+	if err != nil {
+		http.Error(w, "error getting global settings", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s)
+}
+
+func setGlobalSettings(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var newSettings Settings
+	if err := json.NewDecoder(r.Body).Decode(&newSettings); err != nil {
+		http.Error(w, "error decoding settings", http.StatusBadRequest)
+		return
+	}
+
+	if err := dbSetGlobalSettings(ctx, &newSettings); err != nil {
+		http.Error(w, "error saving global settings", http.StatusInternalServerError)
+		return
+	}
+
+	settingConfig = newSettings.ToConfig()
+
+	res := Response{
+		Success: true,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(res)
 }

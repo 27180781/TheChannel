@@ -16,6 +16,9 @@ func getMessages(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	slug := channelSlugFromCtx(r)
+	ch := channelFromCtx(r)
+
 	offsetFromClient := r.URL.Query().Get("offset")
 	limitFromClient := r.URL.Query().Get("limit")
 	direction := r.URL.Query().Get("direction")
@@ -30,7 +33,10 @@ func getMessages(w http.ResponseWriter, r *http.Request) {
 		limit = 20
 	}
 
-	messages, err := funcGetMessageRange(ctx, int64(offset), int64(limit), checkPrivilege(r, Writer), settingConfig.CountViews, direction)
+	isAdmin := hasChannelRole(r, slug, RoleWriter)
+	countViews := ch != nil && ch.Features.CountViews
+
+	messages, err := funcGetMessageRange(ctx, slug, int64(offset), int64(limit), isAdmin, countViews, direction)
 	if err != nil {
 		log.Printf("Failed to get messages: %v\n", err)
 		http.Error(w, "error", http.StatusInternalServerError)
@@ -40,12 +46,14 @@ func getMessages(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(messages)
 
-	addViewsToMessages(ctx, messages)
+	addViewsToMessages(ctx, slug, countViews, messages)
 }
 
 func addMessage(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	slug := channelSlugFromCtx(r)
 
 	var message Message
 	var err error
@@ -61,7 +69,7 @@ func addMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	message.ID = getMessageNextId(ctx)
+	message.ID = getMessageNextId(ctx, slug)
 	message.Type = body.Type
 	message.Author = user.PublicName
 	message.AuthorId = user.ID
@@ -71,14 +79,14 @@ func addMessage(w http.ResponseWriter, r *http.Request) {
 	message.Views = 0
 	message.IsAds = body.IsAds
 
-	if err = setMessage(ctx, &message, false); err != nil {
+	if err = setMessage(ctx, slug, &message, false); err != nil {
 		log.Printf("Failed to set new message: %v\n", err)
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
 
-	go SendWebhook(context.Background(), "create", &message)
-	go pushFcmMessage(&message)
+	go SendWebhook(context.Background(), slug, "create", &message)
+	go pushFcmMessage(slug, &message)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(message)
@@ -87,6 +95,8 @@ func addMessage(w http.ResponseWriter, r *http.Request) {
 func updateMessage(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	slug := channelSlugFromCtx(r)
 
 	var err error
 	defer r.Body.Close()
@@ -100,13 +110,13 @@ func updateMessage(w http.ResponseWriter, r *http.Request) {
 
 	body.LastEdit = time.Now()
 
-	if err := setMessage(ctx, &body, true); err != nil {
+	if err := setMessage(ctx, slug, &body, true); err != nil {
 		response := Response{Success: false}
 		json.NewEncoder(w).Encode(response)
 		return
 	}
 
-	go SendWebhook(context.Background(), "update", &body)
+	go SendWebhook(context.Background(), slug, "update", &body)
 
 	response := Response{Success: true}
 	json.NewEncoder(w).Encode(response)
@@ -116,18 +126,19 @@ func deleteMessage(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	slug := channelSlugFromCtx(r)
 	id := chi.URLParam(r, "id")
 
 	idInt, _ := strconv.Atoi(id)
 	message := Message{ID: idInt, Deleted: true}
 
-	if err := funcDeleteMessage(ctx, id); err != nil {
+	if err := funcDeleteMessage(ctx, slug, id); err != nil {
 		response := Response{Success: false}
 		json.NewEncoder(w).Encode(response)
 		return
 	}
 
-	go SendWebhook(context.Background(), "delete", &message)
+	go SendWebhook(context.Background(), slug, "delete", &message)
 
 	response := Response{Success: true}
 	json.NewEncoder(w).Encode(response)
@@ -139,6 +150,8 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+
+	slug := channelSlugFromCtx(r)
 
 	clientCtx := r.Context()
 	heartbeat := time.NewTicker(25 * time.Second)
@@ -155,10 +168,11 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	flusher.Flush()
 
-	go increaseCounterSSE()
-	defer decreaseCounterSSE()
+	go increaseCounterSSE(slug)
+	defer decreaseCounterSSE(slug)
 
-	pubsub := rdb.Subscribe(r.Context(), "events")
+	eventChannel := fmt.Sprintf("events:%s", slug)
+	pubsub := rdb.Subscribe(r.Context(), eventChannel)
 	defer pubsub.Close()
 
 	if _, err := pubsub.Receive(clientCtx); err != nil {

@@ -6,11 +6,23 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/go-chi/chi"
 )
 
 func addNewPost(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "slug")
+	if slug == "" {
+		http.Error(w, "missing slug", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cfg := getChannelConfig(ctx, slug)
 	key := r.Header.Get("X-API-Key")
-	if key != settingConfig.ApiSecretKey {
+	if key != cfg.ApiSecretKey || cfg.ApiSecretKey == "" {
 		http.Error(w, "error", http.StatusBadRequest)
 		return
 	}
@@ -26,10 +38,7 @@ func addNewPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	message.ID = getMessageNextId(ctx)
+	message.ID = getMessageNextId(ctx, slug)
 	message.Type = "md" //body.Type
 	message.Author = body.Author
 	message.Timestamp = body.Timestamp
@@ -37,7 +46,7 @@ func addNewPost(w http.ResponseWriter, r *http.Request) {
 	message.Views = 0
 	message.IsAds = body.IsAds
 
-	if err = setMessage(ctx, &message, false); err != nil {
+	if err = setMessage(ctx, slug, &message, false); err != nil {
 		log.Printf("Failed to set new message: %v\n", err)
 		http.Error(w, "error", http.StatusInternalServerError)
 		return

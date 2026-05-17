@@ -10,9 +10,6 @@ import (
 	"time"
 )
 
-// var webhookURL string = os.Getenv("WEBHOOK_URL")
-// var verifyToken string = os.Getenv("WEBHOOK_VERIFY_TOKEN")
-
 type WebhookPayload struct {
 	Action      string    `json:"action"`
 	Message     Message   `json:"message"`
@@ -20,8 +17,13 @@ type WebhookPayload struct {
 	VerifyToken string    `json:"verifyToken"`
 }
 
-func SendWebhook(ctx context.Context, action string, message *Message) {
-	if settingConfig.WebhookURL == "" {
+func SendWebhook(ctx context.Context, slug string, action string, message *Message) {
+	// Load per-channel config for webhook settings
+	chCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	cfg := getChannelConfig(chCtx, slug)
+	if cfg.WebhookURL == "" {
 		return
 	}
 
@@ -29,7 +31,7 @@ func SendWebhook(ctx context.Context, action string, message *Message) {
 		Action:      action,
 		Message:     *message,
 		Timestamp:   time.Now(),
-		VerifyToken: settingConfig.VerifyToken,
+		VerifyToken: cfg.VerifyToken,
 	}
 
 	jsonData, err := json.Marshal(payload)
@@ -38,10 +40,10 @@ func SendWebhook(ctx context.Context, action string, message *Message) {
 		return
 	}
 
-	httpCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
+	httpCtx, httpCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer httpCancel()
 
-	req, err := http.NewRequestWithContext(httpCtx, "POST", settingConfig.WebhookURL, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(httpCtx, "POST", cfg.WebhookURL, bytes.NewBuffer(jsonData))
 	if err != nil {
 		log.Printf("Error creating webhook request: %v\n", err)
 		return

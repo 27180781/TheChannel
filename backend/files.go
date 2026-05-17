@@ -62,7 +62,13 @@ func serveFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func uploadFile(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, int64(settingConfig.MaxFileSize)<<20)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	slug := channelSlugFromCtx(r)
+	cfg := getChannelConfig(ctx, slug)
+
+	r.Body = http.MaxBytesReader(w, r.Body, int64(cfg.MaxFileSize)<<20)
 
 	file, handler, err := r.FormFile("file")
 	if err != nil {
@@ -101,7 +107,7 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 	var isDuplicateFile bool
 	testISDuplicateFilePath := filepath.Join(hashSubDir, fileHash)
 	_, err = os.Stat(testISDuplicateFilePath)
-	if err == nil { //|| !os.IsNotExist(err)
+	if err == nil {
 		isDuplicateFile = true
 	}
 
@@ -158,7 +164,7 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	metadataFile.Write(yamlData)
 
-	fileUrl := "/api/files/" + id
+	fileUrl := "/api/channel/" + slug + "/files/" + id
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(FileResponse{
@@ -192,9 +198,16 @@ func getFavicon(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	c, err := getChannelDetails(ctx)
+	// Try to get slug from query param or use a default
+	slug := r.URL.Query().Get("slug")
+	if slug == "" {
+		http.ServeFile(w, r, "assets/favicon.ico")
+		return
+	}
+
+	c, err := getChannelDetails(ctx, slug)
 	if err != nil {
-		http.Error(w, "error", http.StatusInternalServerError)
+		http.ServeFile(w, r, "assets/favicon.ico")
 		return
 	}
 
@@ -203,6 +216,11 @@ func getFavicon(w http.ResponseWriter, r *http.Request) {
 		logoUrl = "assets/favicon.ico"
 	}
 	fileId := path.Base(logoUrl)
+
+	if len(fileId) < 4 {
+		http.ServeFile(w, r, "assets/favicon.ico")
+		return
+	}
 
 	metadataFilePath := filepath.Join(rootUploadPath, fileId[:2], fileId[2:4], fileId+".yaml")
 	metadataFile, err := os.ReadFile(metadataFilePath)

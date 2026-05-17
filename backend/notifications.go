@@ -43,6 +43,7 @@ type NotificationsConfig struct {
 }
 
 func getNotificationsConfig(w http.ResponseWriter, r *http.Request) {
+	// Notifications config uses global FCM/VAPID settings
 	response := NotificationsConfig{
 		EnableNotifications: settingConfig.OnNotification,
 		VAPID:               settingConfig.VAPID,
@@ -121,6 +122,8 @@ func getFirebaseMessagingSW(w http.ResponseWriter, r *http.Request) {
 }
 
 func subscribeNotifications(w http.ResponseWriter, r *http.Request) {
+	slug := channelSlugFromCtx(r)
+
 	var req struct {
 		Token string `json:"token"`
 	}
@@ -135,7 +138,7 @@ func subscribeNotifications(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := addSubscription(req.Token); err != nil {
+	if err := addSubscription(slug, req.Token); err != nil {
 		http.Error(w, "Failed to subscribe to notifications", http.StatusInternalServerError)
 		return
 	}
@@ -147,16 +150,15 @@ func subscribeNotifications(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-func pushFcmMessage(m *Message) {
+func pushFcmMessage(slug string, m *Message) {
 	if !settingConfig.OnNotification {
-
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	list, err := getSubcriptionsList()
+	list, err := getSubcriptionsList(slug)
 	if err != nil {
 		log.Println("Failed to get subscription list:", err)
 		return
@@ -167,7 +169,7 @@ func pushFcmMessage(m *Message) {
 		return
 	}
 
-	channelName, err := getChannelDetails(ctx)
+	channelName, err := getChannelDetails(ctx, slug)
 	if err != nil {
 		log.Println("Failed to get channel details:", err)
 		return
@@ -221,8 +223,5 @@ func pushFcmMessage(m *Message) {
 		}
 		log.Printf("Push notification sent to %d tokens: \n", r.SuccessCount)
 		log.Printf("Failed to send to %d tokens: \n", r.FailureCount)
-		// for _, resp := range r.Responses {
-		// 	log.Printf("Response: %s, Error: %v\n", resp.MessageID, resp.Error)
-		// }
 	}
 }

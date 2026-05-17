@@ -39,6 +39,8 @@ func reportMessage(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	defer r.Body.Close()
 
+	slug := channelSlugFromCtx(r)
+
 	var report Report
 	if err := json.NewDecoder(r.Body).Decode(&report); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -56,7 +58,7 @@ func reportMessage(w http.ResponseWriter, r *http.Request) {
 	report.ReportedEmail = s.Email
 	report.ReporterName = s.Username
 
-	if err := dbReportMessage(ctx, &report); err != nil {
+	if err := dbReportMessage(ctx, slug, &report); err != nil {
 		log.Println("Error saving report:", err)
 		http.Error(w, "Error saving report", http.StatusInternalServerError)
 		return
@@ -72,13 +74,15 @@ func getReports(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	slug := channelSlugFromCtx(r)
+
 	status := ReportStatus(r.URL.Query().Get("status"))
 	if !status.IsValid() {
 		http.Error(w, "Invalid status", http.StatusBadRequest)
 		return
 	}
 
-	reports, err := dbGetReports(ctx, status)
+	reports, err := dbGetReports(ctx, slug, status)
 	if err != nil {
 		log.Printf("Error retrieving reports: %v\n", err)
 		http.Error(w, "Error retrieving reports", http.StatusInternalServerError)
@@ -93,6 +97,9 @@ func setReports(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	defer r.Body.Close()
+
+	slug := channelSlugFromCtx(r)
+
 	var report Report
 	if err := json.NewDecoder(r.Body).Decode(&report); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -101,7 +108,7 @@ func setReports(w http.ResponseWriter, r *http.Request) {
 
 	report.UpdatedAt = time.Now()
 
-	if err := dbSetReports(ctx, &report); err != nil {
+	if err := dbSetReports(ctx, slug, &report); err != nil {
 		http.Error(w, "Error saving reports", http.StatusInternalServerError)
 		return
 	}
