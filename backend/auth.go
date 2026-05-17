@@ -37,12 +37,13 @@ type GoogleAuthValues struct {
 }
 
 type Session struct {
-	ID         string     `json:"id"`
-	Username   string     `json:"username"`
-	Email      string     `json:"email"`
-	PublicName string     `json:"publicName"`
-	Picture    string     `json:"picture,omitempty"`
-	Privileges Privileges `json:"privileges,omitempty"`
+	ID           string                 `json:"id"`
+	Username     string                 `json:"username"`
+	Email        string                 `json:"email"`
+	PublicName   string                 `json:"publicName"`
+	Picture      string                 `json:"picture,omitempty"`
+	GlobalRole   GlobalRole             `json:"globalRole,omitempty"`
+	ChannelRoles map[string]ChannelRole `json:"channelRoles,omitempty"`
 }
 
 type Response struct {
@@ -108,7 +109,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	email, _ := dyno.GetString(payload.Claims["email"])
-	go registeringEmail(email)
+	go registeringEmail("", email)
 
 	u, err := getUser(ctx, payload.Claims)
 	if err != nil {
@@ -118,12 +119,13 @@ func login(w http.ResponseWriter, r *http.Request) {
 	}
 	picture, _ := dyno.GetString(payload.Claims["picture"])
 	userSession := Session{
-		ID:         u.ID,
-		Username:   u.Username,
-		PublicName: u.PublicName,
-		Picture:    picture,
-		Privileges: u.Privileges,
-		Email:      u.Email,
+		ID:           u.ID,
+		Username:     u.Username,
+		PublicName:   u.PublicName,
+		Picture:      picture,
+		GlobalRole:   u.GlobalRole,
+		ChannelRoles: u.ChannelRoles,
+		Email:        u.Email,
 	}
 
 	session, _ := store.Get(r, cookieName)
@@ -169,17 +171,6 @@ func checkLogin(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
-}
-
-func checkPrivilege(r *http.Request, privilege Privilege) bool {
-	session, _ := store.Get(r, cookieName)
-
-	s, ok := session.Values["user"].(Session)
-	if !ok {
-		return false
-	}
-
-	return s.Privileges[privilege]
 }
 
 func getUserInfo(w http.ResponseWriter, r *http.Request) {
@@ -243,4 +234,14 @@ func getUser(ctx context.Context, claims map[string]any) (*User, error) {
 	}
 
 	return &user, nil
+}
+
+func registeringEmail(slug, email string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if slug == "" {
+		rdb.SAdd(ctx, "registered_emails", email)
+	} else {
+		rdb.SAdd(ctx, "channel:"+slug+":registered_emails", email)
+	}
 }
