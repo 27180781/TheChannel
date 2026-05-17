@@ -18,8 +18,9 @@ import { GlobalSettingsComponent } from './global-settings/global-settings.compo
 import { SuperAdminStatisticsComponent } from './statistics/super-admin-statistics.component';
 import { SuperAdminStorageComponent } from './storage/super-admin-storage.component';
 import { GlobalStorageComponent } from './global-storage/global-storage.component';
+import { ChannelRequestsComponent } from './channel-requests/channel-requests.component';
 
-type ViewName = 'channels' | 'channel-features' | 'channel-users' | 'channel-storage' | 'ads' | 'magnet' | 'users' | 'settings' | 'statistics' | 'global-storage';
+type ViewName = 'channels' | 'channel-features' | 'channel-users' | 'channel-storage' | 'ads' | 'magnet' | 'users' | 'settings' | 'statistics' | 'global-storage' | 'requests';
 
 @Component({
   selector: 'app-super-admin-panel',
@@ -40,6 +41,7 @@ type ViewName = 'channels' | 'channel-features' | 'channel-users' | 'channel-sto
     SuperAdminStatisticsComponent,
     SuperAdminStorageComponent,
     GlobalStorageComponent,
+    ChannelRequestsComponent,
   ],
   templateUrl: './super-admin-panel.component.html',
   styleUrl: './super-admin-panel.component.scss',
@@ -60,8 +62,10 @@ export class SuperAdminPanelComponent implements OnInit {
   readonly VIEW_SETTINGS: ViewName = 'settings';
   readonly VIEW_STATISTICS: ViewName = 'statistics';
   readonly VIEW_GLOBAL_STORAGE: ViewName = 'global-storage';
+  readonly VIEW_REQUESTS: ViewName = 'requests';
 
   navigationMenu: NbMenuItem[] = [
+    { title: 'בקשות לערוצים', icon: 'inbox-outline', selected: false },
     { title: 'ערוצים', icon: 'list-outline', selected: true },
     { title: 'פרסומות iframe', icon: 'film-outline' },
     { title: 'פרסומות מגנט', icon: 'pricetags-outline' },
@@ -79,6 +83,10 @@ export class SuperAdminPanelComponent implements OnInit {
       event.item.selected = true;
 
       switch (event.item.icon) {
+        case 'inbox-outline':
+          this.selectedView = this.VIEW_REQUESTS;
+          this.selectedChannelSlug = '';
+          break;
         case 'list-outline':
           this.selectedView = this.VIEW_CHANNELS;
           this.selectedChannelSlug = '';

@@ -15,6 +15,9 @@
       }
 
       @switch (selectedView) {
+        @case (VIEW_REQUESTS) {
+          <app-channel-requests></app-channel-requests>
+        }
         @case (VIEW_CHANNELS) {
           <app-channels-list
             (editFeatures)="onEditFeatures($event)"

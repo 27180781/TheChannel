@@ -108,19 +108,7 @@ export class ChannelHeaderComponent implements OnInit {
     if (await this._authService.logout()) {
       this.userInfo = undefined;
       this.userInfoChange.emit(undefined);
-      try {
-        await this._authService.loadUserInfo();
-      } catch (err: any) {
-        if (err.status === 401) {
-          this.router.navigate(['/login']);
-        }
-      }
-
-      const path = this.router.url;
-      if (path !== '/') {
-        this.router.navigate(['/']);
-      }
-
+      this.router.navigate(['/']);
     } else {
       this.toastrService.danger("", "שגיאה בהתנתקות");
     }

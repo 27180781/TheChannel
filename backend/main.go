@@ -78,6 +78,18 @@ func main() {
 		r.Post("/statistics/reset", resetStatistics)
 	})
 
+	// Public: submit channel request (no auth required)
+	r.Post("/api/channel-request", submitChannelRequest)
+
+	// Super admin: manage channel requests
+	r.Route("/api/super-admin", func(r chi.Router) {
+		r.Use(checkLogin)
+		r.Use(requireSuperAdmin)
+		r.Get("/channel-requests", listChannelRequests)
+		r.Post("/channel-requests/{id}/approve", approveChannelRequest)
+		r.Post("/channel-requests/{id}/reject", rejectChannelRequest)
+	})
+
 	// Per-channel API import (with API key, no channel middleware needed - slug from URL)
 	r.Post("/api/channel/{slug}/import/post", addNewPost)
 
