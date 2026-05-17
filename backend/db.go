@@ -983,3 +983,34 @@ func dbSetGlobalMagnetConfig(ctx context.Context, cfg *GlobalMagnetConfig) error
 	}
 	return rdb.Set(ctx, "global:magnet:config", data, 0).Err()
 }
+
+// GlobalAdsConfig stored at global:ads:config
+type GlobalAdsConfig struct {
+	Src            string   `json:"src"`
+	Width          int64    `json:"width"`
+	LockAll        bool     `json:"lockAll"`        // override ALL channels
+	LockedChannels []string `json:"lockedChannels"` // override specific channels
+}
+
+func dbGetGlobalAdsConfig(ctx context.Context) (*GlobalAdsConfig, error) {
+	data, err := rdb.Get(ctx, "global:ads:config").Result()
+	if err != nil {
+		if err == redis.Nil {
+			return &GlobalAdsConfig{}, nil
+		}
+		return nil, err
+	}
+	var cfg GlobalAdsConfig
+	if err := json.Unmarshal([]byte(data), &cfg); err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
+
+func dbSetGlobalAdsConfig(ctx context.Context, cfg *GlobalAdsConfig) error {
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return rdb.Set(ctx, "global:ads:config", data, 0).Err()
+}

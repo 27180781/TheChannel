@@ -23,6 +23,7 @@ type ChannelFeatures struct {
 	ScheduledMessages      bool `json:"scheduledMessages"`
 	Webhook                bool `json:"webhook"`
 	MagnetLockedByAdmin    bool `json:"magnetLockedByAdmin"` // set by super admin, owner cannot change
+	AdsLockedByAdmin       bool `json:"adsLockedByAdmin"`    // set by super admin, owner cannot change
 }
 
 type ChannelData struct {

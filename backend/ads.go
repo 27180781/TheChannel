@@ -15,20 +15,96 @@ type AdsSettings struct {
 	Width int64  `json:"width"`
 }
 
+// isChannelAdsLocked returns true if the super admin has locked ads settings for this channel.
+func isChannelAdsLocked(globalAds *GlobalAdsConfig, ch *ChannelData) bool {
+	if globalAds.LockAll {
+		return true
+	}
+	if ch != nil && ch.Features.AdsLockedByAdmin {
+		return true
+	}
+	return slices.Contains(globalAds.LockedChannels, ch.Slug)
+}
+
 func getAdsSettings(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	slug := channelSlugFromCtx(r)
-	cfg := getChannelConfig(ctx, slug)
+	ch := channelFromCtx(r)
 
-	settings := AdsSettings{
-		Src:   cfg.AdSrc,
-		Width: cfg.AdWidth,
+	globalAds, err := dbGetGlobalAdsConfig(ctx)
+	if err != nil {
+		globalAds = &GlobalAdsConfig{}
+	}
+
+	var settings AdsSettings
+	if isChannelAdsLocked(globalAds, ch) {
+		settings = AdsSettings{Src: globalAds.Src, Width: globalAds.Width}
+	} else {
+		cfg := getChannelConfig(ctx, slug)
+		settings = AdsSettings{Src: cfg.AdSrc, Width: cfg.AdWidth}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(settings)
+}
+
+// getGlobalAdsConfig – super admin: read global ads config
+func getGlobalAdsConfig(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cfg, err := dbGetGlobalAdsConfig(ctx)
+	if err != nil {
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(cfg)
+}
+
+// setGlobalAdsConfig – super admin: save global ads config + lock rules
+func setGlobalAdsConfig(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var cfg GlobalAdsConfig
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	if err := dbSetGlobalAdsConfig(ctx, &cfg); err != nil {
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
+	}
+
+	go syncAdsLockFlags(&cfg)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(Response{Success: true})
+}
+
+// syncAdsLockFlags updates AdsLockedByAdmin on all channels based on the new global config.
+func syncAdsLockFlags(globalAds *GlobalAdsConfig) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	channels, err := dbListChannels(ctx)
+	if err != nil {
+		return
+	}
+
+	for _, ch := range channels {
+		shouldLock := globalAds.LockAll || slices.Contains(globalAds.LockedChannels, ch.Slug)
+		if ch.Features.AdsLockedByAdmin != shouldLock {
+			ch.Features.AdsLockedByAdmin = shouldLock
+			dbSetChannelFeatures(ctx, ch.Slug, &ch.Features)
+		}
+	}
 }
 
 type MagnetAdsSettings struct {
