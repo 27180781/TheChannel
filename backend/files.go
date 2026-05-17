@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -30,39 +32,105 @@ type FileResponse struct {
 	FileType string `json:"filetype"`
 }
 
+type FileMetadata struct {
+	ID       string `json:"id"`
+	Filename string `json:"filename"`
+	Hash     string `json:"hash"`
+	Type     string `json:"type"`
+	Delete   bool   `json:"delete"`
+}
+
 var maxBytesReader *http.MaxBytesError
+
+// dbSaveFileMetadata stores file metadata in Redis.
+func dbSaveFileMetadata(ctx context.Context, meta *FileMetadata) error {
+	data, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+	return rdb.Set(ctx, "file:"+meta.ID, data, 0).Err()
+}
+
+// dbGetFileMetadata retrieves file metadata from Redis, falling back to YAML for old files.
+func dbGetFileMetadata(ctx context.Context, id string) (*FileMetadata, error) {
+	data, err := rdb.Get(ctx, "file:"+id).Result()
+	if err == nil {
+		var meta FileMetadata
+		if err := json.Unmarshal([]byte(data), &meta); err != nil {
+			return nil, err
+		}
+		return &meta, nil
+	}
+
+	// Fallback: read from YAML (legacy local files)
+	metadataFilePath := filepath.Join(rootUploadPath, id[:2], id[2:4], id+".yaml")
+	yamlData, err := os.ReadFile(metadataFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("file not found")
+	}
+	var raw map[string]any
+	if err := yaml.Unmarshal(yamlData, &raw); err != nil {
+		return nil, err
+	}
+	deleted, _ := raw["delete"].(bool)
+	hash, _ := dyno.GetString(raw["hash"])
+	filename, _ := dyno.GetString(raw["filename"])
+	fileType, _ := dyno.GetString(raw["type"])
+	return &FileMetadata{
+		ID:       id,
+		Filename: filename,
+		Hash:     hash,
+		Type:     fileType,
+		Delete:   deleted,
+	}, nil
+}
 
 func serveFile(w http.ResponseWriter, r *http.Request) {
 	fileId := chi.URLParam(r, "fileid")
-
-	metadataFilePath := filepath.Join(rootUploadPath, fileId[:2], fileId[2:4], fileId+".yaml")
-	metadataFile, err := os.ReadFile(metadataFilePath)
-	if err != nil {
+	if len(fileId) < 4 {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return
 	}
 
-	var metaData map[string]any
-	if err := yaml.Unmarshal(metadataFile, &metaData); err != nil {
-		http.Error(w, "error", http.StatusInternalServerError)
-		return
-	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
 
-	if delete := metaData["delete"].(bool); delete {
+	meta, err := dbGetFileMetadata(ctx, fileId)
+	if err != nil || meta.Delete {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return
 	}
 
-	fileHash, _ := dyno.GetString(metaData["hash"])
-	filePath := filepath.Join(rootUploadPath, fileHash[:2], fileHash[2:4], fileHash)
-	originalFileName, _ := dyno.GetString(metaData["filename"])
+	w.Header().Set("Content-Disposition", `attachment; filename*=UTF-8''`+url.QueryEscape(meta.Filename))
 
-	w.Header().Set("Content-Disposition", `attachment; filename*=UTF-8''`+url.QueryEscape(originalFileName))
+	if r2Enabled {
+		key := r2ObjectKey(meta.Hash)
+		if r2PublicURL != "" {
+			// Redirect to public R2 URL
+			http.Redirect(w, r, r2PublicURL+"/"+key, http.StatusFound)
+			return
+		}
+		// Proxy through backend
+		body, contentType, err := r2Download(ctx, key)
+		if err != nil {
+			http.Error(w, "File not found", http.StatusNotFound)
+			return
+		}
+		defer body.Close()
+		if contentType != nil {
+			w.Header().Set("Content-Type", *contentType)
+		}
+		io.Copy(w, body)
+		return
+	}
+
+	// Local storage fallback
+	filePath := filepath.Join(rootUploadPath, meta.Hash[:2], meta.Hash[2:4], meta.Hash)
 	http.ServeFile(w, r, filePath)
 }
 
 func uploadFile(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	slug := channelSlugFromCtx(r)
@@ -81,52 +149,18 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	if err := os.MkdirAll(rootUploadPath, os.ModePerm); err != nil {
-		http.Error(w, "error", http.StatusInternalServerError)
-		return
-	}
-
-	head := make([]byte, 512)
-	file.Read(head)
-
-	t, _ := filetype.Match(head)
-
-	file.Seek(0, io.SeekStart)
-	fileHash, err := generatedFileHash(file)
+	// Read file into memory for hashing + type detection + upload
+	fileBytes, err := io.ReadAll(file)
 	if err != nil {
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
 
-	hashSubDir := filepath.Join(rootUploadPath, fileHash[:2], fileHash[2:4])
-	if err := os.MkdirAll(hashSubDir, os.ModePerm); err != nil {
-		http.Error(w, "error", http.StatusInternalServerError)
-		return
-	}
+	t, _ := filetype.Match(fileBytes[:min(512, len(fileBytes))])
 
-	var isDuplicateFile bool
-	testISDuplicateFilePath := filepath.Join(hashSubDir, fileHash)
-	_, err = os.Stat(testISDuplicateFilePath)
-	if err == nil {
-		isDuplicateFile = true
-	}
-
-	if !isDuplicateFile {
-		destPath := filepath.Join(hashSubDir, fileHash)
-
-		file.Seek(0, io.SeekStart)
-		destFile, err := os.Create(destPath)
-		if err != nil {
-			http.Error(w, "error", http.StatusInternalServerError)
-			return
-		}
-		defer destFile.Close()
-
-		if _, err := io.Copy(destFile, file); err != nil {
-			http.Error(w, "error", http.StatusInternalServerError)
-			return
-		}
-	}
+	// Compute SHA-256 hash
+	hashBytes := sha256.Sum256(fileBytes)
+	fileHash := hex.EncodeToString(hashBytes[:])
 
 	id := generatedRandomID(20)
 	if id == "" {
@@ -134,35 +168,51 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	yamlFileDir := filepath.Join(rootUploadPath, id[:2], id[2:4])
-	if err := os.MkdirAll(yamlFileDir, os.ModePerm); err != nil {
-		http.Error(w, "error", http.StatusInternalServerError)
-		return
-	}
-
 	safeFilename := gozaru.Sanitize(handler.Filename)
-
-	fileMetadata := map[string]any{
-		"id":       id,
-		"filename": safeFilename,
-		"hash":     fileHash,
-		"type":     t.MIME.Type,
-		"delete":   false,
+	contentType := t.MIME.Value
+	if contentType == "" {
+		contentType = "application/octet-stream"
 	}
-	metadataFilePath := filepath.Join(rootUploadPath, id[:2], id[2:4], id+".yaml")
-	metadataFile, err := os.Create(metadataFilePath)
-	if err != nil {
+
+	if r2Enabled {
+		key := r2ObjectKey(fileHash)
+		if !r2Exists(ctx, key) {
+			if err := r2Upload(ctx, key, bytes.NewReader(fileBytes), contentType); err != nil {
+				http.Error(w, "error uploading file", http.StatusInternalServerError)
+				return
+			}
+		}
+	} else {
+		// Local storage
+		if err := os.MkdirAll(rootUploadPath, os.ModePerm); err != nil {
+			http.Error(w, "error", http.StatusInternalServerError)
+			return
+		}
+		hashSubDir := filepath.Join(rootUploadPath, fileHash[:2], fileHash[2:4])
+		if err := os.MkdirAll(hashSubDir, os.ModePerm); err != nil {
+			http.Error(w, "error", http.StatusInternalServerError)
+			return
+		}
+		destPath := filepath.Join(hashSubDir, fileHash)
+		if _, err := os.Stat(destPath); os.IsNotExist(err) {
+			if err := os.WriteFile(destPath, fileBytes, 0644); err != nil {
+				http.Error(w, "error", http.StatusInternalServerError)
+				return
+			}
+		}
+	}
+
+	meta := &FileMetadata{
+		ID:       id,
+		Filename: safeFilename,
+		Hash:     fileHash,
+		Type:     t.MIME.Type,
+		Delete:   false,
+	}
+	if err := dbSaveFileMetadata(ctx, meta); err != nil {
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
-	defer metadataFile.Close()
-
-	yamlData, err := yaml.Marshal(fileMetadata)
-	if err != nil {
-		http.Error(w, "error", http.StatusInternalServerError)
-		return
-	}
-	metadataFile.Write(yamlData)
 
 	fileUrl := "/api/channel/" + slug + "/files/" + id
 
@@ -179,26 +229,21 @@ func generatedFileHash(file io.Reader) (string, error) {
 	if _, err := io.Copy(hash, file); err != nil {
 		return "", err
 	}
-
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func generatedRandomID(len int) string {
-	b := make([]byte, len)
-	_, err := rand.Read(b)
-	if err != nil {
+func generatedRandomID(length int) string {
+	b := make([]byte, length)
+	if _, err := rand.Read(b); err != nil {
 		return ""
 	}
-
 	return hex.EncodeToString(b)
 }
 
-// TODO: Image size limitation
 func getFavicon(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Try to get slug from query param or use a default
 	slug := r.URL.Query().Get("slug")
 	if slug == "" {
 		http.ServeFile(w, r, "assets/favicon.ico")
@@ -213,35 +258,45 @@ func getFavicon(w http.ResponseWriter, r *http.Request) {
 
 	logoUrl := c["logoUrl"]
 	if logoUrl == "" {
-		logoUrl = "assets/favicon.ico"
+		http.ServeFile(w, r, "assets/favicon.ico")
+		return
 	}
-	fileId := path.Base(logoUrl)
 
+	fileId := path.Base(logoUrl)
 	if len(fileId) < 4 {
 		http.ServeFile(w, r, "assets/favicon.ico")
 		return
 	}
 
-	metadataFilePath := filepath.Join(rootUploadPath, fileId[:2], fileId[2:4], fileId+".yaml")
-	metadataFile, err := os.ReadFile(metadataFilePath)
-	if err != nil {
+	meta, err := dbGetFileMetadata(ctx, fileId)
+	if err != nil || meta.Delete {
 		http.ServeFile(w, r, "assets/favicon.ico")
 		return
 	}
 
-	var metaData map[string]any
-	if err := yaml.Unmarshal(metadataFile, &metaData); err != nil {
-		http.ServeFile(w, r, "assets/favicon.ico")
+	if r2Enabled {
+		key := r2ObjectKey(meta.Hash)
+		if r2PublicURL != "" {
+			http.Redirect(w, r, r2PublicURL+"/"+key, http.StatusFound)
+			return
+		}
+		body, _, err := r2Download(ctx, key)
+		if err != nil {
+			http.ServeFile(w, r, "assets/favicon.ico")
+			return
+		}
+		defer body.Close()
+		io.Copy(w, body)
 		return
 	}
 
-	if delete := metaData["delete"].(bool); delete {
-		http.ServeFile(w, r, "assets/favicon.ico")
-		return
-	}
-
-	fileHash, _ := dyno.GetString(metaData["hash"])
-	filePath := filepath.Join(rootUploadPath, fileHash[:2], fileHash[2:4], fileHash)
-
+	filePath := filepath.Join(rootUploadPath, meta.Hash[:2], meta.Hash[2:4], meta.Hash)
 	http.ServeFile(w, r, filePath)
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

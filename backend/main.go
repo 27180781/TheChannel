@@ -18,6 +18,7 @@ var rootStaticFolder = os.Getenv("ROOT_STATIC_FOLDER")
 
 func main() {
 	gob.Register(Session{})
+	initR2()
 	initializePrivilegeUsers()
 	go statLogger()
 
