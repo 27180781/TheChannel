@@ -1,5 +1,6 @@
 import { Component, OnInit } from "@angular/core";
 import { NbCardModule, NbLayoutModule, NbMenuItem, NbMenuModule, NbMenuService, NbSidebarModule } from "@nebular/theme";
+import { ChatService } from "../../services/chat.service";
 import { EmojisComponent } from "./emojis/emojis.component";
 import { SettingsComponent } from "./settings/settings.component";
 import { PrivilegDashboardComponent } from "./privileg-dashboard/privileg-dashboard.component";
@@ -7,6 +8,7 @@ import { ChannelInfoFormComponent } from "../channel/channel-info-form/channel-i
 import { ReportsComponent } from "./reports/reports.component";
 import { StatisticsComponent } from "./statistics/statistics.component";
 import { MagnetAdsComponent } from "./magnet-ads/magnet-ads.component";
+import { StorageComponent } from "./storage/storage.component";
 
 @Component({
   selector: 'admin-dashboard',
@@ -21,7 +23,8 @@ import { MagnetAdsComponent } from "./magnet-ads/magnet-ads.component";
     ChannelInfoFormComponent,
     ReportsComponent,
     StatisticsComponent,
-    MagnetAdsComponent
+    MagnetAdsComponent,
+    StorageComponent
 ],
   templateUrl: './admin-panel.component.html',
   styleUrls: ['./admin-panel.component.scss']
@@ -37,6 +40,7 @@ export class AdminPanelComponent implements OnInit {
   readonly allReports = "all-reports";
   readonly statistics = "statistics";
   readonly magnetAds = "magnet-ads";
+  readonly storage = "storage";
 
   selectedMenuItem = this.info;
 
@@ -67,6 +71,10 @@ export class AdminPanelComponent implements OnInit {
       icon: 'pricetags-outline',
     },
     {
+      title: 'אחסון',
+      icon: 'hard-drive-outline',
+    },
+    {
       title: 'דיווחים',
       icon: 'alert-triangle-outline',
       children: [
@@ -86,8 +94,13 @@ export class AdminPanelComponent implements OnInit {
     }
   ];
 
+  get channelSlug(): string {
+    return this.chatService.channelInfo?.slug ?? '';
+  }
+
   constructor(
-    private menuService: NbMenuService
+    private menuService: NbMenuService,
+    private chatService: ChatService
   ) { }
 
   ngOnInit(): void {
@@ -126,6 +139,9 @@ export class AdminPanelComponent implements OnInit {
           break;
         case 'pricetags-outline':
           this.selectedMenuItem = this.magnetAds;
+          break;
+        case 'hard-drive-outline':
+          this.selectedMenuItem = this.storage;
           break;
       }
     });

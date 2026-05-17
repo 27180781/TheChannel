@@ -16,8 +16,10 @@ import { GlobalMagnetComponent } from './global-magnet/global-magnet.component';
 import { GlobalUsersComponent } from './global-users/global-users.component';
 import { GlobalSettingsComponent } from './global-settings/global-settings.component';
 import { SuperAdminStatisticsComponent } from './statistics/super-admin-statistics.component';
+import { SuperAdminStorageComponent } from './storage/super-admin-storage.component';
+import { GlobalStorageComponent } from './global-storage/global-storage.component';
 
-type ViewName = 'channels' | 'channel-features' | 'channel-users' | 'ads' | 'magnet' | 'users' | 'settings' | 'statistics';
+type ViewName = 'channels' | 'channel-features' | 'channel-users' | 'channel-storage' | 'ads' | 'magnet' | 'users' | 'settings' | 'statistics' | 'global-storage';
 
 @Component({
   selector: 'app-super-admin-panel',
@@ -36,6 +38,8 @@ type ViewName = 'channels' | 'channel-features' | 'channel-users' | 'ads' | 'mag
     GlobalUsersComponent,
     GlobalSettingsComponent,
     SuperAdminStatisticsComponent,
+    SuperAdminStorageComponent,
+    GlobalStorageComponent,
   ],
   templateUrl: './super-admin-panel.component.html',
   styleUrl: './super-admin-panel.component.scss',
@@ -49,16 +53,19 @@ export class SuperAdminPanelComponent implements OnInit {
   readonly VIEW_CHANNELS: ViewName = 'channels';
   readonly VIEW_CHANNEL_FEATURES: ViewName = 'channel-features';
   readonly VIEW_CHANNEL_USERS: ViewName = 'channel-users';
+  readonly VIEW_CHANNEL_STORAGE: ViewName = 'channel-storage';
   readonly VIEW_ADS: ViewName = 'ads';
   readonly VIEW_MAGNET: ViewName = 'magnet';
   readonly VIEW_USERS: ViewName = 'users';
   readonly VIEW_SETTINGS: ViewName = 'settings';
   readonly VIEW_STATISTICS: ViewName = 'statistics';
+  readonly VIEW_GLOBAL_STORAGE: ViewName = 'global-storage';
 
   navigationMenu: NbMenuItem[] = [
     { title: 'ערוצים', icon: 'list-outline', selected: true },
     { title: 'פרסומות iframe', icon: 'film-outline' },
     { title: 'פרסומות מגנט', icon: 'pricetags-outline' },
+    { title: 'אחסון גלובלי', icon: 'hard-drive-outline' },
     { title: 'משתמשים', icon: 'people-outline' },
     { title: 'הגדרות גלובליות', icon: 'settings-2-outline' },
     { title: 'סטטיסטיקות', icon: 'bar-chart-outline' },
@@ -88,6 +95,10 @@ export class SuperAdminPanelComponent implements OnInit {
         case 'settings-2-outline':
           this.selectedView = this.VIEW_SETTINGS;
           break;
+        case 'hard-drive-outline':
+          this.selectedView = this.VIEW_GLOBAL_STORAGE;
+          this.selectedChannelSlug = '';
+          break;
         case 'bar-chart-outline':
           this.selectedView = this.VIEW_STATISTICS;
           break;
@@ -103,6 +114,11 @@ export class SuperAdminPanelComponent implements OnInit {
   onManageUsers(slug: string) {
     this.selectedChannelSlug = slug;
     this.selectedView = this.VIEW_CHANNEL_USERS;
+  }
+
+  onManageStorage(slug: string) {
+    this.selectedChannelSlug = slug;
+    this.selectedView = this.VIEW_CHANNEL_STORAGE;
   }
 
   backToChannels() {

@@ -85,3 +85,12 @@ func r2Download(ctx context.Context, key string) (io.ReadCloser, *string, error)
 	}
 	return result.Body, result.ContentType, nil
 }
+
+// r2Delete removes an object from R2.
+func r2Delete(ctx context.Context, key string) error {
+	_, err := r2Client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(r2Bucket),
+		Key:    aws.String(key),
+	})
+	return err
+}

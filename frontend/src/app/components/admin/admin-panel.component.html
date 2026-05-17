@@ -34,6 +34,9 @@
             @case (magnetAds) {
             <app-magnet-ads></app-magnet-ads>
             }
+            @case (storage) {
+            <app-channel-storage [slug]="channelSlug"></app-channel-storage>
+            }
             }
         </div>
     </nb-card-body>

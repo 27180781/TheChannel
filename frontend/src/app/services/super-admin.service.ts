@@ -141,4 +141,20 @@ export class SuperAdminService {
   resetStatistics(): Promise<void> {
     return firstValueFrom(this.http.post<void>('/api/super-admin/statistics/reset', {}));
   }
+
+  getGlobalStorageConfig(): Promise<{ defaultQuotaGb: number }> {
+    return firstValueFrom(this.http.get<{ defaultQuotaGb: number }>('/api/super-admin/storage/config'));
+  }
+
+  setGlobalStorageConfig(defaultQuotaGb: number): Promise<void> {
+    return firstValueFrom(this.http.post<void>('/api/super-admin/storage/config', { defaultQuotaGb }));
+  }
+
+  getChannelStorage(slug: string): Promise<any> {
+    return firstValueFrom(this.http.get<any>(`/api/super-admin/channels/${slug}/storage`));
+  }
+
+  setChannelStorage(slug: string, quotaGb: number): Promise<void> {
+    return firstValueFrom(this.http.put<void>(`/api/super-admin/channels/${slug}/storage`, { quotaGb }));
+  }
 }

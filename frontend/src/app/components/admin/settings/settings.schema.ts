@@ -124,6 +124,20 @@ export const SETTINGS_SCHEMA: SettingsCategorySchema[] = [
     ],
   },
   {
+    id: 'storage',
+    title: 'אחסון ומדיה',
+    icon: 'hard-drive-outline',
+    fields: [
+      {
+        key: 'tinypng_api_key',
+        label: 'מפתח API של TinyPNG לכיווץ תמונות',
+        description: 'כשמוגדר מפתח, תמונות PNG/JPEG/WebP ייכוצו אוטומטית לפני העלאה לאחסון ויחסכו מקום. קבלו מפתח חינמי ב-tinypng.com.',
+        type: 'password',
+        placeholder: 'YOUR_TINYPNG_API_KEY',
+      },
+    ],
+  },
+  {
     id: 'webhook',
     title: 'וובהוק (Webhook)',
     icon: 'link-2-outline',

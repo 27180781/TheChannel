@@ -1014,3 +1014,146 @@ func dbSetGlobalAdsConfig(ctx context.Context, cfg *GlobalAdsConfig) error {
 	}
 	return rdb.Set(ctx, "global:ads:config", data, 0).Err()
 }
+
+// ─── Storage Quota & Usage ────────────────────────────────────────────────────
+
+const defaultStorageQuotaBytes = int64(5 * 1024 * 1024 * 1024) // 5 GB
+
+func dbGetGlobalStorageQuota(ctx context.Context) (int64, error) {
+	v, err := rdb.Get(ctx, "global:storage:quota_bytes").Int64()
+	if err != nil {
+		if err == redis.Nil {
+			return defaultStorageQuotaBytes, nil
+		}
+		return 0, err
+	}
+	return v, nil
+}
+
+func dbSetGlobalStorageQuota(ctx context.Context, bytes int64) error {
+	return rdb.Set(ctx, "global:storage:quota_bytes", bytes, 0).Err()
+}
+
+// dbGetChannelStorageQuota returns the quota for a channel.
+// 0 means "use global default".
+func dbGetChannelStorageQuota(ctx context.Context, slug string) (int64, error) {
+	v, err := rdb.Get(ctx, "channel:"+slug+":storage:quota_bytes").Int64()
+	if err != nil {
+		if err == redis.Nil {
+			return 0, nil // 0 = use global
+		}
+		return 0, err
+	}
+	return v, nil
+}
+
+func dbSetChannelStorageQuota(ctx context.Context, slug string, bytes int64) error {
+	if bytes == 0 {
+		return rdb.Del(ctx, "channel:"+slug+":storage:quota_bytes").Err()
+	}
+	return rdb.Set(ctx, "channel:"+slug+":storage:quota_bytes", bytes, 0).Err()
+}
+
+// dbGetEffectiveStorageQuota returns the effective quota for a channel (channel override or global default).
+func dbGetEffectiveStorageQuota(ctx context.Context, slug string) (int64, error) {
+	v, err := dbGetChannelStorageQuota(ctx, slug)
+	if err != nil {
+		return 0, err
+	}
+	if v > 0 {
+		return v, nil
+	}
+	return dbGetGlobalStorageQuota(ctx)
+}
+
+func dbGetChannelStorageUsed(ctx context.Context, slug string) (int64, error) {
+	v, err := rdb.Get(ctx, "channel:"+slug+":storage:used_bytes").Int64()
+	if err != nil {
+		if err == redis.Nil {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return v, nil
+}
+
+func dbIncrChannelStorageUsed(ctx context.Context, slug string, bytes int64) error {
+	return rdb.IncrBy(ctx, "channel:"+slug+":storage:used_bytes", bytes).Err()
+}
+
+func dbDecrChannelStorageUsed(ctx context.Context, slug string, bytes int64) error {
+	return rdb.DecrBy(ctx, "channel:"+slug+":storage:used_bytes", bytes).Err()
+}
+
+// dbAddChannelFile registers a file in the channel's file tracking sorted set.
+func dbAddChannelFile(ctx context.Context, slug, fileID string, uploadedAt int64, size int64) error {
+	// member encodes fileID and size separated by ":"
+	member := fmt.Sprintf("%s:%d", fileID, size)
+	return rdb.ZAdd(ctx, "channel:"+slug+":files", redis.Z{
+		Score:  float64(uploadedAt),
+		Member: member,
+	}).Err()
+}
+
+// dbRemoveChannelFile removes a file from the channel's tracking set.
+func dbRemoveChannelFile(ctx context.Context, slug, fileID string) error {
+	// We need to find and remove the member that starts with fileID
+	members, err := rdb.ZRange(ctx, "channel:"+slug+":files", 0, -1).Result()
+	if err != nil {
+		return err
+	}
+	for _, m := range members {
+		if len(m) >= len(fileID) && m[:len(fileID)] == fileID {
+			return rdb.ZRem(ctx, "channel:"+slug+":files", m).Err()
+		}
+	}
+	return nil
+}
+
+// dbGetOldestChannelFiles returns the oldest file IDs and their sizes (oldest first).
+func dbGetOldestChannelFiles(ctx context.Context, slug string, limit int64) ([]struct{ ID string; Size int64 }, error) {
+	members, err := rdb.ZRange(ctx, "channel:"+slug+":files", 0, limit-1).Result()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]struct{ ID string; Size int64 }, 0, len(members))
+	for _, m := range members {
+		// format: "fileID:size"
+		for i := len(m) - 1; i >= 0; i-- {
+			if m[i] == ':' {
+				fileID := m[:i]
+				var size int64
+				fmt.Sscanf(m[i+1:], "%d", &size)
+				result = append(result, struct{ ID string; Size int64 }{fileID, size})
+				break
+			}
+		}
+	}
+	return result, nil
+}
+
+func dbGetChannelAutoCleanup(ctx context.Context, slug string) (bool, error) {
+	v, err := rdb.Get(ctx, "channel:"+slug+":storage:auto_cleanup").Result()
+	if err != nil {
+		return false, nil
+	}
+	return v == "true", nil
+}
+
+func dbSetChannelAutoCleanup(ctx context.Context, slug string, enabled bool) error {
+	val := "false"
+	if enabled {
+		val = "true"
+	}
+	return rdb.Set(ctx, "channel:"+slug+":storage:auto_cleanup", val, 0).Err()
+}
+
+// dbIncrFileHashRefs increments the reference count for a file hash (dedup tracking).
+func dbIncrFileHashRefs(ctx context.Context, hash string) error {
+	return rdb.Incr(ctx, "file:hash:"+hash+":refs").Err()
+}
+
+// dbDecrFileHashRefs decrements ref count; returns new count.
+func dbDecrFileHashRefs(ctx context.Context, hash string) (int64, error) {
+	return rdb.Decr(ctx, "file:hash:"+hash+":refs").Result()
+}

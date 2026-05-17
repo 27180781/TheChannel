@@ -76,6 +76,11 @@
                     <nb-icon icon="people-outline"></nb-icon>
                     משתמשים
                   </button>
+                  <button nbButton status="warning" size="tiny" (click)="manageStorage.emit(channel.slug)"
+                    title="ניהול אחסון">
+                    <nb-icon icon="hard-drive-outline"></nb-icon>
+                    אחסון
+                  </button>
                   <button nbButton status="danger" size="tiny" (click)="deleteChannel(channel.slug)"
                     title="מחק ערוץ">
                     <nb-icon icon="trash-2-outline"></nb-icon>

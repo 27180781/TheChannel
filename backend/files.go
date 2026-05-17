@@ -24,6 +24,57 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// compressWithTinyPng compresses an image using the TinyPNG API.
+// Returns the compressed bytes, or the original bytes if compression fails or is not applicable.
+func compressWithTinyPng(ctx context.Context, apiKey string, data []byte, mimeType string) []byte {
+	// Only compress supported image types
+	switch mimeType {
+	case "image/png", "image/jpeg", "image/webp":
+	default:
+		return data
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.tinify.com/shrink", bytes.NewReader(data))
+	if err != nil {
+		return data
+	}
+	req.SetBasicAuth("api", apiKey)
+	req.Header.Set("Content-Type", mimeType)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusCreated {
+		return data
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Output struct {
+			URL string `json:"url"`
+		} `json:"output"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || result.Output.URL == "" {
+		return data
+	}
+
+	dlReq, err := http.NewRequestWithContext(ctx, http.MethodGet, result.Output.URL, nil)
+	if err != nil {
+		return data
+	}
+	dlReq.SetBasicAuth("api", apiKey)
+
+	dlResp, err := http.DefaultClient.Do(dlReq)
+	if err != nil || dlResp.StatusCode != http.StatusOK {
+		return data
+	}
+	defer dlResp.Body.Close()
+
+	compressed, err := io.ReadAll(dlResp.Body)
+	if err != nil || len(compressed) == 0 {
+		return data
+	}
+	return compressed
+}
+
 var rootUploadPath = "/app/files/"
 
 type FileResponse struct {
@@ -33,11 +84,13 @@ type FileResponse struct {
 }
 
 type FileMetadata struct {
-	ID       string `json:"id"`
-	Filename string `json:"filename"`
-	Hash     string `json:"hash"`
-	Type     string `json:"type"`
-	Delete   bool   `json:"delete"`
+	ID          string `json:"id"`
+	Filename    string `json:"filename"`
+	Hash        string `json:"hash"`
+	Type        string `json:"type"`
+	Delete      bool   `json:"delete"`
+	Size        int64  `json:"size"`        // bytes
+	ChannelSlug string `json:"channelSlug"` // which channel owns this file
 }
 
 var maxBytesReader *http.MaxBytesError
@@ -149,7 +202,6 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Read file into memory for hashing + type detection + upload
 	fileBytes, err := io.ReadAll(file)
 	if err != nil {
 		http.Error(w, "error", http.StatusInternalServerError)
@@ -158,9 +210,20 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 
 	t, _ := filetype.Match(fileBytes[:min(512, len(fileBytes))])
 
-	// Compute SHA-256 hash
+	// Compress images with TinyPNG if the channel has an API key configured
+	if cfg.TinyPngApiKey != "" {
+		fileBytes = compressWithTinyPng(ctx, cfg.TinyPngApiKey, fileBytes, t.MIME.Value)
+	}
+
+	fileSize := int64(len(fileBytes))
 	hashBytes := sha256.Sum256(fileBytes)
 	fileHash := hex.EncodeToString(hashBytes[:])
+
+	// Quota check + auto-cleanup
+	if err := enforceStorageQuota(ctx, slug, fileSize); err != nil {
+		http.Error(w, err.Error(), http.StatusInsufficientStorage)
+		return
+	}
 
 	id := generatedRandomID(20)
 	if id == "" {
@@ -174,16 +237,18 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 		contentType = "application/octet-stream"
 	}
 
+	isNewHash := true
 	if r2Enabled {
 		key := r2ObjectKey(fileHash)
-		if !r2Exists(ctx, key) {
+		if r2Exists(ctx, key) {
+			isNewHash = false
+		} else {
 			if err := r2Upload(ctx, key, bytes.NewReader(fileBytes), contentType); err != nil {
 				http.Error(w, "error uploading file", http.StatusInternalServerError)
 				return
 			}
 		}
 	} else {
-		// Local storage
 		if err := os.MkdirAll(rootUploadPath, os.ModePerm); err != nil {
 			http.Error(w, "error", http.StatusInternalServerError)
 			return
@@ -194,25 +259,35 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		destPath := filepath.Join(hashSubDir, fileHash)
-		if _, err := os.Stat(destPath); os.IsNotExist(err) {
+		if _, statErr := os.Stat(destPath); os.IsNotExist(statErr) {
 			if err := os.WriteFile(destPath, fileBytes, 0644); err != nil {
 				http.Error(w, "error", http.StatusInternalServerError)
 				return
 			}
+		} else {
+			isNewHash = false
 		}
 	}
+	_ = isNewHash
+
+	dbIncrFileHashRefs(ctx, fileHash)
 
 	meta := &FileMetadata{
-		ID:       id,
-		Filename: safeFilename,
-		Hash:     fileHash,
-		Type:     t.MIME.Type,
-		Delete:   false,
+		ID:          id,
+		Filename:    safeFilename,
+		Hash:        fileHash,
+		Type:        t.MIME.Type,
+		Delete:      false,
+		Size:        fileSize,
+		ChannelSlug: slug,
 	}
 	if err := dbSaveFileMetadata(ctx, meta); err != nil {
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
+
+	dbIncrChannelStorageUsed(ctx, slug, fileSize)
+	dbAddChannelFile(ctx, slug, id, time.Now().Unix(), fileSize)
 
 	fileUrl := "/api/channel/" + slug + "/files/" + id
 
@@ -222,6 +297,71 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 		Filename: handler.Filename,
 		FileType: t.MIME.Type,
 	})
+}
+
+// enforceStorageQuota checks quota and runs auto-cleanup if needed.
+// Returns error if quota is exceeded and auto-cleanup is disabled or insufficient.
+func enforceStorageQuota(ctx context.Context, slug string, newFileSize int64) error {
+	quota, err := dbGetEffectiveStorageQuota(ctx, slug)
+	if err != nil || quota == 0 {
+		return nil
+	}
+
+	used, err := dbGetChannelStorageUsed(ctx, slug)
+	if err != nil {
+		return nil
+	}
+
+	if used+newFileSize <= quota {
+		return nil // within quota
+	}
+
+	autoCleanup, _ := dbGetChannelAutoCleanup(ctx, slug)
+	if !autoCleanup {
+		return fmt.Errorf("storage quota exceeded (%d/%d bytes)", used, quota)
+	}
+
+	// Auto-cleanup: delete oldest files until we have enough space (target: 80% of quota)
+	target := int64(float64(quota) * 0.80)
+	needToFree := (used + newFileSize) - target
+
+	files, err := dbGetOldestChannelFiles(ctx, slug, 200)
+	if err != nil {
+		return fmt.Errorf("storage quota exceeded")
+	}
+
+	for _, f := range files {
+		if needToFree <= 0 {
+			break
+		}
+		deleteFileByID(ctx, slug, f.ID)
+		needToFree -= f.Size
+	}
+
+	return nil
+}
+
+// deleteFileByID marks a file as deleted, decrements storage counter, and removes from R2/disk if no more refs.
+func deleteFileByID(ctx context.Context, slug, fileID string) {
+	meta, err := dbGetFileMetadata(ctx, fileID)
+	if err != nil || meta.Delete {
+		return
+	}
+
+	meta.Delete = true
+	dbSaveFileMetadata(ctx, meta)
+	dbDecrChannelStorageUsed(ctx, slug, meta.Size)
+	dbRemoveChannelFile(ctx, slug, fileID)
+
+	// Decrement hash refs and delete from storage if no more references
+	refs, err := dbDecrFileHashRefs(ctx, meta.Hash)
+	if err == nil && refs <= 0 {
+		if r2Enabled {
+			r2Delete(ctx, r2ObjectKey(meta.Hash))
+		} else {
+			os.Remove(filepath.Join(rootUploadPath, meta.Hash[:2], meta.Hash[2:4], meta.Hash))
+		}
+	}
 }
 
 func generatedFileHash(file io.Reader) (string, error) {

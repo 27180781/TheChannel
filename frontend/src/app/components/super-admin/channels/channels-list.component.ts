@@ -26,6 +26,7 @@ import { SuperAdminService, ChannelData } from '../../../services/super-admin.se
 export class ChannelsListComponent implements OnInit {
   @Output() editFeatures = new EventEmitter<string>();
   @Output() manageUsers = new EventEmitter<string>();
+  @Output() manageStorage = new EventEmitter<string>();
 
   channels: ChannelData[] = [];
   showCreateForm = false;
