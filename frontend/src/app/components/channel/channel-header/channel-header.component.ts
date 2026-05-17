@@ -40,6 +40,10 @@ export class ChannelHeaderComponent implements OnInit {
         title: 'ניהול ערוץ',
         icon: 'people-outline',
       }] : []),
+      ...(user?.globalRole === 'super_admin' ? [{
+        title: 'פאנל מנהל-על',
+        icon: 'shield-outline',
+      }] : []),
       {
         title: 'התנתק',
         icon: 'log-out',
@@ -90,6 +94,9 @@ export class ChannelHeaderComponent implements OnInit {
             break;
           case 'people-outline':
             this.dialogService.open(AdminPanelComponent, { closeOnBackdropClick: true });
+            break;
+          case 'shield-outline':
+            this.router.navigate(['/super-admin']);
             break;
         }
       });

@@ -1,0 +1,71 @@
+<nb-card>
+  <nb-card-header class="d-flex align-items-center justify-content-between">
+    <div class="d-flex align-items-center gap-2">
+      <nb-icon icon="settings-2-outline"></nb-icon>
+      <span>הגדרות גלובליות (FCM / VAPID)</span>
+    </div>
+    @if (!addingNew) {
+      <button nbButton status="primary" size="small" (click)="addingNew = true">
+        <nb-icon icon="plus-outline"></nb-icon>
+        הוסף הגדרה
+      </button>
+    }
+  </nb-card-header>
+
+  <nb-card-body>
+    @if (loading) {
+      <p class="text-center">טוען...</p>
+    } @else {
+      @if (addingNew) {
+        <nb-card class="mb-3">
+          <nb-card-header>הגדרה חדשה</nb-card-header>
+          <nb-card-body>
+            <div class="d-flex flex-column gap-2">
+              <div>
+                <label class="field-label">שם המפתח</label>
+                <input nbInput fullWidth type="text" [(ngModel)]="newKey" placeholder="setting-key">
+              </div>
+              <div>
+                <label class="field-label">ערך</label>
+                <input nbInput fullWidth type="text" [(ngModel)]="newValue" placeholder="ערך ההגדרה">
+              </div>
+              <div class="d-flex gap-2">
+                <button nbButton status="primary" size="small" (click)="addSetting()">
+                  <nb-icon icon="checkmark-outline"></nb-icon>
+                  הוסף
+                </button>
+                <button nbButton status="danger" size="small" (click)="addingNew = false; newKey = ''; newValue = ''">
+                  <nb-icon icon="close-outline"></nb-icon>
+                  ביטול
+                </button>
+              </div>
+            </div>
+          </nb-card-body>
+        </nb-card>
+      }
+
+      @if (settings.length === 0) {
+        <p class="text-center text-muted">אין הגדרות גלובליות</p>
+      }
+
+      @for (setting of settings; track $index; let i = $index) {
+        <div class="setting-row d-flex align-items-center gap-2 mb-2">
+          <input nbInput fieldSize="small" type="text" [(ngModel)]="settings[i].key"
+            placeholder="שם המפתח" style="width: 200px; flex-shrink: 0;">
+          <input nbInput fullWidth fieldSize="small" type="text" [(ngModel)]="settings[i].value"
+            placeholder="ערך">
+          <button nbButton status="danger" size="small" ghost (click)="removeSetting(i)">
+            <nb-icon icon="trash-2-outline"></nb-icon>
+          </button>
+        </div>
+      }
+    }
+  </nb-card-body>
+
+  <nb-card-footer>
+    <button nbButton status="primary" (click)="save()" [disabled]="saving">
+      <nb-icon icon="save-outline"></nb-icon>
+      {{ saving ? 'שומר...' : 'שמור הגדרות' }}
+    </button>
+  </nb-card-footer>
+</nb-card>

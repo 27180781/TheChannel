@@ -13,7 +13,7 @@
     </nb-layout-column>
   }
 
-  @if (userInfo?.privileges?.['writer']) {
+  @if (userInfo?.globalRole === 'super_admin' || userInfo?.privileges?.['writer'] || hasAnyRole(userInfo)) {
     <nb-layout-footer #inputForm id="inputForm" class="fixed-footer">
       <app-input-form class="w-100" (inputHeightChanged)="onInputHeightChanged()"></app-input-form>
     </nb-layout-footer>

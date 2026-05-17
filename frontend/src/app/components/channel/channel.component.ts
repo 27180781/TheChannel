@@ -63,6 +63,11 @@ export class ChannelComponent implements OnInit {
     });
   }
 
+  hasAnyRole(user: User | undefined): boolean {
+    if (!user?.channelRoles) return false;
+    return Object.keys(user.channelRoles).length > 0;
+  }
+
   onInputHeightChanged() {
     this.updateInputBottomOffset();
   }

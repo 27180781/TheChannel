@@ -4,10 +4,12 @@
       <nb-icon icon="people-outline"></nb-icon>
       <span>משתמשי ערוץ: <strong>{{ slug }}</strong></span>
     </div>
-    <button nbButton status="primary" size="small" (click)="addingUser = true" *ngIf="!addingUser">
-      <nb-icon icon="plus-outline"></nb-icon>
-      הוסף משתמש
-    </button>
+    @if (!addingUser) {
+      <button nbButton status="primary" size="small" (click)="addingUser = true">
+        <nb-icon icon="plus-outline"></nb-icon>
+        הוסף משתמש
+      </button>
+    }
   </nb-card-header>
 
   <nb-card-body>
