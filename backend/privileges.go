@@ -13,40 +13,56 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-type Privilege string              //privilege type
-type Privileges map[Privilege]bool // map of privileges
-var privilegesUsers sync.Map
-var adminUsers []string = strings.Split(os.Getenv("ADMIN_USERS"), ",")
+type GlobalRole string
+type ChannelRole string
 
 const (
-	Admin     Privilege = "admin"     // root privilege
-	Moderator Privilege = "moderator" // admin privilege
-	Writer    Privilege = "writer"    // can write posts
+	RoleSuperAdmin GlobalRole = "super_admin"
 )
 
+const (
+	RoleOwner     ChannelRole = "owner"
+	RoleModerator ChannelRole = "moderator"
+	RoleWriter    ChannelRole = "writer"
+)
+
+var channelRoleLevels = map[ChannelRole]int{
+	RoleWriter:    1,
+	RoleModerator: 2,
+	RoleOwner:     3,
+}
+
+var privilegesUsers sync.Map
+var superAdminEmails []string
+
 func initializePrivilegeUsers() {
+	superAdminEmails = strings.Split(os.Getenv("ADMIN_USERS"), ",")
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	privilegesUsers.Clear()
 	users, err := dbGetUsersList(ctx)
 	if err != nil && err != redis.Nil {
-		panic("Failed to get users list from database: " + err.Error())
+		panic("Failed to get users list: " + err.Error())
 	}
-	existsEmails := make(map[string]bool)
-	for _, user := range users {
-		existsEmails[user.Email] = true
+
+	emailToIdx := make(map[string]int)
+	for i, u := range users {
+		emailToIdx[u.Email] = i
 	}
-	for _, admin := range adminUsers {
-		if !existsEmails[admin] {
+
+	for _, email := range superAdminEmails {
+		email = strings.TrimSpace(email)
+		if email == "" {
+			continue
+		}
+		if i, exists := emailToIdx[email]; exists {
+			users[i].GlobalRole = RoleSuperAdmin
+		} else {
 			users = append(users, User{
-				Username: "",
-				Email:    admin,
-				Privileges: Privileges{
-					Admin:     true,
-					Moderator: true,
-					Writer:    true,
-				},
+				Email:      email,
+				GlobalRole: RoleSuperAdmin,
 			})
 		}
 	}
@@ -56,16 +72,57 @@ func initializePrivilegeUsers() {
 	}
 
 	if err := dbSetUsersList(ctx, users); err != nil {
-		panic("Failed to set users list in database: " + err.Error())
+		panic("Failed to set users list: " + err.Error())
 	}
 }
 
-func (p Privileges) MarshalBinary() ([]byte, error) {
-	return json.Marshal(p)
+func isSuperAdmin(r *http.Request) bool {
+	session, _ := store.Get(r, cookieName)
+	s, ok := session.Values["user"].(Session)
+	if !ok {
+		return false
+	}
+	return s.GlobalRole == RoleSuperAdmin
 }
 
-func (p *Privileges) UnmarshalBinary(data []byte) error {
-	return json.Unmarshal(data, p)
+func hasChannelRole(r *http.Request, slug string, minRole ChannelRole) bool {
+	if isSuperAdmin(r) {
+		return true
+	}
+	session, _ := store.Get(r, cookieName)
+	s, ok := session.Values["user"].(Session)
+	if !ok {
+		return false
+	}
+	if s.ChannelRoles == nil {
+		return false
+	}
+	role, exists := s.ChannelRoles[slug]
+	if !exists {
+		return false
+	}
+	return channelRoleLevels[role] >= channelRoleLevels[minRole]
+}
+
+func requireSuperAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isSuperAdmin(r) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func protectedWithChannelRole(minRole ChannelRole, handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		slug := channelSlugFromCtx(r)
+		if !hasChannelRole(r, slug, minRole) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		handler(w, r)
+	}
 }
 
 func getPrivilegeUsersList(w http.ResponseWriter, r *http.Request) {
@@ -103,7 +160,6 @@ func setPrivilegeUsers(w http.ResponseWriter, r *http.Request) {
 
 	initializePrivilegeUsers()
 
-	response := Response{Success: true}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(Response{Success: true})
 }
