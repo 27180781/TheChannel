@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"time"
 )
 
@@ -40,28 +41,121 @@ type MagnetAdsSettings struct {
 	MinMessagesSinceLast int64  `json:"minMessagesSinceLast"`
 }
 
+// isChannelMagnetLocked returns true if the super admin has locked magnet settings for this channel.
+func isChannelMagnetLocked(globalMagnet *GlobalMagnetConfig, ch *ChannelData) bool {
+	if globalMagnet.LockAll {
+		return true
+	}
+	if ch != nil && ch.Features.MagnetLockedByAdmin {
+		return true
+	}
+	return slices.Contains(globalMagnet.LockedChannels, ch.Slug)
+}
+
 func getMagnetAdsSettings(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	slug := channelSlugFromCtx(r)
-	cfg := getChannelConfig(ctx, slug)
+	ch := channelFromCtx(r)
 
-	settings := MagnetAdsSettings{
-		Enabled:              cfg.MagnetEnabled,
-		Mode:                 cfg.MagnetMode,
-		PerMessages:          cfg.MagnetPerMessages,
-		MinTimeSeconds:       cfg.MagnetMinTimeSeconds,
-		PerSeconds:           cfg.MagnetPerSeconds,
-		MinMessagesSinceLast: cfg.MagnetMinMessagesSince,
+	globalMagnet, err := dbGetGlobalMagnetConfig(ctx)
+	if err != nil {
+		globalMagnet = &GlobalMagnetConfig{}
 	}
 
-	if settings.Enabled {
-		settings.Snippet = cfg.MagnetSnippet
+	var settings MagnetAdsSettings
+
+	if isChannelMagnetLocked(globalMagnet, ch) {
+		// Super admin override: use global magnet config
+		settings = MagnetAdsSettings{
+			Enabled:              globalMagnet.Enabled,
+			Mode:                 globalMagnet.Mode,
+			PerMessages:          globalMagnet.PerMessages,
+			MinTimeSeconds:       globalMagnet.MinTimeSeconds,
+			PerSeconds:           globalMagnet.PerSeconds,
+			MinMessagesSinceLast: globalMagnet.MinMessagesSinceLast,
+		}
+		if settings.Enabled {
+			settings.Snippet = globalMagnet.Snippet
+		}
+	} else {
+		// Use channel's own magnet settings
+		cfg := getChannelConfig(ctx, slug)
+		settings = MagnetAdsSettings{
+			Enabled:              cfg.MagnetEnabled,
+			Mode:                 cfg.MagnetMode,
+			PerMessages:          cfg.MagnetPerMessages,
+			MinTimeSeconds:       cfg.MagnetMinTimeSeconds,
+			PerSeconds:           cfg.MagnetPerSeconds,
+			MinMessagesSinceLast: cfg.MagnetMinMessagesSince,
+		}
+		if settings.Enabled {
+			settings.Snippet = cfg.MagnetSnippet
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(settings)
+}
+
+// getGlobalMagnetConfig – super admin: read global magnet config
+func getGlobalMagnetConfig(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cfg, err := dbGetGlobalMagnetConfig(ctx)
+	if err != nil {
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(cfg)
+}
+
+// setGlobalMagnetConfig – super admin: save global magnet config + lock rules
+func setGlobalMagnetConfig(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var cfg GlobalMagnetConfig
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	if err := dbSetGlobalMagnetConfig(ctx, &cfg); err != nil {
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
+	}
+
+	// Sync MagnetLockedByAdmin flag on each affected channel's features
+	go syncMagnetLockFlags(&cfg)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(Response{Success: true})
+}
+
+// syncMagnetLockFlags updates MagnetLockedByAdmin on all channels based on the new global config.
+// Called in a goroutine after saving global magnet config.
+func syncMagnetLockFlags(globalMagnet *GlobalMagnetConfig) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	channels, err := dbListChannels(ctx)
+	if err != nil {
+		return
+	}
+
+	for _, ch := range channels {
+		shouldLock := globalMagnet.LockAll || slices.Contains(globalMagnet.LockedChannels, ch.Slug)
+		if ch.Features.MagnetLockedByAdmin != shouldLock {
+			ch.Features.MagnetLockedByAdmin = shouldLock
+			dbSetChannelFeatures(ctx, ch.Slug, &ch.Features)
+		}
+	}
 }
 
 const magnetStatsURL = "https://rucltqmtefvlrjhbedqu.supabase.co/functions/v1/publisher-stats"
@@ -69,15 +163,17 @@ const magnetStatsURL = "https://rucltqmtefvlrjhbedqu.supabase.co/functions/v1/pu
 var magnetStatsClient = &http.Client{Timeout: 15 * time.Second}
 
 func getMagnetStats(w http.ResponseWriter, r *http.Request) {
-	// Magnet stats uses global settingConfig
-	apiKey := settingConfig.MagnetApiKey
-	if apiKey == "" {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	globalMagnet, err := dbGetGlobalMagnetConfig(ctx)
+	if err != nil || globalMagnet.ApiKey == "" {
 		http.Error(w, `{"error":"missing_api_key","message":"Magnet API key is not configured"}`, http.StatusBadRequest)
 		return
 	}
 
 	q := url.Values{}
-	q.Set("k", apiKey)
+	q.Set("k", globalMagnet.ApiKey)
 	reqURL := magnetStatsURL + "?" + q.Encode()
 
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, reqURL, nil)

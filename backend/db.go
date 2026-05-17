@@ -946,3 +946,40 @@ func dbAssignChannelRole(ctx context.Context, email, slug string, role ChannelRo
 
 	return dbSetUsersList(ctx, users)
 }
+
+// GlobalMagnetConfig stored at global:magnet:config
+type GlobalMagnetConfig struct {
+	Enabled              bool     `json:"enabled"`
+	Snippet              string   `json:"snippet"`
+	Mode                 string   `json:"mode"`
+	PerMessages          int64    `json:"perMessages"`
+	MinTimeSeconds       int64    `json:"minTimeSeconds"`
+	PerSeconds           int64    `json:"perSeconds"`
+	MinMessagesSinceLast int64    `json:"minMessagesSinceLast"`
+	ApiKey               string   `json:"apiKey"`
+	LockAll              bool     `json:"lockAll"`          // override ALL channels
+	LockedChannels       []string `json:"lockedChannels"`   // override specific channels
+}
+
+func dbGetGlobalMagnetConfig(ctx context.Context) (*GlobalMagnetConfig, error) {
+	data, err := rdb.Get(ctx, "global:magnet:config").Result()
+	if err != nil {
+		if err == redis.Nil {
+			return &GlobalMagnetConfig{}, nil
+		}
+		return nil, err
+	}
+	var cfg GlobalMagnetConfig
+	if err := json.Unmarshal([]byte(data), &cfg); err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
+
+func dbSetGlobalMagnetConfig(ctx context.Context, cfg *GlobalMagnetConfig) error {
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return rdb.Set(ctx, "global:magnet:config", data, 0).Err()
+}

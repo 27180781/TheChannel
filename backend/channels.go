@@ -12,16 +12,17 @@ import (
 )
 
 type ChannelFeatures struct {
-	Reactions         bool `json:"reactions"`
-	FileUploads       bool `json:"fileUploads"`
-	Reports           bool `json:"reports"`
-	Ads               bool `json:"ads"`
-	Notifications     bool `json:"notifications"`
-	RequireAuth       bool `json:"requireAuth"`
-	RequireAuthFiles  bool `json:"requireAuthFiles"`
-	CountViews        bool `json:"countViews"`
-	ScheduledMessages bool `json:"scheduledMessages"`
-	Webhook           bool `json:"webhook"`
+	Reactions              bool `json:"reactions"`
+	FileUploads            bool `json:"fileUploads"`
+	Reports                bool `json:"reports"`
+	Ads                    bool `json:"ads"`
+	Notifications          bool `json:"notifications"`
+	RequireAuth            bool `json:"requireAuth"`
+	RequireAuthFiles       bool `json:"requireAuthFiles"`
+	CountViews             bool `json:"countViews"`
+	ScheduledMessages      bool `json:"scheduledMessages"`
+	Webhook                bool `json:"webhook"`
+	MagnetLockedByAdmin    bool `json:"magnetLockedByAdmin"` // set by super admin, owner cannot change
 }
 
 type ChannelData struct {

@@ -65,6 +65,8 @@ func main() {
 		r.Post("/users/set", setPrivilegeUsers)
 		r.Get("/global-settings/get", getGlobalSettings)
 		r.Post("/global-settings/set", setGlobalSettings)
+		r.Get("/magnet/config", getGlobalMagnetConfig)
+		r.Post("/magnet/config", setGlobalMagnetConfig)
 		r.Get("/magnet/stats", getMagnetStats)
 		r.Post("/statistics/reset", resetStatistics)
 	})
