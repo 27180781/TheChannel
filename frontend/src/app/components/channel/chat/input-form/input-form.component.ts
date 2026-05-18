@@ -59,7 +59,6 @@ export class InputFormComponent implements OnInit, OnDestroy {
   isSending: boolean = false;
   showMarkdownPreview: boolean = false;
   hasScrollbar: boolean = false;
-  enterSendsMessage: boolean = false;
   private subscription!: Subscription;
 
   @ViewChild('inputTextArea') inputTextArea!: ElementRef<HTMLTextAreaElement>;
@@ -76,11 +75,6 @@ export class InputFormComponent implements OnInit, OnDestroy {
     if (this.message) {
       this.input = this.message.text || '';
     }
-
-    this.adminService.getSettings().then(settings => {
-      const s = settings.find(s => s.key === 'enter_sends_message');
-      this.enterSendsMessage = s?.value === 'true' || s?.value === true as any;
-    }).catch(() => {});
 
     this.subscription = this.adminService.messageEditObservable.subscribe((edit?: EditMsg) => {
       if (edit?.isScheduling) {
@@ -286,7 +280,7 @@ export class InputFormComponent implements OnInit, OnDestroy {
   }
 
   onKeydown(event: KeyboardEvent) {
-    if (!this.enterSendsMessage) return;
+    if (!this.adminService.enterSendsMessage) return;
     if (event.key !== 'Enter') return;
 
     if (event.ctrlKey || event.metaKey) {
