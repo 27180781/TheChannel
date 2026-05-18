@@ -111,7 +111,8 @@ import { SuperAdminService, ChannelRequest } from '../../../services/super-admin
                                   type="text"
                                   [(ngModel)]="approveSlug"
                                   name="approveSlug"
-                                  placeholder="my-channel">
+                                  placeholder="my-channel"
+                                  (input)="approveSlug = approveSlug.toLowerCase()">
                               </div>
                               <div class="col-md-8">
                                 <label class="form-label">הערות (אופציונלי)</label>
@@ -200,7 +201,7 @@ export class ChannelRequestsComponent implements OnInit {
     this.approveMode = true;
     this.rejectMode = false;
     this.actionId = req.id;
-    this.approveSlug = req.desiredSlug;
+    this.approveSlug = req.desiredSlug.toLowerCase().replace(/[^a-z0-9-]/g, '-');
     this.approveNotes = '';
   }
 
@@ -221,7 +222,7 @@ export class ChannelRequestsComponent implements OnInit {
         this.toastr.success('', 'הערוץ נוצר בהצלחה');
         this.load();
       })
-      .catch(() => this.toastr.danger('', 'שגיאה באישור הבקשה'));
+      .catch((err) => this.toastr.danger(err?.error || '', 'שגיאה באישור הבקשה'));
   }
 
   confirmReject(): void {
