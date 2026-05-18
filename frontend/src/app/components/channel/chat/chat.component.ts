@@ -310,23 +310,16 @@ export class ChatComponent implements OnInit, OnDestroy {
         const fresh = missed.filter(m => !existing.has(m.id));
         if (!fresh.length) return;
 
-        // Anchor the current scroll position so adding messages at the
-        // visual bottom (newest) does not shift the viewport.
-        const anchorEl = this.getScrollAnchorElement();
-        const anchorTop = anchorEl?.getBoundingClientRect().top ?? 0;
-
-        // fresh is in ascending order; reverse to prepend newest-first
+        // fresh is in ascending order; reverse so newest is at index 0
         this.messages.unshift(...[...fresh].reverse());
         this.hasNewMessages = missed.length >= this.limit;
         this.rebuildItems();
 
-        // Restore position relative to anchor so the user's view doesn't jump.
-        if (anchorEl) {
-          const delta = anchorEl.getBoundingClientRect().top - anchorTop;
-          window.scrollBy({ top: delta, behavior: 'instant' });
-        }
-
-        // Only flag badge if user is not already at the bottom.
+        // The browser's overflow-anchor CSS property handles viewport
+        // preservation automatically when content is added at the visual
+        // bottom (flex-column-reverse puts new items there). We only need
+        // to act when the user is already at the bottom: scroll them to
+        // see the new messages immediately.
         if (this.isAtBottom()) {
           this.thereNewMessages = false;
           this.scrollToBottom(false);
@@ -390,7 +383,7 @@ export class ChatComponent implements OnInit, OnDestroy {
 
     opt.resetList && (this.offset = 0);
 
-    const maxId = Math.max(...this.messages.map(m => m.id!));
+    const maxId = this.messages.length ? Math.max(...this.messages.map(m => m.id!)) : 0;
     if (opt.scrollDown) {
       direction = "asc";
       startId = maxId;

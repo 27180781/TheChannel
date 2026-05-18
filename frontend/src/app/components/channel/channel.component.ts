@@ -83,6 +83,11 @@ export class ChannelComponent implements OnInit, OnDestroy {
   private async initChannel(slug: string | null): Promise<void> {
     this.slugReady = false;
     this.noChannel = false;
+    // Yield to Angular's change detection so the @if (slugReady) block
+    // actually destroys ChatComponent before we reinitialise with the new slug.
+    // Without this, false→true in the same synchronous frame is collapsed and
+    // the child is never torn down, leaving stale state (isVisible, messages, etc).
+    await Promise.resolve();
 
     if (!slug) {
       const user = await this._authService.loadUserInfo();
