@@ -1,3 +1,9 @@
+// Hidden until the initial scroll-to-last-read is resolved so there is no
+// visible "flash at bottom then jump" on first load.
+.chat-hidden {
+  visibility: hidden;
+}
+
 .offline-banner {
   position: sticky;
   top: 0;
