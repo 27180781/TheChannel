@@ -5,7 +5,7 @@ COPY ./frontend .
 RUN  npm install \
     && npm run build
 
-FROM golang:1.24 AS builder2
+FROM golang:1.25 AS builder2
 
 WORKDIR /app
 
