@@ -1,6 +1,6 @@
 module channel
 
-go 1.24
+go 1.25.0
 
 require github.com/redis/go-redis/v9 v9.7.0
 
@@ -72,7 +72,7 @@ require (
 	golang.org/x/sync v0.14.0 // indirect
 	golang.org/x/sys v0.33.0 // indirect
 	golang.org/x/text v0.25.0 // indirect
-	golang.org/x/time v0.11.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/api v0.233.0 // indirect
 	google.golang.org/appengine/v2 v2.0.6 // indirect
 	google.golang.org/genproto v0.0.0-20250519155744-55703ea1f237 // indirect

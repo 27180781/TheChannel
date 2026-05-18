@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi"
+	"github.com/redis/go-redis/v9"
 )
 
 func getMessages(w http.ResponseWriter, r *http.Request) {
@@ -35,6 +36,16 @@ func getMessages(w http.ResponseWriter, r *http.Request) {
 
 	isAdmin := hasChannelRole(r, slug, RoleWriter)
 	countViews := ch != nil && ch.Features.CountViews
+
+	// ETag: skip expensive query if content hasn't changed since client's copy
+	etag := `"` + getLastModified(ctx, slug) + `"`
+	if etag != `""` {
+		w.Header().Set("ETag", etag)
+		if r.Header.Get("If-None-Match") == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
 
 	messages, err := funcGetMessageRange(ctx, slug, int64(offset), int64(limit), isAdmin, countViews, direction)
 	if err != nil {
@@ -144,6 +155,12 @@ func deleteMessage(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// getEvents serves a Server-Sent Events stream backed by a Redis Stream.
+//
+// Using Redis Streams instead of pub/sub enables:
+//   - Horizontal scaling: multiple backend instances can all serve SSE
+//   - Reconnection: clients send Last-Event-ID to resume without missing events
+//   - Durability: stream retains the last ~1000 events (configurable in publishEvent)
 func getEvents(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -152,18 +169,21 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slug := channelSlugFromCtx(r)
+	streamKey := fmt.Sprintf("channel:%s:events", slug)
 
-	clientCtx := r.Context()
-	heartbeat := time.NewTicker(25 * time.Second)
-	defer heartbeat.Stop()
+	// Support SSE reconnection: browser sends Last-Event-ID with the stream entry ID
+	// from the last event it received. On fresh connect, start from "now".
+	lastID := r.Header.Get("Last-Event-ID")
+	if lastID == "" {
+		lastID = "$"
+	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	_, err := fmt.Fprintf(w, "data: {\"type\": \"heartbeat\"}\n\n")
-	if err != nil {
+	if _, err := fmt.Fprintf(w, "data: {\"type\": \"heartbeat\"}\n\n"); err != nil {
 		return
 	}
 	flusher.Flush()
@@ -171,37 +191,53 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 	go increaseCounterSSE(slug)
 	defer decreaseCounterSSE(slug)
 
-	eventChannel := fmt.Sprintf("events:%s", slug)
-	pubsub := rdb.Subscribe(r.Context(), eventChannel)
-	defer pubsub.Close()
+	clientCtx := r.Context()
+	lastHeartbeat := time.Now()
+	const blockDuration = 5 * time.Second
+	const heartbeatInterval = 25 * time.Second
 
-	if _, err := pubsub.Receive(clientCtx); err != nil {
-		http.Error(w, "Failed to subscribe to events", http.StatusInternalServerError)
-		return
-	}
-
-	ch := pubsub.Channel()
 	for {
-		select {
-		case <-clientCtx.Done():
+		if clientCtx.Err() != nil {
 			return
-
-		case <-heartbeat.C:
-			_, err := fmt.Fprintf(w, "data: {\"type\": \"heartbeat\"}\n\n")
-			if err != nil {
-				return
-			}
-			flusher.Flush()
-
-		case msg, ok := <-ch:
-			if !ok {
-				return
-			}
-			_, err := fmt.Fprintf(w, "data: %s\n\n", msg.Payload)
-			if err != nil {
-				return
-			}
-			flusher.Flush()
 		}
+
+		// Send heartbeat if it's been too long
+		if time.Since(lastHeartbeat) >= heartbeatInterval {
+			if _, err := fmt.Fprintf(w, "data: {\"type\": \"heartbeat\"}\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+			lastHeartbeat = time.Now()
+		}
+
+		// XREAD blocks until new messages arrive or timeout expires.
+		// A short block duration lets us send periodic heartbeats and check for disconnect.
+		streams, err := rdb.XRead(clientCtx, &redis.XReadArgs{
+			Streams: []string{streamKey, lastID},
+			Count:   50,
+			Block:   blockDuration,
+		}).Result()
+
+		if clientCtx.Err() != nil {
+			return
+		}
+		if err != nil {
+			// redis.Nil = block timeout with no messages; other errors: brief pause then retry
+			if err != redis.Nil {
+				time.Sleep(500 * time.Millisecond)
+			}
+			continue
+		}
+
+		for _, stream := range streams {
+			for _, msg := range stream.Messages {
+				lastID = msg.ID
+				data, _ := msg.Values["data"].(string)
+				if _, err := fmt.Fprintf(w, "id: %s\ndata: %s\n\n", lastID, data); err != nil {
+					return
+				}
+			}
+		}
+		flusher.Flush()
 	}
 }

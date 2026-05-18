@@ -279,6 +279,45 @@ export class InputFormComponent implements OnInit, OnDestroy {
     }
   }
 
+  onKeydown(event: KeyboardEvent) {
+    if (!this.adminService.enterSendsMessage) return;
+    if (event.key !== 'Enter') return;
+
+    if (event.ctrlKey || event.metaKey) {
+      // Ctrl+Enter → insert newline at cursor
+      event.preventDefault();
+      const ta = this.inputTextArea.nativeElement;
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      this.input = this.input.substring(0, start) + '\n' + this.input.substring(end);
+      setTimeout(() => { ta.selectionStart = ta.selectionEnd = start + 1; });
+    } else if (!event.shiftKey) {
+      // Enter alone → send
+      event.preventDefault();
+      this.sendMessage();
+    }
+  }
+
+  onPaste(event: ClipboardEvent) {
+    const items = event.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith('image/')) {
+        const file = items[i].getAsFile();
+        if (!file) continue;
+        event.preventDefault();
+        const attachment: Attachment = { file };
+        const idx = this.attachments.push(attachment) - 1;
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = (e) => {
+          if (e.target) this.attachments[idx].url = e.target.result as string;
+        };
+        this.uploadFile(this.attachments[idx]);
+      }
+    }
+  }
+
   applyFormat(format: 'bold' | 'italic' | 'underline' | 'code') {
     const textArea = this.inputTextArea.nativeElement;
     const start = textArea.selectionStart;

@@ -6,9 +6,7 @@ import { AuthService } from '../../services/auth.service';
 
 @Component({
   selector: 'app-login',
-  imports: [
-    FormsModule
-],
+  imports: [FormsModule],
   templateUrl: './login.component.html',
   styleUrl: './login.component.scss'
 })
@@ -69,7 +67,7 @@ export class LoginComponent implements OnInit {
       return;
     }
 
-    this.router.navigate(['/']);
+    this.router.navigate(['/channel']);
   }
 
   login() {

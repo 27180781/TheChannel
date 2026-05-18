@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 func init() {
@@ -12,49 +15,62 @@ func init() {
 		ticker := time.NewTicker(1 * time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
-			ctxList, cancelList := context.WithTimeout(context.Background(), 5*time.Second)
-			channels, err := dbListChannels(ctxList)
-			cancelList()
-			if err != nil {
-				continue
-			}
-
-			for _, ch := range channels {
-				slug := ch.Slug
-				ctxGet, cancelGet := context.WithTimeout(context.Background(), 5*time.Second)
-				list, err := dbGetScheduledMessages(ctxGet, slug)
-				cancelGet()
-				if err != nil {
-					continue
-				}
-
-				now := time.Now()
-				newList := make([]Message, 0)
-				for _, msg := range *list {
-					if msg.Timestamp.Before(now) {
-						go func(m *Message, s string) {
-							ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-							defer cancel()
-
-							m.ID = getMessageNextId(ctx, s)
-							m.Timestamp = time.Now()
-							m.Author = "Scheduled"
-							m.AuthorId = "0"
-							setMessage(ctx, s, m, false)
-							go SendWebhook(context.Background(), s, "create", m)
-							go pushFcmMessage(s, m)
-						}(&msg, slug)
-					} else {
-						newList = append(newList, msg)
-					}
-				}
-
-				ctxSave, cancelSave := context.WithTimeout(context.Background(), 5*time.Second)
-				dbSaveScheduledMessages(ctxSave, slug, &newList)
-				cancelSave()
-			}
+			runScheduledMessages()
 		}
 	}()
+}
+
+// runScheduledMessages only processes channels that have at least one message
+// due before now, using the "scheduled:due_channels" sorted set (score = earliest
+// due timestamp). This avoids querying every channel every minute.
+func runScheduledMessages() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	now := float64(time.Now().Unix())
+
+	// Get all channels with at least one message due by now
+	slugs, err := rdb.ZRangeByScore(ctx, "scheduled:due_channels", &redis.ZRangeBy{
+		Min: "0",
+		Max: fmt.Sprintf("%f", now),
+	}).Result()
+	if err != nil || len(slugs) == 0 {
+		return
+	}
+
+	for _, slug := range slugs {
+		slug := slug
+		ctxGet, cancelGet := context.WithTimeout(context.Background(), 5*time.Second)
+		list, err := dbGetScheduledMessages(ctxGet, slug)
+		cancelGet()
+		if err != nil {
+			continue
+		}
+
+		nowTime := time.Now()
+		newList := make([]Message, 0)
+		for _, msg := range *list {
+			if msg.Timestamp.Before(nowTime) {
+				go func(m *Message, s string) {
+					postCtx, postCancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer postCancel()
+					m.ID = getMessageNextId(postCtx, s)
+					m.Timestamp = time.Now()
+					m.Author = "Scheduled"
+					m.AuthorId = "0"
+					setMessage(postCtx, s, m, false)
+					go SendWebhook(context.Background(), s, "create", m)
+					go pushFcmMessage(s, m)
+				}(&msg, slug)
+			} else {
+				newList = append(newList, msg)
+			}
+		}
+
+		ctxSave, cancelSave := context.WithTimeout(context.Background(), 5*time.Second)
+		dbSaveScheduledMessages(ctxSave, slug, &newList) // also updates the sorted set
+		cancelSave()
+	}
 }
 
 func getScheduledMessages(w http.ResponseWriter, r *http.Request) {

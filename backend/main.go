@@ -78,7 +78,13 @@ func main() {
 		r.Get("/channels/{slug}/storage", getSuperAdminChannelStorage)
 		r.Put("/channels/{slug}/storage", setSuperAdminChannelStorage)
 		r.Post("/statistics/reset", resetStatistics)
+		r.Get("/channel-requests", listChannelRequests)
+		r.Post("/channel-requests/{id}/approve", approveChannelRequest)
+		r.Post("/channel-requests/{id}/reject", rejectChannelRequest)
 	})
+
+	// Public: submit channel request (no auth required)
+	r.Post("/api/channel-request", submitChannelRequest)
 
 	// Per-channel API import (with API key, no channel middleware needed - slug from URL)
 	r.Post("/api/channel/{slug}/import/post", addNewPost)
@@ -109,7 +115,7 @@ func main() {
 				r.Post("/new", protectedWithChannelRole(RoleWriter, addMessage))
 				r.Post("/edit-message", protectedWithChannelRole(RoleWriter, updateMessage))
 				r.Get("/delete-message/{id}", protectedWithChannelRole(RoleWriter, deleteMessage))
-				r.Post("/upload", protectedWithChannelRole(RoleWriter, uploadFile))
+				r.Post("/upload", protectedWithChannelRole(RoleWriter, uploadRateLimit(uploadFile)))
 				r.Get("/scheduled-messages/get", protectedWithChannelRole(RoleWriter, getScheduledMessages))
 				r.Post("/scheduled-messages/update", protectedWithChannelRole(RoleWriter, updateScheduledMessages))
 

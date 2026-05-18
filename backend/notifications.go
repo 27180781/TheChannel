@@ -43,9 +43,14 @@ type NotificationsConfig struct {
 }
 
 func getNotificationsConfig(w http.ResponseWriter, r *http.Request) {
-	// Notifications config uses global FCM/VAPID settings
+	slug := channelSlugFromCtx(r)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	channelCfg := getChannelConfig(ctx, slug)
+
 	response := NotificationsConfig{
-		EnableNotifications: settingConfig.OnNotification,
+		EnableNotifications: settingConfig.OnNotification && channelCfg.OnNotification,
 		VAPID:               settingConfig.VAPID,
 		FirebaseConfig: FirebaseConfig{
 			ApiKey:            settingConfig.FcmApiKey,
@@ -157,6 +162,11 @@ func pushFcmMessage(slug string, m *Message) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
+
+	channelCfg := getChannelConfig(ctx, slug)
+	if !channelCfg.OnNotification {
+		return
+	}
 
 	list, err := getSubcriptionsList(slug)
 	if err != nil {

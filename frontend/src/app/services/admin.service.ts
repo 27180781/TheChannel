@@ -31,6 +31,8 @@ export class AdminService {
 
   private schedulingMessages: ChatMessage[] | null = null;
 
+  enterSendsMessage: boolean = false;
+
   constructor(
     private http: HttpClient,
     private slugService: SlugService,
