@@ -63,6 +63,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   userInfo?: User;
   isLoading: boolean = false;
   isOffline: boolean = false;
+  isVisible: boolean = false;   // hidden until initial scroll is resolved
   offset: number = 0;
   limit: number = 20;
   hasOldMessages: boolean = true;
@@ -168,17 +169,26 @@ export class ChatComponent implements OnInit, OnDestroy {
 
     this.loadMessages().then(() => {
       const lastReadMsg = Number(localStorage.getItem('lastReadMessage'));
-      const lastMsgId = this.messages[0].id!;
+      const lastMsgId = this.messages[0]?.id;
+      if (!lastMsgId) { this.isVisible = true; return; }
+
       if (lastReadMsg && lastReadMsg < lastMsgId) {
+        // Set the indicator BEFORE revealing the list so the line renders
+        // at the right position on first paint — no visible jump.
+        this.lastReadMessageId = lastReadMsg;
+        this.scrollToId({ messageId: lastReadMsg, smooth: false, mark: false });
+        // Wait one frame for scrollToId to finish (it may need to load more messages),
+        // then reveal. setLastReadMessage only after the user has actually seen the
+        // position — so a refresh still brings them back.
         setTimeout(() => {
-          this.scrollToId({ messageId: lastReadMsg, smooth: false, mark: false });
-          this.lastReadMessageId = lastReadMsg;
-        }, 200);
+          this.isVisible = true;
+          this.setLastReadMessage(lastMsgId.toString());
+        }, 350);
       } else {
         this.scrollToBottom(false);
+        this.isVisible = true;
+        this.setLastReadMessage(lastMsgId.toString());
       }
-
-      this.setLastReadMessage(lastMsgId.toString());
     });
   }
 
@@ -211,9 +221,10 @@ export class ChatComponent implements OnInit, OnDestroy {
       switch (message.type) {
         case 'new-message':
           if (this.hasNewMessages) break;
+          if (this.messages.some(m => m.id === message.message.id)) break; // dedup after reconnect
           this.zone.run(() => {
             this.messages.unshift(message.message);
-            this.thereNewMessages = !(message.message.author === this.userInfo?.username);
+            this.thereNewMessages = !this.isAtBottom() && !(message.message.author === this.userInfo?.username);
             this.setLastReadMessage(message.message.id!.toString());
             if (this.userInfo?.channelRoles && Object.keys(this.userInfo.channelRoles).length > 0 && this.scheduledMessages && message.message.author === "Scheduled") {
               this.loadScheduledMessages(true);
@@ -291,17 +302,57 @@ export class ChatComponent implements OnInit, OnDestroy {
     const maxId = Math.max(...this.messages.map(m => m.id!));
     try {
       const missed = await firstValueFrom(this.chatService.getMessages(maxId, this.limit, 'asc'));
-      if (missed?.length) {
-        this.zone.run(() => {
-          this.messages.unshift(...missed.reverse());
-          this.hasNewMessages = missed.length >= this.limit;
+      if (!missed?.length) return;
+
+      this.zone.run(() => {
+        // Deduplicate: SSE may have already delivered some of these via Last-Event-ID.
+        const existing = new Set(this.messages.map(m => m.id));
+        const fresh = missed.filter(m => !existing.has(m.id));
+        if (!fresh.length) return;
+
+        // Anchor the current scroll position so adding messages at the
+        // visual bottom (newest) does not shift the viewport.
+        const anchorEl = this.getScrollAnchorElement();
+        const anchorTop = anchorEl?.getBoundingClientRect().top ?? 0;
+
+        // fresh is in ascending order; reverse to prepend newest-first
+        this.messages.unshift(...[...fresh].reverse());
+        this.hasNewMessages = missed.length >= this.limit;
+        this.rebuildItems();
+
+        // Restore position relative to anchor so the user's view doesn't jump.
+        if (anchorEl) {
+          const delta = anchorEl.getBoundingClientRect().top - anchorTop;
+          window.scrollBy({ top: delta, behavior: 'instant' });
+        }
+
+        // Only flag badge if user is not already at the bottom.
+        if (this.isAtBottom()) {
+          this.thereNewMessages = false;
+          this.scrollToBottom(false);
+        } else {
           this.thereNewMessages = true;
-          this.rebuildItems();
-        });
-      }
+        }
+      });
     } catch {
       // Best-effort; will retry on the next reconnect
     }
+  }
+
+  private isAtBottom(): boolean {
+    const distanceFromBottom =
+      document.documentElement.scrollHeight - window.innerHeight - window.scrollY;
+    return distanceFromBottom < 80;
+  }
+
+  private getScrollAnchorElement(): Element | null {
+    // Pick the topmost fully-visible message as the scroll anchor.
+    const items = document.querySelectorAll('nb-list-item');
+    for (const el of Array.from(items)) {
+      const rect = el.getBoundingClientRect();
+      if (rect.top >= 0 && rect.bottom <= window.innerHeight) return el;
+    }
+    return null;
   }
 
   onListScroll() {
