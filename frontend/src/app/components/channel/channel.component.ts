@@ -1,4 +1,4 @@
-import { Component, ElementRef, OnInit, Renderer2, RendererStyleFlags2, ViewChild } from '@angular/core';
+import { Component, ElementRef, OnDestroy, OnInit, Renderer2, RendererStyleFlags2, ViewChild } from '@angular/core';
 import { AdvertisingComponent } from "./advertising/advertising.component";
 
 import { Ad, AdsService } from '../../services/ads.service';
@@ -19,6 +19,7 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { SlugService } from '../../services/slug.service';
 import { AdminService } from '../../services/admin.service';
 import { ChatService } from '../../services/chat.service';
+import { Subscription } from 'rxjs';
 
 @Component({
   selector: 'app-channel',
@@ -37,7 +38,7 @@ import { ChatService } from '../../services/chat.service';
   templateUrl: './channel.component.html',
   styleUrl: './channel.component.scss'
 })
-export class ChannelComponent implements OnInit {
+export class ChannelComponent implements OnInit, OnDestroy {
 
   @ViewChild('inputForm', { static: false })
   set inputForm(element: ElementRef) {
@@ -63,9 +64,25 @@ export class ChannelComponent implements OnInit {
   ad: Ad = { src: '', width: 0 };
   userInfo?: User;
   slugReady = false;
+  noChannel = false;
+  private paramSub?: Subscription;
 
-  async ngOnInit(): Promise<void> {
-    let slug = this.route.snapshot.paramMap.get('slug');
+  ngOnInit(): void {
+    // Subscribe to paramMap so navigation between /channel/foo → /channel/bar
+    // triggers a full re-initialization without needing to destroy the component.
+    this.paramSub = this.route.paramMap.subscribe(params => {
+      const slug = params.get('slug');
+      this.initChannel(slug);
+    });
+  }
+
+  ngOnDestroy(): void {
+    this.paramSub?.unsubscribe();
+  }
+
+  private async initChannel(slug: string | null): Promise<void> {
+    this.slugReady = false;
+    this.noChannel = false;
 
     if (!slug) {
       const user = await this._authService.loadUserInfo();
@@ -73,6 +90,8 @@ export class ChannelComponent implements OnInit {
       const firstSlug = roles ? Object.keys(roles)[0] : '';
       if (firstSlug) {
         this.router.navigate(['/channel', firstSlug], { replaceUrl: true });
+      } else {
+        this.noChannel = true;
       }
       return;
     }
