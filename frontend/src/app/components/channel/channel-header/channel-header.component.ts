@@ -36,7 +36,7 @@ export class ChannelHeaderComponent implements OnInit {
   set userInfo(user: User | undefined) {
     this._userInfo = user;
     this.userMenu = [
-      ...((user?.privileges?.['admin'] || user?.privileges?.['moderator']) ? [{
+      ...(user?.channelRoles && Object.keys(user.channelRoles).length > 0 ? [{
         title: 'ניהול ערוץ',
         icon: 'people-outline',
       }] : []),

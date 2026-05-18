@@ -3,6 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { firstValueFrom, Observable } from 'rxjs';
 import { Channel } from '../models/channel.model';
 import { ResponseResult } from '../models/response-result.model';
+import { SlugService } from './slug.service';
 
 export type MessageType = 'md' | 'text' | 'image' | 'video' | 'audio' | 'document' | 'other';
 export type Reactions = { [key: string]: number }
@@ -45,19 +46,21 @@ export class ChatService {
   private emojis: string[] = [];
   public channelInfo?: Channel;
 
-  constructor(private http: HttpClient) { }
+  constructor(private http: HttpClient, private slugService: SlugService) { }
+
+  private get slug() { return this.slugService.slug; }
 
   async updateChannelInfo() {
-    this.channelInfo = await firstValueFrom(this.http.get<Channel>('/api/channel/info'));
+    this.channelInfo = await firstValueFrom(this.http.get<Channel>(`/api/channel/${this.slug}/info`));
     return;
   }
 
   editChannelInfo(name: string, description: string, logoUrl: string): Observable<ResponseResult> {
-    return this.http.post<ResponseResult>('/api/admin/edit-channel-info', { name, description, logoUrl });
+    return this.http.post<ResponseResult>(`/api/channel/${this.slug}/admin/edit-channel-info`, { name, description, logoUrl });
   }
 
   getMessages(offset: number, limit: number, direction: string): Observable<ChatResponse> {
-    return this.http.get<ChatResponse>('/api/messages', {
+    return this.http.get<ChatResponse>(`/api/channel/${this.slug}/messages`, {
       params: {
         offset: offset.toString(),
         limit: limit.toString(),
@@ -67,17 +70,17 @@ export class ChatService {
   }
 
   setReact(messageId: number, react: string) {
-    return firstValueFrom(this.http.post<ResponseResult>('/api/reactions/set-reactions', { messageId, emoji: react }));
+    return firstValueFrom(this.http.post<ResponseResult>(`/api/channel/${this.slug}/reactions/set-reactions`, { messageId, emoji: react }));
   }
 
   async getEmojisList(reload: boolean = false): Promise<string[]> {
-    if (this.emojis && !reload) return Promise.resolve(this.emojis); // הסרתי את בדיקת האורך, משום שזה יוצר קריאות מיותרות לשרת כאשר לא מוגדר אימוגים
-    this.emojis = await firstValueFrom(this.http.get<string[]>('/api/emojis/list'));
+    if (this.emojis && !reload) return Promise.resolve(this.emojis);
+    this.emojis = await firstValueFrom(this.http.get<string[]>(`/api/channel/${this.slug}/emojis/list`));
     return this.emojis;
   }
 
   reportMessage(messageId: number, reason: string): Promise<ResponseResult> {
-    return firstValueFrom(this.http.post<ResponseResult>('/api/messages/report', { messageId, reason }));
+    return firstValueFrom(this.http.post<ResponseResult>(`/api/channel/${this.slug}/messages/report`, { messageId, reason }));
   }
 
   sseListener(): EventSource {
@@ -85,7 +88,7 @@ export class ChatService {
       this.eventSource.close();
     }
 
-    this.eventSource = new EventSource('/api/events');
+    this.eventSource = new EventSource(`/api/channel/${this.slug}/events`);
 
     this.eventSource.onopen = () => {
       console.log('Connection opened');

@@ -27,36 +27,47 @@ export class LoginComponent implements OnInit {
     try {
       await this._authService.loadUserInfo();
       if (this._authService.userInfo) {
+        this.checkUserInfo = false;
         this.redirectAfterLogin();
         return;
       }
     } catch {
-      this._route.queryParams.subscribe(params => {
-        if (Object.keys(params).length > 0) {
-          if (params['code'] && params['state'] === localStorage.getItem('google_oauth_state')) {
-            this.code = params['code'];
-            this._authService.login(this.code).then(async () => {
-              await this._authService.loadUserInfo();
-              this.redirectAfterLogin();
-            }).catch(() => {
-              this.code = '';
-              this.status = 'failed';
-              alert('התחברות נכשלה, נסה שוב');
-            });
-          }
-        }
-      });
-    } finally {
-      this.checkUserInfo = false;
+      // Not logged in — check for OAuth callback params
     }
+
+    this.checkUserInfo = false;
+
+    this._route.queryParams.subscribe(params => {
+      if (params['code'] && params['state'] === localStorage.getItem('google_oauth_state')) {
+        this.code = params['code'];
+        this.checkUserInfo = true;
+        this._authService.login(this.code).then(async () => {
+          await this._authService.loadUserInfo();
+          this.redirectAfterLogin();
+        }).catch(() => {
+          this.code = '';
+          this.status = 'failed';
+          this.checkUserInfo = false;
+          alert('התחברות נכשלה, נסה שוב');
+        });
+      }
+    });
   }
 
   private redirectAfterLogin() {
     if (this._authService.userInfo?.globalRole === 'super_admin') {
       this.router.navigate(['/super-admin']);
-    } else {
-      this.router.navigate(['/channel']);
+      return;
     }
+
+    const returnUrl = localStorage.getItem('returnUrl');
+    localStorage.removeItem('returnUrl');
+    if (returnUrl && !returnUrl.startsWith('/login')) {
+      this.router.navigateByUrl(returnUrl);
+      return;
+    }
+
+    this.router.navigate(['/']);
   }
 
   login() {

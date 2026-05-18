@@ -15,6 +15,11 @@ export const routes: Routes = [
     canActivate: [AuthGuard],
   },
   {
+    path: 'channel/:slug',
+    component: ChannelComponent,
+    canActivate: [AuthGuard],
+  },
+  {
     path: 'super-admin',
     component: SuperAdminPanelComponent,
     canActivate: [AuthGuard, SuperAdminGuard],

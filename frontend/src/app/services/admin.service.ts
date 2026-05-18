@@ -6,6 +6,7 @@ import { ResponseResult } from '../models/response-result.model';
 import { Setting } from '../models/setting.model';
 import { Reports, Report } from '../models/report.model';
 import { Statistics } from '../models/statistics.model';
+import { SlugService } from './slug.service';
 
 export interface PrivilegeUser {
   id?: string;
@@ -35,7 +36,14 @@ export class AdminService {
 
   constructor(
     private http: HttpClient,
+    private slugService: SlugService,
   ) { }
+
+  private get slug() { return this.slugService.slug; }
+
+  clearCache() {
+    this.schedulingMessages = null;
+  }
 
   reloadSchedulingMessage() {
     this.schedulingBus.next();
@@ -50,27 +58,27 @@ export class AdminService {
   }
 
   getStatistics(): Promise<Statistics> {
-    return firstValueFrom(this.http.get<Statistics>('/api/admin/statistics'));
+    return firstValueFrom(this.http.get<Statistics>(`/api/channel/${this.slug}/admin/statistics`));
   }
 
   resetPeakStatistics(): Promise<ResponseResult> {
-    return firstValueFrom(this.http.post<ResponseResult>('/api/admin/statistics/reset', {}));
+    return firstValueFrom(this.http.post<ResponseResult>('/api/super-admin/statistics/reset', {}));
   }
 
   addMessage(message: ChatMessage): Observable<ChatMessage> {
-    return this.http.post<ChatMessage>('/api/admin/new', message);
+    return this.http.post<ChatMessage>(`/api/channel/${this.slug}/admin/new`, message);
   }
 
   editMessage(message: ChatMessage): Observable<ChatMessage> {
-    return this.http.post<ChatMessage>(`/api/admin/edit-message`, message);
+    return this.http.post<ChatMessage>(`/api/channel/${this.slug}/admin/edit-message`, message);
   }
 
   deleteMessage(id: number | undefined): Observable<ChatMessage> {
-    return this.http.get<ChatMessage>(`/api/admin/delete-message/${id}`);
+    return this.http.get<ChatMessage>(`/api/channel/${this.slug}/admin/delete-message/${id}`);
   }
 
   uploadFile(formData: FormData) {
-    return this.http.post<ChatFile>('/api/admin/upload', formData, {
+    return this.http.post<ChatFile>(`/api/channel/${this.slug}/admin/upload`, formData, {
       reportProgress: true,
       observe: 'events',
       responseType: 'json'
@@ -78,27 +86,27 @@ export class AdminService {
   }
 
   getPrivilegeUsersList(): Promise<PrivilegeUser[]> {
-    return firstValueFrom(this.http.get<PrivilegeUser[]>('/api/admin/privilegs-users/get-list'));
+    return firstValueFrom(this.http.get<PrivilegeUser[]>(`/api/channel/${this.slug}/admin/users/get`));
   }
 
   setPrivilegeUsers(privilegeUsers: PrivilegeUser[]): Promise<ResponseResult> {
-    return firstValueFrom(this.http.post<ResponseResult>('/api/admin/privilegs-users/set', { list: privilegeUsers }));
+    return firstValueFrom(this.http.post<ResponseResult>(`/api/channel/${this.slug}/admin/users/set`, { list: privilegeUsers }));
   }
 
   setEmojis(emojis: string[] | undefined) {
-    return firstValueFrom(this.http.post<ResponseResult>('/api/admin/set-emojis', { emojis }));
+    return firstValueFrom(this.http.post<ResponseResult>(`/api/channel/${this.slug}/admin/set-emojis`, { emojis }));
   }
 
   getSettings(): Promise<Setting[]> {
-    return firstValueFrom(this.http.get<Setting[]>('/api/admin/settings/get'));
+    return firstValueFrom(this.http.get<Setting[]>(`/api/channel/${this.slug}/admin/settings/get`));
   }
 
   setSettings(settings: Setting[]): Promise<ResponseResult> {
-    return firstValueFrom(this.http.post<ResponseResult>('/api/admin/settings/set', settings));
+    return firstValueFrom(this.http.post<ResponseResult>(`/api/channel/${this.slug}/admin/settings/set`, settings));
   }
 
   getReports(status: string): Promise<Reports> {
-    return firstValueFrom(this.http.get<Reports>('/api/admin/reports/get', {
+    return firstValueFrom(this.http.get<Reports>(`/api/channel/${this.slug}/admin/reports/get`, {
       params: {
         status: status
       }
@@ -106,7 +114,7 @@ export class AdminService {
   }
 
   setReports(report: Report): Promise<ResponseResult> {
-    return firstValueFrom(this.http.post<ResponseResult>('/api/admin/reports/set', report));
+    return firstValueFrom(this.http.post<ResponseResult>(`/api/channel/${this.slug}/admin/reports/set`, report));
   }
 
   async getScheduledMessages(reload?: boolean): Promise<ChatMessage[]> {
@@ -115,7 +123,7 @@ export class AdminService {
     }
 
     try {
-      this.schedulingMessages = await firstValueFrom(this.http.get<ChatMessage[]>('/api/admin/scheduled-messages/get'));
+      this.schedulingMessages = await firstValueFrom(this.http.get<ChatMessage[]>(`/api/channel/${this.slug}/admin/scheduled-messages/get`));
       return this.schedulingMessages;
     } catch {
       return this.schedulingMessages || [];
@@ -140,6 +148,6 @@ export class AdminService {
   }
 
   private updateSchedulingMessages(): Promise<ResponseResult> {
-    return firstValueFrom(this.http.post<ResponseResult>('/api/admin/scheduled-messages/update', this.schedulingMessages));
+    return firstValueFrom(this.http.post<ResponseResult>(`/api/channel/${this.slug}/admin/scheduled-messages/update`, this.schedulingMessages));
   }
 }

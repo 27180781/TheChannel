@@ -1,5 +1,6 @@
 import { Injectable } from '@angular/core';
 import { ChatMessage } from './chat.service';
+import { SlugService } from './slug.service';
 
 export interface MagnetSettings {
   enabled: boolean;
@@ -16,11 +17,13 @@ export class MagnetAdsService {
   private settings: MagnetSettings | null = null;
   private settingsPromise: Promise<MagnetSettings | null> | null = null;
 
+  constructor(private slugService: SlugService) {}
+
   loadSettings(force = false): Promise<MagnetSettings | null> {
     if (this.settings && !force) return Promise.resolve(this.settings);
     if (this.settingsPromise && !force) return this.settingsPromise;
 
-    this.settingsPromise = fetch('/api/ads/magnet')
+    this.settingsPromise = fetch(`/api/channel/${this.slugService.slug}/ads/magnet`)
       .then(r => r.ok ? r.json() : null)
       .then((data: MagnetSettings | null) => {
         this.settings = data;

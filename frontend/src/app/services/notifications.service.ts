@@ -4,6 +4,7 @@ import { NbToastrService } from '@nebular/theme';
 import { firstValueFrom } from 'rxjs';
 import { FirebaseApp, FirebaseOptions, initializeApp } from 'firebase/app';
 import { getMessaging, onMessage, getToken } from 'firebase/messaging';
+import { SlugService } from './slug.service';
 
 
 interface NotificationsConfig {
@@ -24,12 +25,13 @@ export class NotificationsService {
   constructor(
     private http: HttpClient,
     private tostrService: NbToastrService,
+    private slugService: SlugService,
   ) { }
 
   async init() {
     if (this.initialized) return;
 
-    await firstValueFrom(this.http.get<NotificationsConfig>('/api/channel/notifications-config'))
+    await firstValueFrom(this.http.get<NotificationsConfig>(`/api/channel/${this.slugService.slug}/notifications-config`))
       .then((config) => {
         this.config = config;
       });
@@ -91,7 +93,7 @@ export class NotificationsService {
 
   async subscribeNotifications(token: string): Promise<boolean> {
     if (!token) return false;
-    return firstValueFrom(this.http.post<boolean>('/api/channel/notifications-subscribe', { token }))
+    return firstValueFrom(this.http.post<boolean>(`/api/channel/${this.slugService.slug}/notifications-subscribe`, { token }))
   }
 
 }
