@@ -19,6 +19,11 @@ export class MagnetAdsService {
 
   constructor(private slugService: SlugService) {}
 
+  clearCache() {
+    this.settings = null;
+    this.settingsPromise = null;
+  }
+
   loadSettings(force = false): Promise<MagnetSettings | null> {
     if (this.settings && !force) return Promise.resolve(this.settings);
     if (this.settingsPromise && !force) return this.settingsPromise;

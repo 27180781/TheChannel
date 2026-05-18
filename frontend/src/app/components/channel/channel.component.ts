@@ -19,6 +19,7 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { SlugService } from '../../services/slug.service';
 import { AdminService } from '../../services/admin.service';
 import { ChatService } from '../../services/chat.service';
+import { MagnetAdsService } from '../../services/magnet-ads.service';
 import { Subscription } from 'rxjs';
 
 @Component({
@@ -59,6 +60,7 @@ export class ChannelComponent implements OnInit, OnDestroy {
     private slugService: SlugService,
     private adminService: AdminService,
     private chatService: ChatService,
+    private magnetAds: MagnetAdsService,
   ) { }
 
   ad: Ad = { src: '', width: 0 };
@@ -104,6 +106,7 @@ export class ChannelComponent implements OnInit, OnDestroy {
     this.slugService.slug = slug;
     this.chatService.channelInfo = undefined;
     this.adminService.clearCache();
+    this.magnetAds.clearCache();
     this.slugReady = true;
 
     this.adsService.getAds().then(ad => {

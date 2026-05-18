@@ -1,9 +1,9 @@
 import { Component, OnInit } from '@angular/core';
-import { AdminService, PrivilegeUser } from '../../../services/admin.service';
-import { NbButtonModule, NbCardModule, NbInputModule, NbToastrService, NbIconModule, NbCheckboxModule } from "@nebular/theme";
+import { AdminService, ChannelUser } from '../../../services/admin.service';
+import { NbButtonModule, NbCardModule, NbInputModule, NbToastrService, NbIconModule, NbSelectModule } from "@nebular/theme";
 import { FormsModule } from '@angular/forms';
-
 import { AuthService } from '../../../services/auth.service';
+import { SlugService } from '../../../services/slug.service';
 
 @Component({
   selector: 'app-privileg-dashboard',
@@ -13,8 +13,8 @@ import { AuthService } from '../../../services/auth.service';
     NbInputModule,
     FormsModule,
     NbIconModule,
-    NbCheckboxModule
-],
+    NbSelectModule,
+  ],
   templateUrl: './privileg-dashboard.component.html',
   styleUrl: './privileg-dashboard.component.scss'
 })
@@ -22,59 +22,59 @@ export class PrivilegDashboardComponent implements OnInit {
 
   constructor(
     private adminService: AdminService,
-    private tostService: NbToastrService,
+    private toastService: NbToastrService,
     public authService: AuthService,
+    private slugService: SlugService,
   ) { }
 
-  privilegeUsersList: PrivilegeUser[] = [];
-  addingNewUser: boolean = false;
-  newUser: PrivilegeUser = {
-    username: '',
-    publicName: '',
-    email: '',
-    privileges: {
-      admin: false,
-      moderator: false,
-      writer: false
-    }
-  };
+  usersList: ChannelUser[] = [];
+  addingNewUser = false;
+  newUserEmail = '';
+  newUserRole: 'moderator' | 'writer' = 'writer';
+
+  readonly roleOptions = [
+    { value: 'moderator', label: 'מנהל' },
+    { value: 'writer', label: 'כותב' },
+  ];
+
+  get isOwner(): boolean {
+    const roles = this.authService.userInfo?.channelRoles;
+    if (this.authService.userInfo?.globalRole === 'super_admin') return true;
+    return roles?.[this.slugService.slug] === 'owner';
+  }
 
   ngOnInit(): void {
-    this.adminService.getPrivilegeUsersList()
-      .then(list => this.privilegeUsersList = list)
+    this.adminService.getChannelUsers()
+      .then(list => this.usersList = list)
+      .catch(() => this.toastService.danger('', 'שגיאה בטעינת המשתמשים'));
   }
 
   saveChanges() {
-    this.adminService.setPrivilegeUsers(this.privilegeUsersList)
-      .then(() => this.tostService.success('', 'השינוים נשמרו בהצלחה!'))
-      .catch(() => this.tostService.danger('', 'שגיאה בשמירת השינוים'));
+    this.adminService.setChannelUsers(this.usersList)
+      .then(() => this.toastService.success('', 'השינויים נשמרו בהצלחה!'))
+      .catch(() => this.toastService.danger('', 'שגיאה בשמירת השינויים'));
   }
 
   deleteUser(index: number) {
     if (!confirm('האם אתה בטוח שברצונך למחוק את המשתמש הזה?')) return;
-    this.privilegeUsersList.splice(index, 1);
+    this.usersList.splice(index, 1);
   }
 
   saveNewUser() {
-    if (!this.newUser.email) return;
-    this.privilegeUsersList.push(this.newUser);
-    this.newUser = this.nullUser;
+    if (!this.newUserEmail) return;
+    this.usersList.push({ email: this.newUserEmail, role: this.newUserRole });
+    this.newUserEmail = '';
+    this.newUserRole = 'writer';
     this.addingNewUser = false;
   }
 
   resetNewUser() {
-    this.newUser = this.nullUser;
+    this.newUserEmail = '';
+    this.newUserRole = 'writer';
     this.addingNewUser = false;
   }
 
-  nullUser: PrivilegeUser = {
-    username: '',
-    publicName: '',
-    email: '',
-    privileges: {
-      admin: false,
-      moderator: false,
-      writer: false
-    }
-  };
+  getRoleLabel(role: string): string {
+    return this.roleOptions.find(o => o.value === role)?.label ?? role;
+  }
 }

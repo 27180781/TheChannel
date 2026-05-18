@@ -8,12 +8,9 @@ import { Reports, Report } from '../models/report.model';
 import { Statistics } from '../models/statistics.model';
 import { SlugService } from './slug.service';
 
-export interface PrivilegeUser {
-  id?: string;
-  username: string;
+export interface ChannelUser {
   email: string;
-  publicName: string;
-  privileges: Record<string, boolean>;
+  role: 'owner' | 'moderator' | 'writer' | '';
 }
 
 export type EditMsg = {
@@ -85,12 +82,12 @@ export class AdminService {
     });
   }
 
-  getPrivilegeUsersList(): Promise<PrivilegeUser[]> {
-    return firstValueFrom(this.http.get<PrivilegeUser[]>(`/api/channel/${this.slug}/admin/users/get`));
+  getChannelUsers(): Promise<ChannelUser[]> {
+    return firstValueFrom(this.http.get<ChannelUser[]>(`/api/channel/${this.slug}/admin/users/get`));
   }
 
-  setPrivilegeUsers(privilegeUsers: PrivilegeUser[]): Promise<ResponseResult> {
-    return firstValueFrom(this.http.post<ResponseResult>(`/api/channel/${this.slug}/admin/users/set`, { list: privilegeUsers }));
+  setChannelUsers(users: ChannelUser[]): Promise<ResponseResult> {
+    return firstValueFrom(this.http.post<ResponseResult>(`/api/channel/${this.slug}/admin/users/set`, { users }));
   }
 
   setEmojis(emojis: string[] | undefined) {
