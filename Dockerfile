@@ -5,13 +5,16 @@ COPY ./frontend .
 RUN  npm install \
     && npm run build
 
-FROM golang:1.24 AS builder2
+FROM golang:1.25 AS builder2
 
 WORKDIR /app
 
+# Copy dependency manifests first so this layer is cached when only source changes
+COPY ./backend/go.mod ./backend/go.sum ./
+RUN go mod download
+
 COPY ./backend .
 COPY --from=builder1 /app/dist/channel/browser/favicon.ico assets
-RUN go mod tidy
 RUN go build -o the-channel .
 
 FROM debian:latest
