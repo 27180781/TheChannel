@@ -17,7 +17,7 @@ import (
 var redisType = os.Getenv("REDIS_PROTOCOL")
 var redisAddr = os.Getenv("REDIS_ADDR")
 var redisPass = os.Getenv("REDIS_PASSWORD")
-var rdb *redis.Client
+var rdb redis.UniversalClient
 
 type Message struct {
 	ID        int          `json:"id" redis:"id"`
@@ -51,12 +51,16 @@ type PushMessage struct {
 func init() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	rdb = redis.NewClient(&redis.Options{
-		Network:      redisType,
-		Addr:         redisAddr,
+	// Support single-instance, Redis Sentinel, and Redis Cluster via env vars:
+	//   REDIS_ADDRS   — comma-separated list; multiple = cluster mode
+	//   REDIS_MASTER  — master name for Sentinel
+	addrs := strings.Split(redisAddr, ",")
+	rdb = redis.NewUniversalClient(&redis.UniversalOptions{
+		Addrs:        addrs,
 		Password:     redisPass,
 		DB:           0,
-		PoolSize:     100,             // one per active SSE connection + room for writes
+		MasterName:   os.Getenv("REDIS_MASTER"),
+		PoolSize:     100,
 		MinIdleConns: 10,
 		MaxRetries:   3,
 		DialTimeout:  5 * time.Second,
@@ -70,6 +74,28 @@ func init() {
 	}
 
 	log.Println("Connection to DB successful!")
+}
+
+// publishEvent appends an event to the channel's Redis Stream (replaces pub/sub).
+// Streams allow multiple backend instances to serve SSE without missing events.
+// The stream is capped at ~1000 entries to avoid unbounded growth.
+func publishEvent(ctx context.Context, slug string, data []byte) {
+	rdb.XAdd(ctx, &redis.XAddArgs{
+		Stream: fmt.Sprintf("channel:%s:events", slug),
+		MaxLen: 1000,
+		Approx: true,
+		Values: map[string]interface{}{"data": string(data)},
+	})
+}
+
+// touchLastModified bumps a per-channel nano-timestamp used for HTTP ETags.
+func touchLastModified(ctx context.Context, slug string) {
+	rdb.Set(ctx, fmt.Sprintf("channel:%s:last_modified", slug), time.Now().UnixNano(), 0)
+}
+
+func getLastModified(ctx context.Context, slug string) string {
+	v, _ := rdb.Get(ctx, fmt.Sprintf("channel:%s:last_modified", slug)).Result()
+	return v
 }
 
 func getMessageNextId(ctx context.Context, slug string) int {
@@ -119,7 +145,8 @@ func setMessage(ctx context.Context, slug string, m *Message, isUpdate bool) err
 	}
 
 	pushMessageData, _ := json.Marshal(pushMessage)
-	rdb.Publish(ctx, fmt.Sprintf("events:%s", slug), pushMessageData)
+	publishEvent(ctx, slug, pushMessageData)
+	touchLastModified(ctx, slug)
 
 	return nil
 }
@@ -165,7 +192,7 @@ func setReaction(ctx context.Context, slug string, messageId int, emoji string, 
 	}
 
 	pushMessageData, _ := json.Marshal(pushMessage)
-	rdb.Publish(ctx, fmt.Sprintf("events:%s", slug), pushMessageData)
+	publishEvent(ctx, slug, pushMessageData)
 
 	return nil
 }
@@ -363,7 +390,8 @@ func funcDeleteMessage(ctx context.Context, slug string, id string) error {
 		M:    m,
 	}
 	pushMessageData, _ := json.Marshal(pushMessage)
-	rdb.Publish(ctx, fmt.Sprintf("events:%s", slug), pushMessageData)
+	publishEvent(ctx, slug, pushMessageData)
+	touchLastModified(ctx, slug)
 
 	return nil
 }
@@ -931,6 +959,8 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 		fmt.Sprintf("channel:%s:storage:quota_bytes", p),
 		fmt.Sprintf("channel:%s:storage:auto_cleanup", p),
 		fmt.Sprintf("channel:%s:files", p),
+		fmt.Sprintf("channel:%s:events", p),
+		fmt.Sprintf("channel:%s:last_modified", p),
 	}
 	allKeys := append(fixedKeys, messageKeys...)
 	allKeys = append(allKeys, reactionKeys...)

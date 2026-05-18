@@ -167,11 +167,18 @@ func serveFile(w http.ResponseWriter, r *http.Request) {
 	if r2Enabled {
 		key := r2ObjectKey(meta.Hash)
 		if r2PublicURL != "" {
-			// Redirect to public R2 URL
+			// Public bucket: redirect to CDN URL (fastest, no auth needed)
 			http.Redirect(w, r, r2PublicURL+"/"+key, http.StatusFound)
 			return
 		}
-		// Proxy through backend
+		// Private bucket: generate a pre-signed URL (1-hour TTL).
+		// The client fetches directly from R2 — backend is not in the data path.
+		presignedURL, err := r2PresignURL(ctx, key, time.Hour)
+		if err == nil {
+			http.Redirect(w, r, presignedURL, http.StatusFound)
+			return
+		}
+		// Fallback: proxy through backend if presigning fails
 		body, contentType, err := r2Download(ctx, key)
 		if err != nil {
 			http.Error(w, "File not found", http.StatusNotFound)

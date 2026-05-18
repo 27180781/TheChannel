@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -75,6 +76,7 @@ func r2Exists(ctx context.Context, key string) bool {
 }
 
 // r2Download downloads an object from R2 and returns its body.
+// Used as a fallback when neither public URL nor pre-signed URL is available.
 func r2Download(ctx context.Context, key string) (io.ReadCloser, *string, error) {
 	result, err := r2Client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(r2Bucket),
@@ -84,6 +86,20 @@ func r2Download(ctx context.Context, key string) (io.ReadCloser, *string, error)
 		return nil, nil, err
 	}
 	return result.Body, result.ContentType, nil
+}
+
+// r2PresignURL generates a short-lived pre-signed URL for a private R2 object.
+// The client fetches the file directly from R2, bypassing the backend entirely.
+func r2PresignURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	presignClient := s3.NewPresignClient(r2Client)
+	req, err := presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(r2Bucket),
+		Key:    aws.String(key),
+	}, s3.WithPresignExpires(ttl))
+	if err != nil {
+		return "", err
+	}
+	return req.URL, nil
 }
 
 // r2Delete removes an object from R2.

@@ -8,33 +8,41 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// uploadLimiters stores a per-channel rate limiter for file uploads.
-// Each channel allows up to 30 uploads per minute with a burst of 10.
+// uploadLimiters stores per-user-per-channel rate limiters for file uploads.
+// Key: "userEmail:channelSlug" — 30 uploads/min (one every 2s), burst of 10.
 var (
-	uploadLimiters   sync.Map
-	uploadLimiterMu  sync.Mutex
+	uploadLimiters sync.Map
+	uploadLimiterMu sync.Mutex
 )
 
-func getUploadLimiter(slug string) *rate.Limiter {
-	if v, ok := uploadLimiters.Load(slug); ok {
+func getUploadLimiter(key string) *rate.Limiter {
+	if v, ok := uploadLimiters.Load(key); ok {
 		return v.(*rate.Limiter)
 	}
 	uploadLimiterMu.Lock()
 	defer uploadLimiterMu.Unlock()
-	// Double-check after lock
-	if v, ok := uploadLimiters.Load(slug); ok {
+	if v, ok := uploadLimiters.Load(key); ok {
 		return v.(*rate.Limiter)
 	}
-	l := rate.NewLimiter(rate.Every(2*time.Second), 10) // 30/min, burst 10
-	uploadLimiters.Store(slug, l)
+	l := rate.NewLimiter(rate.Every(2*time.Second), 10)
+	uploadLimiters.Store(key, l)
 	return l
 }
 
 func uploadRateLimit(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		slug := channelSlugFromCtx(r)
-		if !getUploadLimiter(slug).Allow() {
-			http.Error(w, "too many uploads — slow down", http.StatusTooManyRequests)
+
+		// Key by user identity so limits are per-user, not per-channel
+		session, _ := store.Get(r, cookieName)
+		user, _ := session.Values["user"].(Session)
+		key := user.Email + ":" + slug
+		if key == ":" {
+			key = slug // unauthenticated fallback (shouldn't happen, upload requires login)
+		}
+
+		if !getUploadLimiter(key).Allow() {
+			http.Error(w, "too many uploads — please slow down", http.StatusTooManyRequests)
 			return
 		}
 		next(w, r)
