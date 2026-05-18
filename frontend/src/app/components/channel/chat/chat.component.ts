@@ -55,12 +55,14 @@ type ScrollOpt = {
 })
 export class ChatComponent implements OnInit, OnDestroy {
   private eventSource!: EventSource;
+  private sseEverConnected = false;
   messages: ChatMessage[] = [];
   adSlotsAfter: Set<number> = new Set();
   scheduledMessages!: ChatMessage[];
   hideScheduledMessages: boolean = false;
   userInfo?: User;
   isLoading: boolean = false;
+  isOffline: boolean = false;
   offset: number = 0;
   limit: number = 20;
   hasOldMessages: boolean = true;
@@ -85,6 +87,21 @@ export class ChatComponent implements OnInit, OnDestroy {
       //this.scheduledMessages.length = 0;
       this.loadScheduledMessages();
     });
+  }
+
+  @HostListener('window:online')
+  onOnline() {
+    this.zone.run(() => {
+      this.isOffline = false;
+      this.toastrService.success('החיבור חודש', '', { duration: 3000 });
+      this.initializeMessageListener();
+      this.loadMissedMessages();
+    });
+  }
+
+  @HostListener('window:offline')
+  onOffline() {
+    this.zone.run(() => { this.isOffline = true; });
   }
 
   @HostListener('window:scroll', [])
@@ -169,10 +186,25 @@ export class ChatComponent implements OnInit, OnDestroy {
     localStorage.setItem('lastReadMessage', id);
   }
 
-  private async initializeMessageListener() {
+  private initializeMessageListener() {
     this.eventSource = this.chatService.sseListener();
-    this.eventSource.onmessage = (event) => {
 
+    this.eventSource.onopen = () => {
+      if (this.sseEverConnected) {
+        // Reconnect after a drop — fetch messages that arrived during the gap
+        this.zone.run(() => { this.isOffline = false; });
+        this.loadMissedMessages();
+      }
+      this.sseEverConnected = true;
+      this.lastHeartbeat = Date.now();
+    };
+
+    this.eventSource.onerror = () => {
+      // Browser will auto-retry with Last-Event-ID; we just track offline state
+      // via window:online/offline and the keepAlive heartbeat.
+    };
+
+    this.eventSource.onmessage = (event) => {
       this.lastHeartbeat = Date.now();
 
       const message = JSON.parse(event.data);
@@ -243,13 +275,33 @@ export class ChatComponent implements OnInit, OnDestroy {
 
   async keepAliveSSE() {
     clearInterval(this.subLastHeartbeat);
+    // Backend sends heartbeat every 25s; if 35s pass without one the SSE is dead.
     this.subLastHeartbeat = interval(10000)
       .subscribe(() => {
-        if (Date.now() - this.lastHeartbeat > 60000) {
+        if (Date.now() - this.lastHeartbeat > 35000) {
           this.lastHeartbeat = Date.now();
           this.initializeMessageListener();
-        };
+          this.loadMissedMessages();
+        }
       });
+  }
+
+  private async loadMissedMessages() {
+    if (!this.messages.length) return;
+    const maxId = Math.max(...this.messages.map(m => m.id!));
+    try {
+      const missed = await firstValueFrom(this.chatService.getMessages(maxId, this.limit, 'asc'));
+      if (missed?.length) {
+        this.zone.run(() => {
+          this.messages.unshift(...missed.reverse());
+          this.hasNewMessages = missed.length >= this.limit;
+          this.thereNewMessages = true;
+          this.rebuildItems();
+        });
+      }
+    } catch {
+      // Best-effort; will retry on the next reconnect
+    }
   }
 
   onListScroll() {

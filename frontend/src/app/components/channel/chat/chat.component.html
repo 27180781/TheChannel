@@ -1,3 +1,10 @@
+@if (isOffline) {
+  <div class="offline-banner">
+    <nb-icon icon="wifi-off-outline"></nb-icon>
+    אין חיבור לאינטרנט — ההודעות יתעדכנו אוטומטית עם חזרת החיבור
+  </div>
+}
+
 <div nbInfiniteList (scroll)="onListScroll()" [threshold]="300" [throttleTime]="1000" (topThreshold)="loadMessages()"
   (bottomThreshold)="loadMessages({ scrollDown: true })" [listenWindowScroll]="true">
   <nb-list class="flex-column-reverse" [class.hide-scheduled-messages]="hideScheduledMessages">
