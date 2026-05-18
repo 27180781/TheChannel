@@ -26,6 +26,7 @@ import { ChannelRequestService } from '../../services/channel-request.service';
   ],
   styleUrl: './landing-page.component.scss',
   template: `
+    @if (!isChecking) {
     <!-- Navbar -->
     <nav class="d-flex justify-content-between align-items-center px-4 py-3 border-bottom bg-white">
       <a nbButton status="primary" [routerLink]="['/login']">התחבר</a>
@@ -193,9 +194,11 @@ import { ChannelRequestService } from '../../services/channel-request.service';
     <footer class="footer">
       <span>TheChannel &copy; 2024</span>
     </footer>
+    } <!-- end @if (!isChecking) -->
   `,
 })
 export class LandingPageComponent implements OnInit {
+  isChecking = true;
   reqName = '';
   reqEmail = '';
   reqSlug = '';
@@ -219,10 +222,12 @@ export class LandingPageComponent implements OnInit {
         } else {
           this.router.navigate(['/channel']);
         }
+        return;
       }
     } catch {
       // Not logged in — show the landing page
     }
+    this.isChecking = false;
   }
 
   scrollToForm(event: Event) {

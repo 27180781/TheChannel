@@ -67,7 +67,7 @@ export class LoginComponent implements OnInit {
       return;
     }
 
-    this.router.navigate(['/']);
+    this.router.navigate(['/channel']);
   }
 
   login() {
