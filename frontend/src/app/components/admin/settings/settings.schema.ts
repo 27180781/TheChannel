@@ -25,20 +25,6 @@ export const SETTINGS_SCHEMA: SettingsCategorySchema[] = [
     icon: 'settings-2-outline',
     fields: [
       {
-        key: 'custom_title',
-        label: 'כותרת מותאמת אישית',
-        description: 'כותרת שתשמש לקידום האתר בתוצאות חיפוש (SEO).',
-        type: 'text',
-        placeholder: 'לדוגמא: הערוץ החדשותי שלי',
-      },
-      {
-        key: 'contact_us',
-        label: 'קישור ליצירת קשר',
-        description: 'הזנת קישור תפעיל כפתור "צור קשר" שיפנה לקישור זה.',
-        type: 'url',
-        placeholder: 'https://example.com/contact',
-      },
-      {
         key: 'max_file_size',
         label: 'הגבלת גודל קובץ להעלאה (MB)',
         description: 'גודל מקסימלי בקבצים שניתן להעלות לערוץ. ברירת מחדל: 100 MB.',
@@ -56,37 +42,10 @@ export const SETTINGS_SCHEMA: SettingsCategorySchema[] = [
     ],
   },
   {
-    id: 'analytics',
-    title: 'אנליטיקס וטראקינג',
-    icon: 'activity-outline',
-    description: 'קוד שיוטמע בתוך תגית <head> בכל עמוד באתר. מתאים לתגיות Google Analytics, Google Tag Manager, Meta Pixel וכדומה.',
-    fields: [
-      {
-        key: 'analytics_head',
-        label: 'קוד אנליטיקס להטמעה ב-<head>',
-        description: 'הדביקו כאן את כל קטע ה-HTML/JS שקיבלתם משירות האנליטיקס (כולל תגיות <script>). הקוד יוזרק כמו שהוא לתוך <head> של כל עמוד.',
-        type: 'textarea',
-        placeholder: '<!-- Google tag (gtag.js) -->\n<script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXX"></script>\n<script>\n  window.dataLayer = window.dataLayer || [];\n  function gtag(){dataLayer.push(arguments);}\n  gtag(\'js\', new Date());\n  gtag(\'config\', \'G-XXXXXXX\');\n</script>',
-      },
-    ],
-  },
-  {
-    id: 'auth',
-    title: 'הזדהות ואבטחה',
+    id: 'security',
+    title: 'אבטחה ו-API',
     icon: 'shield-outline',
     fields: [
-      {
-        key: 'require_auth',
-        label: 'חיוב הזדהות לכניסה לערוץ',
-        description: 'משתמשים יחויבו להתחבר לפני שיוכלו לצפות בערוץ.',
-        type: 'boolean',
-      },
-      {
-        key: 'require_auth_for_view_files',
-        label: 'חיוב הזדהות לצפייה בתמונות וסרטונים',
-        description: 'גם אם הערוץ פתוח לצפייה, ניתן לחייב הזדהות לפני צפייה בקבצים.',
-        type: 'boolean',
-      },
       {
         key: 'api_secret_key',
         label: 'מפתח API ליבוא הודעות',
@@ -97,15 +56,16 @@ export const SETTINGS_SCHEMA: SettingsCategorySchema[] = [
     ],
   },
   {
-    id: 'views',
-    title: 'מונה צפיות',
-    icon: 'eye-outline',
+    id: 'storage',
+    title: 'אחסון ומדיה',
+    icon: 'hard-drive-outline',
     fields: [
       {
-        key: 'count_views',
-        label: 'הפעלת ספירת צפיות בהודעות',
-        description: 'מציג ליד כל הודעה את מספר הצפיות שנספרו עבורה.',
-        type: 'boolean',
+        key: 'tinypng_api_key',
+        label: 'מפתח API של TinyPNG לכיווץ תמונות',
+        description: 'כשמוגדר מפתח, תמונות PNG/JPEG/WebP ייכוצו אוטומטית לפני העלאה לאחסון ויחסכו מקום. קבלו מפתח חינמי ב-tinypng.com.',
+        type: 'password',
+        placeholder: 'YOUR_TINYPNG_API_KEY',
       },
     ],
   },
@@ -127,20 +87,6 @@ export const SETTINGS_SCHEMA: SettingsCategorySchema[] = [
         description: 'רוחב מומלץ: 300.',
         type: 'number',
         placeholder: '300',
-      },
-    ],
-  },
-  {
-    id: 'storage',
-    title: 'אחסון ומדיה',
-    icon: 'hard-drive-outline',
-    fields: [
-      {
-        key: 'tinypng_api_key',
-        label: 'מפתח API של TinyPNG לכיווץ תמונות',
-        description: 'כשמוגדר מפתח, תמונות PNG/JPEG/WebP ייכוצו אוטומטית לפני העלאה לאחסון ויחסכו מקום. קבלו מפתח חינמי ב-tinypng.com.',
-        type: 'password',
-        placeholder: 'YOUR_TINYPNG_API_KEY',
       },
     ],
   },
