@@ -1,7 +1,7 @@
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import {
-  NbCardModule,
+  NbButtonModule,
   NbLayoutModule,
   NbMenuItem,
   NbMenuModule,
@@ -30,7 +30,7 @@ type ViewName = 'channels' | 'channel-features' | 'channel-users' | 'channel-sto
     NbLayoutModule,
     NbSidebarModule,
     NbMenuModule,
-    NbCardModule,
+    NbButtonModule,
     ChannelsListComponent,
     ChannelFeaturesComponent,
     ChannelUsersComponent,
