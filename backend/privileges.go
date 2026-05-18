@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -35,7 +36,11 @@ var channelRoleLevels = map[ChannelRole]int{
 var privilegesUsers sync.Map
 var superAdminEmails []string
 
-func initializePrivilegeUsers() {
+// initializePrivilegeUsers rebuilds the in-memory privilegesUsers map from Redis.
+// At startup, call it directly (panicking is acceptable). From request handlers
+// use the returned error instead of panicking so a transient Redis error does not
+// crash the entire server.
+func initializePrivilegeUsers() error {
 	superAdminEmails = strings.Split(os.Getenv("ADMIN_USERS"), ",")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -44,7 +49,7 @@ func initializePrivilegeUsers() {
 	privilegesUsers.Clear()
 	users, err := dbGetUsersList(ctx)
 	if err != nil && err != redis.Nil {
-		panic("Failed to get users list: " + err.Error())
+		return fmt.Errorf("get users list: %w", err)
 	}
 
 	emailToIdx := make(map[string]int)
@@ -72,8 +77,9 @@ func initializePrivilegeUsers() {
 	}
 
 	if err := dbSetUsersList(ctx, users); err != nil {
-		panic("Failed to set users list: " + err.Error())
+		return fmt.Errorf("set users list: %w", err)
 	}
+	return nil
 }
 
 func isSuperAdmin(r *http.Request) bool {
@@ -158,7 +164,9 @@ func setPrivilegeUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	initializePrivilegeUsers()
+	if err := initializePrivilegeUsers(); err != nil {
+		log.Printf("initializePrivilegeUsers after setPrivilegeUsers: %v", err)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(Response{Success: true})

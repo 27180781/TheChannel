@@ -102,6 +102,11 @@ func login(w http.ResponseWriter, r *http.Request) {
 
 	tokenStr, _ := dyno.GetString(token.Extra("id_token"))
 	tokenValidator, err := idtoken.NewValidator(ctx)
+	if err != nil {
+		go saveLoginFailedLog("NewValidator", err)
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
+	}
 	payload, err := tokenValidator.Validate(ctx, tokenStr, googleOAuthClientId)
 	if err != nil {
 		http.Error(w, "Invalid token", http.StatusUnauthorized)

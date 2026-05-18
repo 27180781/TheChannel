@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"regexp"
 	"time"
@@ -157,7 +158,9 @@ func createChannel(w http.ResponseWriter, r *http.Request) {
 
 	if req.OwnerEmail != "" {
 		dbAssignChannelRole(ctx, req.OwnerEmail, req.Slug, RoleOwner)
-		initializePrivilegeUsers()
+		if err := initializePrivilegeUsers(); err != nil {
+			log.Printf("initializePrivilegeUsers after createChannel: %v", err)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -271,7 +274,9 @@ func superAdminSetChannelUsers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
-	initializePrivilegeUsers()
+	if err := initializePrivilegeUsers(); err != nil {
+		log.Printf("initializePrivilegeUsers after superAdminSetChannelUsers: %v", err)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(Response{Success: true})
@@ -394,7 +399,9 @@ func setChannelUsers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
-	initializePrivilegeUsers()
+	if err := initializePrivilegeUsers(); err != nil {
+		log.Printf("initializePrivilegeUsers after setChannelUsers: %v", err)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(Response{Success: true})

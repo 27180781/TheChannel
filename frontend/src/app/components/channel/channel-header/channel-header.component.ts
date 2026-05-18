@@ -1,4 +1,5 @@
-import { Component, EventEmitter, HostListener, Input, OnInit, Output } from '@angular/core';
+import { Component, EventEmitter, HostListener, Input, OnDestroy, OnInit, Output } from '@angular/core';
+import { Subscription } from 'rxjs';
 
 import {
   NbButtonModule,
@@ -30,7 +31,8 @@ import { User } from '../../../models/user.model';
   templateUrl: './channel-header.component.html',
   styleUrl: './channel-header.component.scss'
 })
-export class ChannelHeaderComponent implements OnInit {
+export class ChannelHeaderComponent implements OnInit, OnDestroy {
+  private menuSub?: Subscription;
 
   @Input()
   set userInfo(user: User | undefined) {
@@ -85,7 +87,7 @@ export class ChannelHeaderComponent implements OnInit {
     this.chatService.updateChannelInfo()
       .then(() => this.titleService.setTitle(this.chatService.channelInfo?.name || 'TheChannel'));
 
-    this.contextMenuService.onItemClick()
+    this.menuSub = this.contextMenuService.onItemClick()
       .pipe(filter(({ tag }) => tag === this.userMenuTag))
       .subscribe(value => {
         switch (value.item.icon) {
@@ -104,23 +106,23 @@ export class ChannelHeaderComponent implements OnInit {
     this.updateScreenSize();
   }
 
+  ngOnDestroy() {
+    this.menuSub?.unsubscribe();
+  }
+
   async logout() {
     if (await this._authService.logout()) {
       this.userInfo = undefined;
       this.userInfoChange.emit(undefined);
       try {
         await this._authService.loadUserInfo();
+        // Still logged in somehow — go to root and let AuthGuard decide
+        this.router.navigate(['/']);
       } catch (err: any) {
         if (err.status === 401) {
           this.router.navigate(['/login']);
         }
       }
-
-      const path = this.router.url;
-      if (path !== '/') {
-        this.router.navigate(['/']);
-      }
-
     } else {
       this.toastrService.danger("", "שגיאה בהתנתקות");
     }
