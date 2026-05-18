@@ -52,10 +52,16 @@ func init() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	rdb = redis.NewClient(&redis.Options{
-		Network:  redisType,
-		Addr:     redisAddr,
-		Password: redisPass,
-		DB:       0,
+		Network:      redisType,
+		Addr:         redisAddr,
+		Password:     redisPass,
+		DB:           0,
+		PoolSize:     100,             // one per active SSE connection + room for writes
+		MinIdleConns: 10,
+		MaxRetries:   3,
+		DialTimeout:  5 * time.Second,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 5 * time.Second,
 	})
 
 	_, err := rdb.Ping(ctx).Result()
@@ -186,7 +192,11 @@ var getMessageRange = redis.NewScript(`
 	end
 
 	local messages = {}
+	local max_scan_rounds = 20
+	local scan_rounds = 0
 	repeat
+		scan_rounds = scan_rounds + 1
+		if scan_rounds > max_scan_rounds then break end
 		local batch_size = required_length - #messages
 		local stop_index = start_index + batch_size
 		local message_ids
@@ -748,6 +758,21 @@ func dbSaveScheduledMessages(ctx context.Context, slug string, messages *[]Messa
 		return fmt.Errorf("failed to set scheduled messages in db: %v", err)
 	}
 
+	// Maintain a global sorted set of "next due time" per channel so the
+	// scheduler only wakes channels that actually have pending messages.
+	var earliest float64
+	for _, m := range *messages {
+		ts := float64(m.Timestamp.Unix())
+		if earliest == 0 || ts < earliest {
+			earliest = ts
+		}
+	}
+	if earliest > 0 {
+		rdb.ZAdd(ctx, "scheduled:due_channels", redis.Z{Score: earliest, Member: slug})
+	} else {
+		rdb.ZRem(ctx, "scheduled:due_channels", slug)
+	}
+
 	return nil
 }
 
@@ -873,32 +898,55 @@ func dbListChannels(ctx context.Context) ([]*ChannelData, error) {
 }
 
 func dbDeleteChannel(ctx context.Context, slug string) error {
-	// Remove from channels:list
-	if err := rdb.ZRem(ctx, "channels:list", slug).Err(); err != nil {
-		return err
+	p := slug
+
+	// Step 1: collect all message keys and reaction keys from the sorted set (avoids SCAN)
+	messageKeys, _ := rdb.ZRange(ctx, fmt.Sprintf("channel:%s:m_times", p), 0, -1).Result()
+	reactionKeys := make([]string, 0, len(messageKeys))
+	for _, mk := range messageKeys {
+		// mk is already the full key e.g. "channel:{slug}:messages:{id}"
+		// derive reaction key from it by replacing "messages:" prefix with "message:" and appending ":reactions"
+		id := strings.TrimPrefix(mk, fmt.Sprintf("channel:%s:messages:", p))
+		reactionKeys = append(reactionKeys, fmt.Sprintf("channel:%s:message:%s:reactions", p, id))
 	}
 
-	// Scan and delete all channel:{slug}:* keys
-	pattern := fmt.Sprintf("channel:%s:*", slug)
-	var cursor uint64
-	for {
-		keys, nextCursor, err := rdb.Scan(ctx, cursor, pattern, 100).Result()
-		if err != nil {
-			return err
-		}
-		if len(keys) > 0 {
-			if err := rdb.Del(ctx, keys...).Err(); err != nil {
-				return err
-			}
-		}
-		cursor = nextCursor
-		if cursor == 0 {
-			break
-		}
+	// Step 2: delete all known fixed keys in one pipeline
+	fixedKeys := []string{
+		fmt.Sprintf("channel:%s", p),
+		fmt.Sprintf("channel:%s:settings", p),
+		fmt.Sprintf("channel:%s:features", p),
+		fmt.Sprintf("channel:%s:m_times", p),
+		fmt.Sprintf("channel:%s:message:next_id", p),
+		fmt.Sprintf("channel:%s:subscriptions", p),
+		fmt.Sprintf("channel:%s:registered_emails", p),
+		fmt.Sprintf("channel:%s:emojis:list", p),
+		fmt.Sprintf("channel:%s:reports:list", p),
+		fmt.Sprintf("channel:%s:reports:open", p),
+		fmt.Sprintf("channel:%s:reports:closed", p),
+		fmt.Sprintf("channel:%s:report:next_id", p),
+		fmt.Sprintf("channel:%s:scheduled_messages:list", p),
+		fmt.Sprintf("channel:%s:sse_statistics:total", p),
+		fmt.Sprintf("channel:%s:peak_sse_connections", p),
+		fmt.Sprintf("channel:%s:storage:used_bytes", p),
+		fmt.Sprintf("channel:%s:storage:quota_bytes", p),
+		fmt.Sprintf("channel:%s:storage:auto_cleanup", p),
+		fmt.Sprintf("channel:%s:files", p),
 	}
+	allKeys := append(fixedKeys, messageKeys...)
+	allKeys = append(allKeys, reactionKeys...)
 
-	// Delete the main channel hash
-	if err := rdb.Del(ctx, fmt.Sprintf("channel:%s", slug)).Err(); err != nil {
+	pipe := rdb.Pipeline()
+	// Delete in batches of 200 to avoid huge single commands
+	for i := 0; i < len(allKeys); i += 200 {
+		end := i + 200
+		if end > len(allKeys) {
+			end = len(allKeys)
+		}
+		pipe.Del(ctx, allKeys[i:end]...)
+	}
+	pipe.ZRem(ctx, "channels:list", slug)
+	pipe.ZRem(ctx, "scheduled:due_channels", slug)
+	if _, err := pipe.Exec(ctx); err != nil {
 		return err
 	}
 

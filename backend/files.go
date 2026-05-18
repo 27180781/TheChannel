@@ -148,8 +148,16 @@ func serveFile(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	slug := channelSlugFromCtx(r)
+
 	meta, err := dbGetFileMetadata(ctx, fileId)
 	if err != nil || meta.Delete {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+	// Enforce channel isolation: reject if file belongs to a different channel.
+	// Legacy files with empty ChannelSlug are allowed through for backward compatibility.
+	if meta.ChannelSlug != "" && meta.ChannelSlug != slug {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return
 	}

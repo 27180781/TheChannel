@@ -119,7 +119,7 @@ func main() {
 				r.Post("/new", protectedWithChannelRole(RoleWriter, addMessage))
 				r.Post("/edit-message", protectedWithChannelRole(RoleWriter, updateMessage))
 				r.Get("/delete-message/{id}", protectedWithChannelRole(RoleWriter, deleteMessage))
-				r.Post("/upload", protectedWithChannelRole(RoleWriter, uploadFile))
+				r.Post("/upload", protectedWithChannelRole(RoleWriter, uploadRateLimit(uploadFile)))
 				r.Get("/scheduled-messages/get", protectedWithChannelRole(RoleWriter, getScheduledMessages))
 				r.Post("/scheduled-messages/update", protectedWithChannelRole(RoleWriter, updateScheduledMessages))
 

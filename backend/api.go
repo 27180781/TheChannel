@@ -12,8 +12,8 @@ import (
 
 func addNewPost(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "slug")
-	if slug == "" {
-		http.Error(w, "missing slug", http.StatusBadRequest)
+	if !slugRegex.MatchString(slug) {
+		http.Error(w, "invalid slug", http.StatusBadRequest)
 		return
 	}
 
