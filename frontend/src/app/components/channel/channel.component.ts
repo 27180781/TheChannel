@@ -15,6 +15,10 @@ import { AuthService } from "../../services/auth.service";
 import { ChannelHeaderComponent } from "./channel-header/channel-header.component";
 import { ChatComponent } from "./chat/chat.component";
 import { User } from '../../models/user.model';
+import { ActivatedRoute, Router } from '@angular/router';
+import { SlugService } from '../../services/slug.service';
+import { AdminService } from '../../services/admin.service';
+import { ChatService } from '../../services/chat.service';
 
 @Component({
   selector: 'app-channel',
@@ -48,18 +52,41 @@ export class ChannelComponent implements OnInit {
     private adsService: AdsService,
     private _authService: AuthService,
     private renderer: Renderer2,
-    private el: ElementRef
+    private el: ElementRef,
+    private route: ActivatedRoute,
+    private router: Router,
+    private slugService: SlugService,
+    private adminService: AdminService,
+    private chatService: ChatService,
   ) { }
 
   ad: Ad = { src: '', width: 0 };
   userInfo?: User;
+  slugReady = false;
 
-  ngOnInit(): void {
+  async ngOnInit(): Promise<void> {
+    let slug = this.route.snapshot.paramMap.get('slug');
+
+    if (!slug) {
+      const user = await this._authService.loadUserInfo();
+      const roles = user?.channelRoles;
+      const firstSlug = roles ? Object.keys(roles)[0] : '';
+      if (firstSlug) {
+        this.router.navigate(['/channel', firstSlug], { replaceUrl: true });
+      }
+      return;
+    }
+
+    this.slugService.slug = slug;
+    this.chatService.channelInfo = undefined;
+    this.adminService.clearCache();
+    this.slugReady = true;
+
     this.adsService.getAds().then(ad => {
       this.ad = ad;
     });
     this._authService.loadUserInfo().then(res => {
-      this.userInfo = res
+      this.userInfo = res;
     });
   }
 

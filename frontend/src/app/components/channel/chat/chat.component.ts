@@ -145,7 +145,7 @@ export class ChatComponent implements OnInit, OnDestroy {
 
     this._authService.loadUserInfo().then((res) => {
       this.userInfo = res;
-      this.userInfo.privileges?.['writer'] && this.loadScheduledMessages();
+      this.userInfo.channelRoles && Object.keys(this.userInfo.channelRoles).length > 0 && this.loadScheduledMessages();
       this.notificationService.init();
     });
 
@@ -183,13 +183,13 @@ export class ChatComponent implements OnInit, OnDestroy {
             this.messages.unshift(message.message);
             this.thereNewMessages = !(message.message.author === this.userInfo?.username);
             this.setLastReadMessage(message.message.id!.toString());
-            if (this.userInfo?.privileges?.['writer'] && this.scheduledMessages && message.message.author === "Scheduled") {
+            if (this.userInfo?.channelRoles && Object.keys(this.userInfo.channelRoles).length > 0 && this.scheduledMessages && message.message.author === "Scheduled") {
               this.loadScheduledMessages(true);
             }
           });
           break;
         case 'delete-message':
-          if (this.userInfo?.privileges?.['writer']) {
+          if (this.userInfo?.channelRoles && Object.keys(this.userInfo.channelRoles).length > 0) {
             this.zone.run(() => {
               const index = this.messages.findIndex(m => m.id === message.message.id);
               if (index !== -1) {

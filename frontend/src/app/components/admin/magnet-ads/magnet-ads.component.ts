@@ -165,7 +165,7 @@ export class MagnetAdsComponent implements OnInit {
     this.statsError = '';
 
     try {
-      const res = await fetch('/api/admin/magnet/stats', { credentials: 'include' });
+      const res = await fetch('/api/super-admin/magnet/stats', { credentials: 'include' });
       const text = await res.text();
       let data: any = null;
       try { data = text ? JSON.parse(text) : null; } catch {}

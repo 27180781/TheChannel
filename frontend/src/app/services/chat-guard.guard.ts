@@ -11,6 +11,7 @@ export const AuthGuard: CanActivateFn = async (route, state) => {
     if (userInfo) return true;
   } catch (err: any) {
     if (err.status === 401) {
+      localStorage.setItem('returnUrl', state.url);
       router.navigate(['/login']);
       return false;
     }

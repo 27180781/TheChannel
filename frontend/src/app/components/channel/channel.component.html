@@ -1,21 +1,23 @@
-<nb-layout id="container">
-  <nb-layout-header fixed>
-    <app-channel-header [(userInfo)]="userInfo" style="flex: auto;"></app-channel-header>
-  </nb-layout-header>
+@if (slugReady) {
+  <nb-layout id="container">
+    <nb-layout-header fixed>
+      <app-channel-header [(userInfo)]="userInfo" style="flex: auto;"></app-channel-header>
+    </nb-layout-header>
 
-  <nb-layout-column class="chat-column">
-    <app-chat class=""></app-chat>
-  </nb-layout-column>
-
-  @if (ad) {
-    <nb-layout-column class="ad-column d-none d-lg-flex">
-      <app-advertising [ad]="ad"></app-advertising>
+    <nb-layout-column class="chat-column">
+      <app-chat class=""></app-chat>
     </nb-layout-column>
-  }
 
-  @if (userInfo?.globalRole === 'super_admin' || userInfo?.privileges?.['writer'] || hasAnyRole(userInfo)) {
-    <nb-layout-footer #inputForm id="inputForm" class="fixed-footer">
-      <app-input-form class="w-100" (inputHeightChanged)="onInputHeightChanged()"></app-input-form>
-    </nb-layout-footer>
-  }
-</nb-layout>
+    @if (ad) {
+      <nb-layout-column class="ad-column d-none d-lg-flex">
+        <app-advertising [ad]="ad"></app-advertising>
+      </nb-layout-column>
+    }
+
+    @if (userInfo?.globalRole === 'super_admin' || hasAnyRole(userInfo)) {
+      <nb-layout-footer #inputForm id="inputForm" class="fixed-footer">
+        <app-input-form class="w-100" (inputHeightChanged)="onInputHeightChanged()"></app-input-form>
+      </nb-layout-footer>
+    }
+  </nb-layout>
+}

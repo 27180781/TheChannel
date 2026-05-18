@@ -29,7 +29,7 @@ export class LoginComponent implements OnInit {
     try {
       await this._authService.loadUserInfo();
       if (this._authService.userInfo) {
-        this.router.navigate(['/']);
+        this.redirectAfterLogin();
         return;
       }
     } catch {
@@ -37,8 +37,9 @@ export class LoginComponent implements OnInit {
         if (Object.keys(params).length > 0) {
           if (params['code'] && params['state'] === localStorage.getItem('google_oauth_state')) {
             this.code = params['code'];
-            this._authService.login(this.code).then(() => {
-              this.router.navigate(['/']);
+            this._authService.login(this.code).then(async () => {
+              await this._authService.loadUserInfo();
+              this.redirectAfterLogin();
             }).catch(() => {
               this.code = '';
               this.status = 'failed';
@@ -50,6 +51,22 @@ export class LoginComponent implements OnInit {
     } finally {
       this.checkUserInfo = false;
     }
+  }
+
+  private redirectAfterLogin() {
+    if (this._authService.userInfo?.globalRole === 'super_admin') {
+      this.router.navigate(['/super-admin']);
+      return;
+    }
+
+    const returnUrl = localStorage.getItem('returnUrl');
+    localStorage.removeItem('returnUrl');
+    if (returnUrl && !returnUrl.startsWith('/login')) {
+      this.router.navigateByUrl(returnUrl);
+      return;
+    }
+
+    this.router.navigate(['/']);
   }
 
   login() {
