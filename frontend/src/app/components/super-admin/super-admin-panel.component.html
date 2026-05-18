@@ -1,6 +1,12 @@
 <nb-layout>
   <nb-layout-header fixed>
-    <span style="font-weight: 600; font-size: 1.1rem;">ניהול מערכת</span>
+    <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
+      <button nbButton ghost status="basic" (click)="logout()">
+        <nb-icon icon="log-out-outline"></nb-icon>
+        התנתק
+      </button>
+      <span style="font-weight: 600; font-size: 1.1rem;">ניהול מערכת</span>
+    </div>
   </nb-layout-header>
 
   <nb-sidebar right>

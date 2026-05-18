@@ -2,12 +2,16 @@ import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import {
   NbButtonModule,
+  NbIconModule,
   NbLayoutModule,
   NbMenuItem,
   NbMenuModule,
   NbMenuService,
   NbSidebarModule,
+  NbToastrService,
 } from '@nebular/theme';
+import { Router } from '@angular/router';
+import { AuthService } from '../../services/auth.service';
 import { ChannelsListComponent } from './channels/channels-list.component';
 import { ChannelFeaturesComponent } from './channels/channel-features.component';
 import { ChannelUsersComponent } from './channels/channel-users.component';
@@ -31,6 +35,7 @@ type ViewName = 'channels' | 'channel-features' | 'channel-users' | 'channel-sto
     NbSidebarModule,
     NbMenuModule,
     NbButtonModule,
+    NbIconModule,
     ChannelsListComponent,
     ChannelFeaturesComponent,
     ChannelUsersComponent,
@@ -75,7 +80,20 @@ export class SuperAdminPanelComponent implements OnInit {
     { title: 'סטטיסטיקות', icon: 'bar-chart-outline' },
   ];
 
-  constructor(private menuService: NbMenuService) {}
+  constructor(
+    private menuService: NbMenuService,
+    private authService: AuthService,
+    private router: Router,
+    private toastr: NbToastrService,
+  ) {}
+
+  async logout() {
+    if (await this.authService.logout()) {
+      this.router.navigate(['/login']);
+    } else {
+      this.toastr.danger('', 'שגיאה בהתנתקות');
+    }
+  }
 
   ngOnInit(): void {
     this.menuService.onItemClick().subscribe(event => {
