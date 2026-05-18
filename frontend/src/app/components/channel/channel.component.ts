@@ -1,14 +1,19 @@
 import { Component, ElementRef, OnDestroy, OnInit, Renderer2, RendererStyleFlags2, ViewChild } from '@angular/core';
+import { FormsModule } from '@angular/forms';
 import { AdvertisingComponent } from "./advertising/advertising.component";
 
 import { Ad, AdsService } from '../../services/ads.service';
 import {
   NbButtonModule,
+  NbCardModule,
   NbIconModule,
+  NbInputModule,
   NbLayoutModule,
   NbListModule,
   NbMenuModule,
   NbSidebarModule,
+  NbSpinnerModule,
+  NbToastrService,
 } from "@nebular/theme";
 import { InputFormComponent } from "./chat/input-form/input-form.component";
 import { AuthService } from "../../services/auth.service";
@@ -20,13 +25,18 @@ import { SlugService } from '../../services/slug.service';
 import { AdminService } from '../../services/admin.service';
 import { ChatService } from '../../services/chat.service';
 import { MagnetAdsService } from '../../services/magnet-ads.service';
+import { ChannelRequestService } from '../../services/channel-request.service';
 import { Subscription } from 'rxjs';
 
 @Component({
   selector: 'app-channel',
   imports: [
+    FormsModule,
     AdvertisingComponent,
     NbLayoutModule,
+    NbCardModule,
+    NbInputModule,
+    NbSpinnerModule,
     InputFormComponent,
     ChannelHeaderComponent,
     NbButtonModule,
@@ -35,7 +45,7 @@ import { Subscription } from 'rxjs';
     NbSidebarModule,
     NbListModule,
     ChatComponent
-],
+  ],
   templateUrl: './channel.component.html',
   styleUrl: './channel.component.scss'
 })
@@ -61,6 +71,8 @@ export class ChannelComponent implements OnInit, OnDestroy {
     private adminService: AdminService,
     private chatService: ChatService,
     private magnetAds: MagnetAdsService,
+    private channelRequestService: ChannelRequestService,
+    private toastr: NbToastrService,
   ) { }
 
   ad: Ad = { src: '', width: 0 };
@@ -69,9 +81,15 @@ export class ChannelComponent implements OnInit, OnDestroy {
   noChannel = false;
   private paramSub?: Subscription;
 
+  // Channel request form state
+  reqName = '';
+  reqEmail = '';
+  reqSlug = '';
+  reqDescription = '';
+  reqSubmitting = false;
+  reqSubmitted = false;
+
   ngOnInit(): void {
-    // Subscribe to paramMap so navigation between /channel/foo → /channel/bar
-    // triggers a full re-initialization without needing to destroy the component.
     this.paramSub = this.route.paramMap.subscribe(params => {
       const slug = params.get('slug');
       this.initChannel(slug);
@@ -85,10 +103,6 @@ export class ChannelComponent implements OnInit, OnDestroy {
   private async initChannel(slug: string | null): Promise<void> {
     this.slugReady = false;
     this.noChannel = false;
-    // Yield to Angular's change detection so the @if (slugReady) block
-    // actually destroys ChatComponent before we reinitialise with the new slug.
-    // Without this, false→true in the same synchronous frame is collapsed and
-    // the child is never torn down, leaving stale state (isVisible, messages, etc).
     await Promise.resolve();
 
     if (!slug) {
@@ -98,6 +112,9 @@ export class ChannelComponent implements OnInit, OnDestroy {
       if (firstSlug) {
         this.router.navigate(['/channel', firstSlug], { replaceUrl: true });
       } else {
+        this.userInfo = user ?? undefined;
+        this.reqName = user?.publicName || '';
+        this.reqEmail = user?.email || '';
         this.noChannel = true;
       }
       return;
@@ -115,6 +132,30 @@ export class ChannelComponent implements OnInit, OnDestroy {
     this._authService.loadUserInfo().then(res => {
       this.userInfo = res;
     });
+  }
+
+  async submitChannelRequest(): Promise<void> {
+    if (!this.reqName || !this.reqEmail || !this.reqSlug || !this.reqDescription) {
+      this.toastr.warning('', 'יש למלא את כל השדות');
+      return;
+    }
+    this.reqSubmitting = true;
+    try {
+      await this.channelRequestService.submitRequest(this.reqName, this.reqEmail, this.reqSlug, this.reqDescription);
+      this.reqSubmitted = true;
+    } catch {
+      this.toastr.danger('', 'שגיאה בשליחת הבקשה, נסה שוב');
+    } finally {
+      this.reqSubmitting = false;
+    }
+  }
+
+  async logout(): Promise<void> {
+    if (await this._authService.logout()) {
+      this.router.navigate(['/login']);
+    } else {
+      this.toastr.danger('', 'שגיאה בהתנתקות');
+    }
   }
 
   hasAnyRole(user: User | undefined): boolean {
