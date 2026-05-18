@@ -79,7 +79,7 @@ export class InputFormComponent implements OnInit, OnDestroy {
 
     this.adminService.getSettings().then(settings => {
       const s = settings.find(s => s.key === 'enter_sends_message');
-      this.enterSendsMessage = s?.value === true || s?.value === 'true';
+      this.enterSendsMessage = s?.value === 'true' || s?.value === true as any;
     }).catch(() => {});
 
     this.subscription = this.adminService.messageEditObservable.subscribe((edit?: EditMsg) => {
