@@ -59,6 +59,7 @@ export class InputFormComponent implements OnInit, OnDestroy {
   isSending: boolean = false;
   showMarkdownPreview: boolean = false;
   hasScrollbar: boolean = false;
+  enterSendsMessage: boolean = false;
   private subscription!: Subscription;
 
   @ViewChild('inputTextArea') inputTextArea!: ElementRef<HTMLTextAreaElement>;
@@ -75,6 +76,11 @@ export class InputFormComponent implements OnInit, OnDestroy {
     if (this.message) {
       this.input = this.message.text || '';
     }
+
+    this.adminService.getSettings().then(settings => {
+      const s = settings.find(s => s.key === 'enter_sends_message');
+      this.enterSendsMessage = s?.value === true || s?.value === 'true';
+    }).catch(() => {});
 
     this.subscription = this.adminService.messageEditObservable.subscribe((edit?: EditMsg) => {
       if (edit?.isScheduling) {
@@ -276,6 +282,45 @@ export class InputFormComponent implements OnInit, OnDestroy {
     if (this.inputTextArea?.nativeElement) {
       const textarea = this.inputTextArea.nativeElement;
       this.hasScrollbar = textarea.scrollHeight > textarea.clientHeight;
+    }
+  }
+
+  onKeydown(event: KeyboardEvent) {
+    if (!this.enterSendsMessage) return;
+    if (event.key !== 'Enter') return;
+
+    if (event.ctrlKey || event.metaKey) {
+      // Ctrl+Enter → insert newline at cursor
+      event.preventDefault();
+      const ta = this.inputTextArea.nativeElement;
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      this.input = this.input.substring(0, start) + '\n' + this.input.substring(end);
+      setTimeout(() => { ta.selectionStart = ta.selectionEnd = start + 1; });
+    } else if (!event.shiftKey) {
+      // Enter alone → send
+      event.preventDefault();
+      this.sendMessage();
+    }
+  }
+
+  onPaste(event: ClipboardEvent) {
+    const items = event.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith('image/')) {
+        const file = items[i].getAsFile();
+        if (!file) continue;
+        event.preventDefault();
+        const attachment: Attachment = { file };
+        const idx = this.attachments.push(attachment) - 1;
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = (e) => {
+          if (e.target) this.attachments[idx].url = e.target.result as string;
+        };
+        this.uploadFile(this.attachments[idx]);
+      }
     }
   }
 

@@ -46,6 +46,13 @@ export const SETTINGS_SCHEMA: SettingsCategorySchema[] = [
         placeholder: '100',
         default: 100,
       },
+      {
+        key: 'enter_sends_message',
+        label: 'Enter שולח הודעה',
+        description: 'לחיצה על Enter תשלח את ההודעה. לחיצה על Ctrl+Enter תוריד שורה.',
+        type: 'boolean',
+        default: false,
+      },
     ],
   },
   {

@@ -60,6 +60,7 @@
                     (resized)="inputHeightChanged.emit($event)" [minRows]="1" [maxRows]="6"
                     [maxlength]="maxMessageLength" [disabled]="showMarkdownPreview || isSending"
                     class="bg-transparent border-0 flex-grow-1 fs-5" [(ngModel)]="input" (input)="checkScrollbar()"
+                    (keydown)="onKeydown($event)" (paste)="onPaste($event)"
                     style="resize: none"></textarea>
                 <div class="d-flex flex-row align-self-end">
                     @if (message?.id != undefined) {
