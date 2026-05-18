@@ -17,15 +17,15 @@
           <div class="d-flex flex-column gap-2">
             <div>
               <label class="field-label">Slug (מזהה ייחודי)</label>
-              <input nbInput fullWidth type="text" [(ngModel)]="newSlug" placeholder="my-channel">
+              <input nbInput fullWidth type="text" name="newSlug" [(ngModel)]="newSlug" placeholder="my-channel">
             </div>
             <div>
               <label class="field-label">שם הערוץ</label>
-              <input nbInput fullWidth type="text" [(ngModel)]="newName" placeholder="שם הערוץ">
+              <input nbInput fullWidth type="text" name="newName" [(ngModel)]="newName" placeholder="שם הערוץ">
             </div>
             <div>
               <label class="field-label">אימייל הבעלים</label>
-              <input nbInput fullWidth type="email" [(ngModel)]="newOwnerEmail" placeholder="owner@example.com">
+              <input nbInput fullWidth type="email" name="newOwnerEmail" [(ngModel)]="newOwnerEmail" placeholder="owner@example.com">
             </div>
             <div class="d-flex gap-2">
               <button nbButton status="primary" size="small" (click)="createChannel()" [disabled]="creating">

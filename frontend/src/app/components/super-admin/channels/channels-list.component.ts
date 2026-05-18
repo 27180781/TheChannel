@@ -65,7 +65,7 @@ export class ChannelsListComponent implements OnInit {
         this.newOwnerEmail = '';
         this.toastr.success('', 'הערוץ נוצר בהצלחה');
       })
-      .catch(() => this.toastr.danger('', 'שגיאה ביצירת הערוץ'))
+      .catch((err) => this.toastr.danger(err?.error || '', 'שגיאה ביצירת הערוץ'))
       .finally(() => this.creating = false);
   }
 
