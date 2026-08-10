@@ -48,12 +48,17 @@
         <nb-card-body>
           <div class="d-flex flex-row align-items-center gap-3 flex-wrap">
             <span class="flex-grow-1">{{ item.email }}</span>
-            <nb-select [(ngModel)]="item.role" size="small" [disabled]="!isOwner">
-              @for (opt of roleOptions; track opt.value) {
-                <nb-option [value]="opt.value">{{ opt.label }}</nb-option>
-              }
-            </nb-select>
-            <button nbButton status="danger" size="small" [disabled]="!isOwner" (click)="deleteUser($index)">
+            @if (item.role === 'owner') {
+              <span class="text-muted">בעלים</span>
+            } @else {
+              <nb-select [(ngModel)]="item.role" size="small" [disabled]="!isOwner">
+                @for (opt of roleOptions; track opt.value) {
+                  <nb-option [value]="opt.value">{{ opt.label }}</nb-option>
+                }
+              </nb-select>
+            }
+            <button nbButton status="danger" size="small" [disabled]="!isOwner || item.role === 'owner'"
+              (click)="deleteUser($index)">
               <nb-icon icon="trash-2"></nb-icon>
             </button>
           </div>

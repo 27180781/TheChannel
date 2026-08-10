@@ -11,6 +11,7 @@ import {
   NbToggleModule,
 } from '@nebular/theme';
 import { AdminService } from '../../../services/admin.service';
+import { AuthService } from '../../../services/auth.service';
 import { Setting } from '../../../models/setting.model';
 
 type MagnetMode = 'by_messages' | 'by_time';
@@ -74,11 +75,18 @@ export class MagnetAdsComponent implements OnInit {
 
   constructor(
     private adminService: AdminService,
+    private authService: AuthService,
     private toast: NbToastrService,
   ) {}
 
+  get isSuperAdmin(): boolean {
+    return this.authService.userInfo?.globalRole === 'super_admin';
+  }
+
   ngOnInit(): void {
-    this.adminService.getSettings().then(settings => this.load(settings || []));
+    this.adminService.getSettings()
+      .then(settings => this.load(settings || []))
+      .catch(() => this.toast.danger('', 'אין הרשאה לצפות בהגדרות'));
   }
 
   private load(settings: Setting[]) {
