@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -53,6 +54,23 @@ func reportMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
+	// Everything the reporter may not choose is set here: an unbounded reason is
+	// a free write into Redis, a report against a nonexistent message is noise,
+	// and a client-sent closed:true would land a "closed" hash in the open queue.
+	if len(report.Reason) > 500 {
+		http.Error(w, "reason too long", http.StatusBadRequest)
+		return
+	}
+	n, err := rdb.Exists(ctx, fmt.Sprintf("channel:%s:messages:%d", slug, report.MessageId)).Result()
+	if err != nil {
+		http.Error(w, "Error saving report", http.StatusInternalServerError)
+		return
+	}
+	if n == 0 {
+		http.Error(w, "message not found", http.StatusBadRequest)
+		return
+	}
+	report.Closed = false
 	report.CreatedAt = time.Now()
 	report.ReporterID = s.ID
 	report.ReportedEmail = s.Email

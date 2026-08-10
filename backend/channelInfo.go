@@ -7,15 +7,26 @@ import (
 	"time"
 )
 
+// PublicFeatures is the subset of ChannelFeatures the UI needs to know about:
+// exactly the toggles requireFeature gates a user-visible action on. Without
+// them the client offers a button the backend then answers with 403.
+type PublicFeatures struct {
+	Reactions         bool `json:"reactions"`
+	FileUploads       bool `json:"fileUploads"`
+	Reports           bool `json:"reports"`
+	ScheduledMessages bool `json:"scheduledMessages"`
+}
+
 type Channel struct {
-	Id                      string    `json:"id"`
-	Name                    string    `json:"name"`
-	Description             string    `json:"description"`
-	CreatedAt               time.Time `json:"created_at"`
-	LogoUrl                 string    `json:"logoUrl"`
-	Views                   int64     `json:"views"`
-	RequireAuthForViewFiles bool      `json:"require_auth_for_view_files"`
-	ContactUs               string    `json:"contact_us"`
+	Id                      string         `json:"id"`
+	Name                    string         `json:"name"`
+	Description             string         `json:"description"`
+	CreatedAt               time.Time      `json:"created_at"`
+	LogoUrl                 string         `json:"logoUrl"`
+	Views                   int64          `json:"views"`
+	RequireAuthForViewFiles bool           `json:"require_auth_for_view_files"`
+	ContactUs               string         `json:"contact_us"`
+	Features                PublicFeatures `json:"features"`
 }
 
 func getChannelInfo(w http.ResponseWriter, r *http.Request) {
@@ -40,6 +51,12 @@ func getChannelInfo(w http.ResponseWriter, r *http.Request) {
 		channel.LogoUrl = ch.LogoUrl
 		channel.RequireAuthForViewFiles = ch.Features.RequireAuthFiles
 		channel.ContactUs = ch.ContactUs
+		channel.Features = PublicFeatures{
+			Reactions:         ch.Features.Reactions,
+			FileUploads:       ch.Features.FileUploads,
+			Reports:           ch.Features.Reports,
+			ScheduledMessages: ch.Features.ScheduledMessages,
+		}
 	}
 	channel.Views = amount
 
@@ -53,11 +70,14 @@ func editChannelInfo(w http.ResponseWriter, r *http.Request) {
 
 	slug := channelSlugFromCtx(r)
 
+	// ContactUs is a pointer so an absent field (the shape the current client
+	// posts) can be told apart from a deliberately cleared one. Only the latter
+	// may overwrite the stored value.
 	type Request struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		LogoUrl     string `json:"logoUrl"`
-		ContactUs   string `json:"contactUs"`
+		Name        string  `json:"name"`
+		Description string  `json:"description"`
+		LogoUrl     string  `json:"logoUrl"`
+		ContactUs   *string `json:"contactUs"`
 	}
 
 	var req Request
@@ -68,7 +88,11 @@ func editChannelInfo(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	hashKey := "channel:" + slug
-	if _, err := rdb.HSet(ctx, hashKey, "name", req.Name, "description", req.Description, "logoUrl", req.LogoUrl, "contactUs", req.ContactUs).Result(); err != nil {
+	args := []any{"name", req.Name, "description", req.Description, "logoUrl", req.LogoUrl}
+	if req.ContactUs != nil {
+		args = append(args, "contactUs", *req.ContactUs)
+	}
+	if _, err := rdb.HSet(ctx, hashKey, args...).Result(); err != nil {
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
