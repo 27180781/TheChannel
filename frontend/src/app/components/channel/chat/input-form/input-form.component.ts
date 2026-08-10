@@ -77,13 +77,23 @@ export class InputFormComponent implements OnInit, OnDestroy {
     }
 
     this.subscription = this.adminService.messageEditObservable.subscribe((edit?: EditMsg) => {
-      if (edit?.isScheduling) {
+      if (!edit) {
+        // Cleared (e.g. on a channel switch) — drop every leftover of the
+        // previous compose/edit so nothing targets the wrong channel.
+        this.message = undefined;
+        this.input = '';
+        this.isAds = false;
+        this.attachments = [];
+        this.schedulingMessage = undefined;
+        return;
+      }
+      if (edit.isScheduling) {
         this.schedulingMessage = edit.message?.timestamp;
       }
-      if (edit?.new) {
+      if (edit.new) {
         this.input = this.input ? `${this.input}\n${edit.message.text}` : edit.message.text || '';
       } else {
-        this.message = edit?.message;
+        this.message = edit.message;
         this.input = this.message?.text || '';
         this.isAds = this.message?.is_ads || false;
       }

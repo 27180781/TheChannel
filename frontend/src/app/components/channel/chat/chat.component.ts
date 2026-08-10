@@ -13,7 +13,7 @@ import {
 } from "@nebular/theme";
 import { MessageComponent } from "./message/message.component";
 import { MagnetAdSlotComponent } from "./magnet-ad-slot/magnet-ad-slot.component";
-import { firstValueFrom, interval } from 'rxjs';
+import { firstValueFrom, interval, Subscription } from 'rxjs';
 import { ChatMessage, ChatService } from '../../../services/chat.service';
 import { AuthService } from '../../../services/auth.service';
 import { ActivatedRoute } from '@angular/router';
@@ -71,7 +71,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   thereNewMessages: boolean = false;
   showScrollToBottom: boolean = false;
   private lastHeartbeat: number = Date.now();
-  private subLastHeartbeat: any;
+  private subLastHeartbeat?: Subscription;
   lastReadMessageId: number = 0;
 
   constructor(
@@ -165,6 +165,9 @@ export class ChatComponent implements OnInit, OnDestroy {
       this.userInfo = res;
       this.userInfo.channelRoles && Object.keys(this.userInfo.channelRoles).length > 0 && this.loadScheduledMessages();
       this.notificationService.init();
+    }).catch(() => {
+      // Anonymous visitor on a public channel — read-only view.
+      this.userInfo = undefined;
     });
 
     this.loadMessages().then(() => {
@@ -272,7 +275,7 @@ export class ChatComponent implements OnInit, OnDestroy {
 
   ngOnDestroy() {
     this.chatService.sseClose();
-    clearInterval(this.subLastHeartbeat);
+    this.subLastHeartbeat?.unsubscribe();
   }
 
   private rebuildItems() {
@@ -285,7 +288,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
 
   async keepAliveSSE() {
-    clearInterval(this.subLastHeartbeat);
+    this.subLastHeartbeat?.unsubscribe();
     // Backend sends heartbeat every 25s; if 35s pass without one the SSE is dead.
     this.subLastHeartbeat = interval(10000)
       .subscribe(() => {
