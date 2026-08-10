@@ -2,6 +2,12 @@
   display: block;
 }
 
+// The landing sections are full-bleed (hero gradient, footer), so drop the
+// default column padding that nb-layout-column adds.
+:host ::ng-deep nb-layout-column {
+  padding: 0;
+}
+
 .hero {
   background: linear-gradient(135deg, #3366ff 0%, #6610f2 100%);
   color: white;
