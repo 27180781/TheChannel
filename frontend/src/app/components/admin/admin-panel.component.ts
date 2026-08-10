@@ -1,6 +1,6 @@
 import { Component, OnInit } from "@angular/core";
 import { NbCardModule, NbLayoutModule, NbMenuItem, NbMenuModule, NbMenuService, NbSidebarModule } from "@nebular/theme";
-import { ChatService } from "../../services/chat.service";
+import { SlugService } from "../../services/slug.service";
 import { EmojisComponent } from "./emojis/emojis.component";
 import { SettingsComponent } from "./settings/settings.component";
 import { PrivilegDashboardComponent } from "./privileg-dashboard/privileg-dashboard.component";
@@ -95,12 +95,12 @@ export class AdminPanelComponent implements OnInit {
   ];
 
   get channelSlug(): string {
-    return this.chatService.channelInfo?.slug ?? '';
+    return this.slugService.slug;
   }
 
   constructor(
     private menuService: NbMenuService,
-    private chatService: ChatService
+    private slugService: SlugService
   ) { }
 
   ngOnInit(): void {

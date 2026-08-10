@@ -29,6 +29,9 @@ export class ChannelUsersComponent implements OnInit {
   @Input() slug!: string;
 
   users: ChannelUser[] = [];
+  // Removed users are sent with an empty role so the server actually revokes them —
+  // an email that is simply missing from the payload is never touched.
+  removedUsers: ChannelUser[] = [];
   saving = false;
   addingUser = false;
   newEmail = '';
@@ -51,7 +54,10 @@ export class ChannelUsersComponent implements OnInit {
 
   loadUsers() {
     this.superAdminService.getChannelUsers(this.slug)
-      .then(users => this.users = [...users])
+      .then(users => {
+        this.users = [...users];
+        this.removedUsers = [];
+      })
       .catch(() => this.toastr.danger('', 'שגיאה בטעינת משתמשי הערוץ'));
   }
 
@@ -67,13 +73,17 @@ export class ChannelUsersComponent implements OnInit {
   }
 
   removeUser(index: number) {
-    this.users.splice(index, 1);
+    const [removed] = this.users.splice(index, 1);
+    if (removed?.email) this.removedUsers.push({ email: removed.email, role: '' });
   }
 
   save() {
     this.saving = true;
-    this.superAdminService.setChannelUsers(this.slug, this.users)
-      .then(() => this.toastr.success('', 'המשתמשים נשמרו בהצלחה'))
+    this.superAdminService.setChannelUsers(this.slug, [...this.users, ...this.removedUsers])
+      .then(() => {
+        this.removedUsers = [];
+        this.toastr.success('', 'המשתמשים נשמרו בהצלחה');
+      })
       .catch(() => this.toastr.danger('', 'שגיאה בשמירת המשתמשים'))
       .finally(() => this.saving = false);
   }

@@ -127,6 +127,10 @@ export class ChannelComponent implements OnInit, OnDestroy {
     this.slugService.slug = slug;
     this.chatService.channelInfo = undefined;
     this.adminService.clearCache();
+    // Drop any in-progress edit/compose state from the previous channel, otherwise
+    // the replayed BehaviorSubject value makes the input form post the old message
+    // id into the new channel.
+    this.adminService.setEditMessage(undefined);
     this.magnetAds.clearCache();
     this.slugReady = true;
 
@@ -135,6 +139,9 @@ export class ChannelComponent implements OnInit, OnDestroy {
     });
     this._authService.loadUserInfo().then(res => {
       this.userInfo = res;
+    }).catch(() => {
+      // Anonymous visitor on a public channel — read-only view.
+      this.userInfo = undefined;
     });
   }
 
