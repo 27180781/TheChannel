@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/mail"
 	"strconv"
@@ -186,6 +187,13 @@ func approveChannelRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Without this, replaying approve with a different slug creates a second
+	// channel and a second owner grant for the same applicant.
+	if req.Status != RequestStatusPending {
+		http.Error(w, "request already processed", http.StatusConflict)
+		return
+	}
+
 	finalSlug := body.Slug
 	if finalSlug == "" {
 		finalSlug = req.DesiredSlug
@@ -226,6 +234,10 @@ func approveChannelRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := dbCreateChannel(ctx, channel); err != nil {
+		if errors.Is(err, errChannelExists) {
+			http.Error(w, "slug already taken", http.StatusConflict)
+			return
+		}
 		http.Error(w, "error creating channel", http.StatusInternalServerError)
 		return
 	}
@@ -262,6 +274,11 @@ func rejectChannelRequest(w http.ResponseWriter, r *http.Request) {
 	req, err := dbGetChannelRequest(ctx, id)
 	if err != nil {
 		http.Error(w, "request not found", http.StatusNotFound)
+		return
+	}
+
+	if req.Status != RequestStatusPending {
+		http.Error(w, "request already processed", http.StatusConflict)
 		return
 	}
 

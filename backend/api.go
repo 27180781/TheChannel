@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -21,9 +22,11 @@ func addNewPost(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	cfg := getChannelConfig(ctx, slug)
+	// Unauthenticated route: an unset key must fail closed, and the comparison
+	// against the configured secret must not vary with how much of it matched.
 	key := r.Header.Get("X-API-Key")
-	if key != cfg.ApiSecretKey || cfg.ApiSecretKey == "" {
-		http.Error(w, "error", http.StatusBadRequest)
+	if cfg.ApiSecretKey == "" || subtle.ConstantTimeCompare([]byte(key), []byte(cfg.ApiSecretKey)) != 1 {
+		http.Error(w, "error", http.StatusUnauthorized)
 		return
 	}
 

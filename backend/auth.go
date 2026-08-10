@@ -10,7 +10,6 @@ import (
 
 	"github.com/boj/redistore"
 	"github.com/icza/dyno"
-	"github.com/redis/go-redis/v9"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/idtoken"
@@ -95,7 +94,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !token.Valid() {
-		go saveLoginFailedLog("Invalid token", nil)
+		go saveLoginFailedLog("Invalid token", errors.New("oauth2 token not valid"))
 		http.Error(w, "Invalid token", http.StatusUnauthorized)
 		return
 	}
@@ -254,16 +253,20 @@ func getUser(ctx context.Context, claims map[string]any) (*User, error) {
 			user.PublicName = name
 		}
 		privilegesUsers.Store(email, user)
-		users, err := dbGetUsersList(ctx)
-		if err != nil && err != redis.Nil {
-			return nil, err
-		}
-		for i, u := range users {
-			if u.Email == email {
-				users[i] = user
+		// Refresh only the profile fields, atomically. Writing the whole in-memory
+		// User back would race with (and undo) a concurrent role edit, and the
+		// roles are owned by the admin paths, not by a login.
+		if err := dbUpdateUsersList(ctx, func(users []User) []User {
+			for i := range users {
+				if users[i].Email == email {
+					users[i].ID = user.ID
+					users[i].Username = user.Username
+					users[i].Email = user.Email
+					users[i].PublicName = user.PublicName
+				}
 			}
-		}
-		if err := dbSetUsersList(ctx, users); err != nil {
+			return users
+		}); err != nil {
 			return nil, err
 		}
 	} else {

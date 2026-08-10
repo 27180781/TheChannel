@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"regexp"
@@ -184,6 +185,10 @@ func createChannel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := dbCreateChannel(ctx, channel); err != nil {
+		if errors.Is(err, errChannelExists) {
+			http.Error(w, "Channel already exists", http.StatusConflict)
+			return
+		}
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
@@ -207,6 +212,22 @@ func deleteChannel(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	slug := chi.URLParam(r, "slug")
+
+	// Without these checks a typo deletes nothing and still reports success, so
+	// the operator records a channel as gone while it is still live.
+	if !slugRegex.MatchString(slug) {
+		http.Error(w, "Invalid slug", http.StatusBadRequest)
+		return
+	}
+	exists, err := dbChannelExists(ctx, slug)
+	if err != nil {
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
+	}
+	if !exists {
+		http.Error(w, "Channel not found", http.StatusNotFound)
+		return
+	}
 
 	if err := dbDeleteChannel(ctx, slug); err != nil {
 		http.Error(w, "error", http.StatusInternalServerError)
@@ -275,36 +296,34 @@ func superAdminSetChannelUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	users, err := dbGetUsersList(ctx)
-	if err != nil {
-		http.Error(w, "error", http.StatusInternalServerError)
-		return
-	}
-
-	userMap := make(map[string]int)
-	for i, u := range users {
-		userMap[u.Email] = i
-	}
-
-	for _, ru := range req.Users {
-		if i, exists := userMap[ru.Email]; exists {
-			if users[i].ChannelRoles == nil {
-				users[i].ChannelRoles = make(map[string]ChannelRole)
-			}
-			if ru.Role == "" {
-				delete(users[i].ChannelRoles, slug)
-			} else {
-				users[i].ChannelRoles[slug] = ru.Role
-			}
-		} else if ru.Role != "" {
-			users = append(users, User{
-				Email:        ru.Email,
-				ChannelRoles: map[string]ChannelRole{slug: ru.Role},
-			})
+	// Read-modify-write under a WATCH so a concurrent role edit elsewhere is not
+	// silently overwritten by this one.
+	if err := dbUpdateUsersList(ctx, func(users []User) []User {
+		userMap := make(map[string]int)
+		for i, u := range users {
+			userMap[u.Email] = i
 		}
-	}
 
-	if err := dbSetUsersList(ctx, users); err != nil {
+		for _, ru := range req.Users {
+			if i, exists := userMap[ru.Email]; exists {
+				if users[i].ChannelRoles == nil {
+					users[i].ChannelRoles = make(map[string]ChannelRole)
+				}
+				if ru.Role == "" {
+					delete(users[i].ChannelRoles, slug)
+				} else {
+					users[i].ChannelRoles[slug] = ru.Role
+				}
+			} else if ru.Role != "" {
+				userMap[ru.Email] = len(users)
+				users = append(users, User{
+					Email:        ru.Email,
+					ChannelRoles: map[string]ChannelRole{slug: ru.Role},
+				})
+			}
+		}
+		return users
+	}); err != nil {
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
@@ -334,7 +353,9 @@ func superAdminGetChannelUsers(w http.ResponseWriter, r *http.Request) {
 		Role  ChannelRole `json:"role"`
 	}
 
-	var channelUsers []ChannelUser
+	// Encoded straight to JSON: a nil slice would serialise as null, which the
+	// user management screens do not accept.
+	channelUsers := make([]ChannelUser, 0)
 	for _, u := range users {
 		if u.ChannelRoles != nil {
 			if role, exists := u.ChannelRoles[slug]; exists {
@@ -365,7 +386,9 @@ func getChannelUsers(w http.ResponseWriter, r *http.Request) {
 		Role  ChannelRole `json:"role"`
 	}
 
-	var channelUsers []ChannelUser
+	// Encoded straight to JSON: a nil slice would serialise as null, which the
+	// user management screens do not accept.
+	channelUsers := make([]ChannelUser, 0)
 	for _, u := range users {
 		if u.ChannelRoles != nil {
 			if role, exists := u.ChannelRoles[slug]; exists {
@@ -397,39 +420,37 @@ func setChannelUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	users, err := dbGetUsersList(ctx)
-	if err != nil {
-		http.Error(w, "error", http.StatusInternalServerError)
-		return
-	}
-
-	userMap := make(map[string]int)
-	for i, u := range users {
-		userMap[u.Email] = i
-	}
-
-	for _, ru := range req.Users {
-		if ru.Role == RoleOwner {
-			continue // owner cannot promote others to owner
+	// Read-modify-write under a WATCH so a concurrent role edit elsewhere is not
+	// silently overwritten by this one.
+	if err := dbUpdateUsersList(ctx, func(users []User) []User {
+		userMap := make(map[string]int)
+		for i, u := range users {
+			userMap[u.Email] = i
 		}
-		if i, exists := userMap[ru.Email]; exists {
-			if users[i].ChannelRoles == nil {
-				users[i].ChannelRoles = make(map[string]ChannelRole)
-			}
-			if ru.Role == "" {
-				delete(users[i].ChannelRoles, slug)
-			} else {
-				users[i].ChannelRoles[slug] = ru.Role
-			}
-		} else if ru.Role != "" {
-			users = append(users, User{
-				Email:        ru.Email,
-				ChannelRoles: map[string]ChannelRole{slug: ru.Role},
-			})
-		}
-	}
 
-	if err := dbSetUsersList(ctx, users); err != nil {
+		for _, ru := range req.Users {
+			if ru.Role == RoleOwner {
+				continue // owner cannot promote others to owner
+			}
+			if i, exists := userMap[ru.Email]; exists {
+				if users[i].ChannelRoles == nil {
+					users[i].ChannelRoles = make(map[string]ChannelRole)
+				}
+				if ru.Role == "" {
+					delete(users[i].ChannelRoles, slug)
+				} else {
+					users[i].ChannelRoles[slug] = ru.Role
+				}
+			} else if ru.Role != "" {
+				userMap[ru.Email] = len(users)
+				users = append(users, User{
+					Email:        ru.Email,
+					ChannelRoles: map[string]ChannelRole{slug: ru.Role},
+				})
+			}
+		}
+		return users
+	}); err != nil {
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
