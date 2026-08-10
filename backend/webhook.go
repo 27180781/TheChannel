@@ -33,6 +33,12 @@ func SendWebhook(ctx context.Context, slug string, action string, message *Messa
 	chCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
+	// Operator-level kill switch: the super admin can withdraw webhooks from a
+	// tenant regardless of what the owner has configured.
+	if ch, err := dbGetChannel(chCtx, slug); err == nil && !ch.Features.Webhook {
+		return
+	}
+
 	cfg := getChannelConfig(chCtx, slug)
 	if cfg.WebhookURL == "" {
 		return

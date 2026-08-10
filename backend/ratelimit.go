@@ -12,7 +12,7 @@ import (
 // uploadLimiters stores per-user-per-channel rate limiters for file uploads.
 // Key: "userEmail:channelSlug" — 30 uploads/min (one every 2s), burst of 10.
 var (
-	uploadLimiters sync.Map
+	uploadLimiters  sync.Map
 	uploadLimiterMu sync.Mutex
 )
 

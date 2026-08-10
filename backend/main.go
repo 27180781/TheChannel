@@ -22,6 +22,14 @@ func main() {
 	if err := initializePrivilegeUsers(); err != nil {
 		panic(err)
 	}
+
+	// Data migrations run to completion before the listener starts, so a request
+	// never observes a half-migrated state. A failure is logged and retried on
+	// the next boot rather than taking the server down.
+	migCtx, migCancel := migrationContext()
+	runMigrations(migCtx)
+	migCancel()
+
 	go statLogger()
 
 	var err error
