@@ -32,7 +32,10 @@ func saveLoginFailedLog(title string, err error) {
 	defer f.Close()
 
 	t := time.Now().Format(time.DateTime)
-	errStr := err.Error()
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
 	logEntry := map[string]any{
 		"title":     title,
 		"error":     errStr,

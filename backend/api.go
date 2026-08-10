@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -21,9 +22,11 @@ func addNewPost(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	cfg := getChannelConfig(ctx, slug)
+	// Unauthenticated route: an unset key must fail closed, and the comparison
+	// against the configured secret must not vary with how much of it matched.
 	key := r.Header.Get("X-API-Key")
-	if key != cfg.ApiSecretKey || cfg.ApiSecretKey == "" {
-		http.Error(w, "error", http.StatusBadRequest)
+	if cfg.ApiSecretKey == "" || subtle.ConstantTimeCompare([]byte(key), []byte(cfg.ApiSecretKey)) != 1 {
+		http.Error(w, "error", http.StatusUnauthorized)
 		return
 	}
 
@@ -38,10 +41,24 @@ func addNewPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	message.ID = getMessageNextId(ctx, slug)
+	if message.ID, err = getMessageNextId(ctx, slug); err != nil {
+		log.Printf("Failed to allocate message id: %v\n", err)
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
+	}
 	message.Type = "md" //body.Type
 	message.Author = body.Author
-	message.Timestamp = body.Timestamp
+	// The timestamp is the sort score. A missing one decodes to the zero time
+	// and buries the post at the bottom of every listing; a far-future one pins
+	// it to the top forever. Backdated imports stay legitimate.
+	if body.Timestamp.IsZero() {
+		message.Timestamp = time.Now()
+	} else if body.Timestamp.After(time.Now().Add(time.Hour)) {
+		http.Error(w, "timestamp out of range", http.StatusBadRequest)
+		return
+	} else {
+		message.Timestamp = body.Timestamp
+	}
 	message.Text = body.Text
 	message.Views = 0
 	message.IsAds = body.IsAds
