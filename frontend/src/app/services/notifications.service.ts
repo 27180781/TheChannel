@@ -4,6 +4,7 @@ import { NbToastrService } from '@nebular/theme';
 import { firstValueFrom } from 'rxjs';
 import { FirebaseApp, FirebaseOptions, initializeApp } from 'firebase/app';
 import { getMessaging, onMessage, getToken } from 'firebase/messaging';
+import { ResponseResult } from '../models/response-result.model';
 import { SlugService } from './slug.service';
 
 
@@ -104,7 +105,8 @@ export class NotificationsService {
 
   async subscribeNotifications(token: string): Promise<boolean> {
     if (!token) return false;
-    return firstValueFrom(this.http.post<boolean>(`/api/channel/${this.slugService.slug}/notifications-subscribe`, { token }))
+    const res = await firstValueFrom(this.http.post<ResponseResult>(`/api/channel/${this.slugService.slug}/notifications-subscribe`, { token }));
+    return res.success;
   }
 
 }

@@ -56,7 +56,9 @@ export class AdminPanelComponent implements OnInit, OnDestroy {
   // cannot use is never rendered — otherwise it just answers 403 with a blank form.
   private readonly menuDefinition: { access: MenuAccess, item: NbMenuItem }[] = [
     {
-      access: 'any',
+      // Backed by /admin/edit-channel-info, which the backend gates at moderator —
+      // a writer would only ever get a 403 out of this form.
+      access: 'moderator',
       item: {
         title: 'פרטי ערוץ',
         icon: 'info-outline',

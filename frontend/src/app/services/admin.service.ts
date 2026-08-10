@@ -62,12 +62,13 @@ export class AdminService {
     return this.http.post<ChatMessage>(`/api/channel/${this.slug}/admin/new`, message);
   }
 
-  editMessage(message: ChatMessage): Observable<ChatMessage> {
-    return this.http.post<ChatMessage>(`/api/channel/${this.slug}/admin/edit-message`, message);
+  // Both endpoints answer with the {success} envelope, not the message itself.
+  editMessage(message: ChatMessage): Observable<ResponseResult> {
+    return this.http.post<ResponseResult>(`/api/channel/${this.slug}/admin/edit-message`, message);
   }
 
-  deleteMessage(id: number | undefined): Observable<ChatMessage> {
-    return this.http.get<ChatMessage>(`/api/channel/${this.slug}/admin/delete-message/${id}`);
+  deleteMessage(id: number | undefined): Observable<ResponseResult> {
+    return this.http.get<ResponseResult>(`/api/channel/${this.slug}/admin/delete-message/${id}`);
   }
 
   uploadFile(formData: FormData) {
