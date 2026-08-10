@@ -4,7 +4,8 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink, Router } from '@angular/router';
 import {
   NbCardModule, NbButtonModule, NbInputModule,
-  NbFormFieldModule, NbIconModule, NbAlertModule, NbSpinnerModule
+  NbFormFieldModule, NbIconModule, NbAlertModule, NbSpinnerModule,
+  NbLayoutModule
 } from '@nebular/theme';
 import { AuthService } from '../../services/auth.service';
 import { ChannelRequestService } from '../../services/channel-request.service';
@@ -23,9 +24,15 @@ import { ChannelRequestService } from '../../services/channel-request.service';
     NbIconModule,
     NbAlertModule,
     NbSpinnerModule,
+    NbLayoutModule,
   ],
   styleUrl: './landing-page.component.scss',
   template: `
+    <!-- nb-layout must wrap the page (and sit outside the isChecking guard) —
+         it is what applies the nb-theme-* class that every Nebular CSS variable
+         hangs off. Without it the whole page renders unstyled. -->
+    <nb-layout>
+      <nb-layout-column>
     @if (!isChecking) {
     <!-- Navbar -->
     <nav class="d-flex justify-content-between align-items-center px-4 py-3 border-bottom bg-white">
@@ -195,6 +202,8 @@ import { ChannelRequestService } from '../../services/channel-request.service';
       <span>TheChannel &copy; 2024</span>
     </footer>
     } <!-- end @if (!isChecking) -->
+      </nb-layout-column>
+    </nb-layout>
   `,
 })
 export class LandingPageComponent implements OnInit {
