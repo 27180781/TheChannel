@@ -204,7 +204,14 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 	slug := channelSlugFromCtx(r)
 	cfg := getChannelConfig(ctx, slug)
 
-	r.Body = http.MaxBytesReader(w, r.Body, int64(cfg.MaxFileSize)<<20)
+	// Defensive clamp: getChannelConfig is not the only way a config can reach
+	// here, and a non-positive or huge value would either reject every upload
+	// or let a single request buffer unbounded bytes in memory.
+	maxMB := cfg.MaxFileSize
+	if maxMB <= 0 || maxMB > maxAllowedFileSizeMB {
+		maxMB = defaultMaxFileSizeMB
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxMB<<20)
 
 	file, handler, err := r.FormFile("file")
 	if err != nil {
@@ -376,6 +383,8 @@ func deleteFileByID(ctx context.Context, slug, fileID string) {
 		} else {
 			os.Remove(filepath.Join(rootUploadPath, meta.Hash[:2], meta.Hash[2:4], meta.Hash))
 		}
+		// Drop the counter itself; a fresh upload of the same hash starts at 1 again.
+		dbDelFileHashRefs(ctx, meta.Hash)
 	}
 }
 

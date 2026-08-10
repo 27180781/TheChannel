@@ -11,6 +11,14 @@ import (
 	"github.com/icza/dyno"
 )
 
+const (
+	// defaultMaxFileSizeMB is used when a channel has no (or an invalid) max_file_size.
+	defaultMaxFileSizeMB int64 = 100
+	// maxAllowedFileSizeMB is the absolute server-side ceiling a channel owner
+	// cannot raise, since the whole upload is buffered in memory.
+	maxAllowedFileSizeMB int64 = 512
+)
+
 type ReplaceRegex struct {
 	Pattern *regexp.Regexp
 	Replace string
@@ -85,7 +93,7 @@ func (s *Settings) ToConfig() *SettingConfig {
 		config.RootStaticFolder = "/usr/share/ng"
 	}
 
-	config.MaxFileSize = 100
+	config.MaxFileSize = defaultMaxFileSizeMB
 
 	for _, setting := range *s {
 		switch setting.Key {
@@ -157,7 +165,11 @@ func (s *Settings) ToConfig() *SettingConfig {
 			config.ProjectDomain = setting.GetString()
 
 		case "max_file_size":
-			config.MaxFileSize = setting.GetInt()
+			// A zero/unparseable or oversized value keeps the default instead of
+			// bricking uploads or letting an owner exhaust server memory.
+			if v := setting.GetInt(); v > 0 && v <= maxAllowedFileSizeMB {
+				config.MaxFileSize = v
+			}
 
 		case "custom_title":
 			config.CustomTitle = setting.GetString()

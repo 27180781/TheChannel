@@ -92,6 +92,18 @@ func channelIfRequireAuth(next http.Handler) http.Handler {
 	})
 }
 
+// channelIfRequireAuthFiles middleware
+func channelIfRequireAuthFiles(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ch := channelFromCtx(r)
+		if ch != nil && ch.Features.RequireAuthFiles {
+			checkLogin(next).ServeHTTP(w, r)
+		} else {
+			next.ServeHTTP(w, r)
+		}
+	})
+}
+
 // Super admin: list all channels
 func listChannels(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -169,7 +181,9 @@ func createChannel(w http.ResponseWriter, r *http.Request) {
 
 // Super admin: delete channel
 func deleteChannel(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Deletion also releases every uploaded blob (R2/disk), so it needs more
+	// headroom than the usual 5s handler budget.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	slug := chi.URLParam(r, "slug")

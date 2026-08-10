@@ -13,6 +13,9 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// maxMessagesPerRequest caps the client-supplied page size for /messages.
+const maxMessagesPerRequest = 100
+
 func getMessages(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -29,8 +32,10 @@ func getMessages(w http.ResponseWriter, r *http.Request) {
 		offset = 0
 	}
 
+	// The limit drives a blocking Lua scan (ZREVRANGE + one HGETALL per member)
+	// on a shared Redis, so an unbounded client value must not reach it.
 	limit, err := strconv.Atoi(limitFromClient)
-	if err != nil {
+	if err != nil || limit <= 0 || limit > maxMessagesPerRequest {
 		limit = 20
 	}
 
@@ -80,7 +85,11 @@ func addMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	message.ID = getMessageNextId(ctx, slug)
+	if message.ID, err = getMessageNextId(ctx, slug); err != nil {
+		log.Printf("Failed to allocate message id: %v\n", err)
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
+	}
 	message.Type = body.Type
 	message.Author = user.PublicName
 	message.AuthorId = user.ID
@@ -103,6 +112,21 @@ func addMessage(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(message)
 }
 
+// canModifyMessage reports whether the current session may edit or delete a
+// message written by authorId. Writers may only touch their own posts;
+// moderators (and above, including super admins) may touch any message.
+func canModifyMessage(r *http.Request, slug, authorId string) bool {
+	if hasChannelRole(r, slug, RoleModerator) {
+		return true
+	}
+	session, _ := store.Get(r, cookieName)
+	user, ok := session.Values["user"].(Session)
+	if !ok || user.ID == "" {
+		return false
+	}
+	return authorId == user.ID
+}
+
 func updateMessage(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -117,6 +141,37 @@ func updateMessage(w http.ResponseWriter, r *http.Request) {
 		response := Response{Success: false}
 		json.NewEncoder(w).Encode(response)
 		return
+	}
+
+	// The message must already exist: setMessage would otherwise happily create
+	// an unindexed hash from whatever ID the client sent.
+	stored, err := dbGetMessageFields(ctx, slug, strconv.Itoa(body.ID))
+	if err != nil {
+		http.Error(w, "message not found", http.StatusNotFound)
+		return
+	}
+
+	if !canModifyMessage(r, slug, stored["authorId"]) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	// Only the body of the message is editable — identity, ordering and counters
+	// stay as stored, so they cannot be forged through the request payload.
+	// Deleted is deliberately NOT restored: re-saving a deleted message is how
+	// the composer republishes it, which the edit form promises to the user.
+	body.Author = stored["author"]
+	body.AuthorId = stored["authorId"]
+	body.Views, _ = strconv.Atoi(stored["views"])
+	if ts, perr := time.Parse(time.RFC3339Nano, stored["timestamp"]); perr == nil {
+		body.Timestamp = ts
+	}
+	body.Reactions = nil
+	if raw := stored["reactions"]; raw != "" {
+		var reactions Reactions
+		if json.Unmarshal([]byte(raw), &reactions) == nil {
+			body.Reactions = reactions
+		}
 	}
 
 	body.LastEdit = time.Now()
@@ -139,6 +194,17 @@ func deleteMessage(w http.ResponseWriter, r *http.Request) {
 
 	slug := channelSlugFromCtx(r)
 	id := chi.URLParam(r, "id")
+
+	stored, err := dbGetMessageFields(ctx, slug, id)
+	if err != nil {
+		http.Error(w, "message not found", http.StatusNotFound)
+		return
+	}
+
+	if !canModifyMessage(r, slug, stored["authorId"]) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
 
 	idInt, _ := strconv.Atoi(id)
 	message := Message{ID: idInt, Deleted: true}
