@@ -307,7 +307,7 @@ export class MessageComponent implements OnInit, AfterViewInit, OnDestroy {
 
   copyLink(messageId?: number) {
     if (!messageId || this.isSchedulingMessage) return;
-    const url = `${window.location.origin}/#${messageId}`;
+    const url = `${window.location.origin}/channel/${this.slugService.slug}#${messageId}`;
     navigator.clipboard.writeText(url).then(() => {
       this.toastrService.success('', 'הקישור הועתק ללוח');
     });

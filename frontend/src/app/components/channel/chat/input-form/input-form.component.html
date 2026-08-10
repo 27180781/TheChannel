@@ -45,6 +45,11 @@
         <nb-toggle class="me-md-auto" labelPosition="start" [(checked)]="showMarkdownPreview" [disabled]="!input">
             <span class="d-none d-md-inline-block">תצוגה מקדימה</span>
         </nb-toggle>
+        <nb-toggle class="ms-2" labelPosition="start" [checked]="enterSendsMessage"
+            (checkedChange)="setEnterSendsMessage($event)"
+            title="לחיצה על Enter תשלח את ההודעה. Ctrl+Enter יוריד שורה.">
+            <span class="d-none d-md-inline-block">Enter שולח</span>
+        </nb-toggle>
     </div>
     <div class="d-flex flex-row">
         <div class="flex-grow-1 overflow-auto">

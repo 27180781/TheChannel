@@ -24,6 +24,11 @@ import { AdminService, EditMsg } from '../../../../services/admin.service';
 import { AutosizeModule } from "ngx-autosize";
 import { TimePickerComponent } from './time-picker/time-picker.component';
 
+// Per-user client-side preference: the server never consumed this setting, and
+// the channel settings endpoint it used to arrive through is owner-only, so a
+// writer or moderator could never receive it.
+const ENTER_SENDS_MESSAGE_KEY = 'enterSendsMessage';
+
 @Component({
   selector: 'app-input-form',
   imports: [
@@ -59,6 +64,7 @@ export class InputFormComponent implements OnInit, OnDestroy {
   isSending: boolean = false;
   showMarkdownPreview: boolean = false;
   hasScrollbar: boolean = false;
+  enterSendsMessage: boolean = false;
   private subscription!: Subscription;
 
   @ViewChild('inputTextArea') inputTextArea!: ElementRef<HTMLTextAreaElement>;
@@ -72,6 +78,8 @@ export class InputFormComponent implements OnInit, OnDestroy {
   ) { }
 
   ngOnInit() {
+    this.enterSendsMessage = localStorage.getItem(ENTER_SENDS_MESSAGE_KEY) === '1';
+
     if (this.message) {
       this.input = this.message.text || '';
     }
@@ -289,8 +297,13 @@ export class InputFormComponent implements OnInit, OnDestroy {
     }
   }
 
+  setEnterSendsMessage(checked: boolean) {
+    this.enterSendsMessage = checked;
+    localStorage.setItem(ENTER_SENDS_MESSAGE_KEY, checked ? '1' : '0');
+  }
+
   onKeydown(event: KeyboardEvent) {
-    if (!this.adminService.enterSendsMessage) return;
+    if (!this.enterSendsMessage) return;
     if (event.key !== 'Enter') return;
 
     if (event.ctrlKey || event.metaKey) {
