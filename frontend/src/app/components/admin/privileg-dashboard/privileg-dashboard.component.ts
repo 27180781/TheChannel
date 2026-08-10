@@ -28,6 +28,9 @@ export class PrivilegDashboardComponent implements OnInit {
   ) { }
 
   usersList: ChannelUser[] = [];
+  // Removed users are sent with an empty role so the server actually revokes them —
+  // an email that is simply missing from the payload is never touched.
+  removedUsers: ChannelUser[] = [];
   addingNewUser = false;
   newUserEmail = '';
   newUserRole: 'moderator' | 'writer' = 'writer';
@@ -45,19 +48,26 @@ export class PrivilegDashboardComponent implements OnInit {
 
   ngOnInit(): void {
     this.adminService.getChannelUsers()
-      .then(list => this.usersList = list)
+      .then(list => {
+        this.usersList = list;
+        this.removedUsers = [];
+      })
       .catch(() => this.toastService.danger('', 'שגיאה בטעינת המשתמשים'));
   }
 
   saveChanges() {
-    this.adminService.setChannelUsers(this.usersList)
-      .then(() => this.toastService.success('', 'השינויים נשמרו בהצלחה!'))
+    this.adminService.setChannelUsers([...this.usersList, ...this.removedUsers])
+      .then(() => {
+        this.removedUsers = [];
+        this.toastService.success('', 'השינויים נשמרו בהצלחה!');
+      })
       .catch(() => this.toastService.danger('', 'שגיאה בשמירת השינויים'));
   }
 
   deleteUser(index: number) {
     if (!confirm('האם אתה בטוח שברצונך למחוק את המשתמש הזה?')) return;
-    this.usersList.splice(index, 1);
+    const [removed] = this.usersList.splice(index, 1);
+    if (removed?.email) this.removedUsers.push({ email: removed.email, role: '' });
   }
 
   saveNewUser() {
