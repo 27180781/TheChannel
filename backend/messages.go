@@ -42,9 +42,14 @@ func getMessages(w http.ResponseWriter, r *http.Request) {
 	isAdmin := hasChannelRole(r, slug, RoleWriter)
 	countViews := ch != nil && ch.Features.CountViews
 
-	// ETag: skip expensive query if content hasn't changed since client's copy
-	etag := `"` + getLastModified(ctx, slug) + `"`
-	if etag != `""` {
+	// ETag: skip expensive query if content hasn't changed since client's copy.
+	// The body varies by viewer (admins see real authors and soft-deleted
+	// posts), so the validator has to carry those inputs and the response must
+	// never be reused across identities.
+	w.Header().Set("Cache-Control", "private, no-cache")
+	w.Header().Set("Vary", "Cookie")
+	if lm := getLastModified(ctx, slug); lm != "" {
+		etag := `"` + lm + "-" + strconv.FormatBool(isAdmin) + "-" + strconv.FormatBool(countViews) + `"`
 		w.Header().Set("ETag", etag)
 		if r.Header.Get("If-None-Match") == etag {
 			w.WriteHeader(http.StatusNotModified)

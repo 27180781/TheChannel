@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -42,10 +43,13 @@ func compressWithTinyPng(ctx context.Context, apiKey string, data []byte, mimeTy
 	req.Header.Set("Content-Type", mimeType)
 
 	resp, err := http.DefaultClient.Do(req)
-	if err != nil || resp.StatusCode != http.StatusCreated {
+	if err != nil {
 		return data
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		return data
+	}
 
 	var result struct {
 		Output struct {
@@ -63,10 +67,13 @@ func compressWithTinyPng(ctx context.Context, apiKey string, data []byte, mimeTy
 	dlReq.SetBasicAuth("api", apiKey)
 
 	dlResp, err := http.DefaultClient.Do(dlReq)
-	if err != nil || dlResp.StatusCode != http.StatusOK {
+	if err != nil {
 		return data
 	}
 	defer dlResp.Body.Close()
+	if dlResp.StatusCode != http.StatusOK {
+		return data
+	}
 
 	compressed, err := io.ReadAll(dlResp.Body)
 	if err != nil || len(compressed) == 0 {
@@ -94,6 +101,24 @@ type FileMetadata struct {
 }
 
 var maxBytesReader *http.MaxBytesError
+
+// allowLegacyUnscopedFiles re-opens the pre-migration corpus (records with no
+// ChannelSlug) to every tenant. Off by default: unscoped records are the normal
+// shape of every YAML-era file, so exempting them from isolation would leave a
+// permanent cross-tenant read path.
+var allowLegacyUnscopedFiles = os.Getenv("ALLOW_LEGACY_UNSCOPED_FILES") == "true"
+
+// fileVisibleToChannel reports whether a file record may be served under slug.
+func fileVisibleToChannel(meta *FileMetadata, slug string) bool {
+	if meta.ChannelSlug == slug {
+		return true
+	}
+	if meta.ChannelSlug == "" && allowLegacyUnscopedFiles {
+		log.Printf("legacy unscoped file %s served to channel %s\n", meta.ID, slug)
+		return true
+	}
+	return false
+}
 
 // dbSaveFileMetadata stores file metadata in Redis.
 func dbSaveFileMetadata(ctx context.Context, meta *FileMetadata) error {
@@ -155,9 +180,8 @@ func serveFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return
 	}
-	// Enforce channel isolation: reject if file belongs to a different channel.
-	// Legacy files with empty ChannelSlug are allowed through for backward compatibility.
-	if meta.ChannelSlug != "" && meta.ChannelSlug != slug {
+	// Enforce channel isolation: reject if the file belongs to another channel.
+	if !fileVisibleToChannel(meta, slug) {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return
 	}
@@ -198,7 +222,10 @@ func serveFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func uploadFile(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Derived from the request so a client disconnect stops the work, and wide
+	// enough to cover reading the body off the wire. The hostile sub-operations
+	// (TinyPNG, the R2 write) get their own budgets below.
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 
 	slug := channelSlugFromCtx(r)
@@ -234,7 +261,9 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 
 	// Compress images with TinyPNG if the channel has an API key configured
 	if cfg.TinyPngApiKey != "" {
-		fileBytes = compressWithTinyPng(ctx, cfg.TinyPngApiKey, fileBytes, t.MIME.Value)
+		tinyCtx, tinyCancel := context.WithTimeout(ctx, 20*time.Second)
+		fileBytes = compressWithTinyPng(tinyCtx, cfg.TinyPngApiKey, fileBytes, t.MIME.Value)
+		tinyCancel()
 	}
 
 	fileSize := int64(len(fileBytes))
@@ -265,7 +294,10 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 		if r2Exists(ctx, key) {
 			isNewHash = false
 		} else {
-			if err := r2Upload(ctx, key, bytes.NewReader(fileBytes), contentType); err != nil {
+			upCtx, upCancel := context.WithTimeout(ctx, 60*time.Second)
+			err := r2Upload(upCtx, key, bytes.NewReader(fileBytes), contentType)
+			upCancel()
+			if err != nil {
 				http.Error(w, "error uploading file", http.StatusInternalServerError)
 				return
 			}
@@ -360,6 +392,13 @@ func enforceStorageQuota(ctx context.Context, slug string, newFileSize int64) er
 		needToFree -= f.Size
 	}
 
+	// Cleanup is best-effort: it walks at most the 200 oldest files, so it can
+	// finish without having made room. Reporting success here would let the
+	// channel grow past its quota indefinitely.
+	if needToFree > 0 {
+		return fmt.Errorf("storage quota exceeded (%d/%d bytes); auto-cleanup could not free enough space", used, quota)
+	}
+
 	return nil
 }
 
@@ -433,7 +472,9 @@ func getFavicon(w http.ResponseWriter, r *http.Request) {
 	}
 
 	meta, err := dbGetFileMetadata(ctx, fileId)
-	if err != nil || meta.Delete {
+	// The logo URL is arbitrary moderator-supplied input, so the same channel
+	// isolation serveFile applies must hold here too.
+	if err != nil || meta.Delete || !fileVisibleToChannel(meta, slug) {
 		http.ServeFile(w, r, "assets/favicon.ico")
 		return
 	}

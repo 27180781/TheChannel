@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"firebase.google.com/go/v4/messaging"
@@ -48,18 +49,19 @@ func getNotificationsConfig(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	channelCfg := getChannelConfig(ctx, slug)
+	cfg := getGlobalConfig()
 
 	response := NotificationsConfig{
-		EnableNotifications: settingConfig.OnNotification && channelCfg.OnNotification,
-		VAPID:               settingConfig.VAPID,
+		EnableNotifications: cfg.OnNotification && channelCfg.OnNotification,
+		VAPID:               cfg.VAPID,
 		FirebaseConfig: FirebaseConfig{
-			ApiKey:            settingConfig.FcmApiKey,
-			AuthDomain:        settingConfig.FcmAuthDomain,
-			ProjectId:         settingConfig.FcmProjectId,
-			StorageBucket:     settingConfig.FcmStorageBucket,
-			MessagingSenderId: settingConfig.FcmMessagingSenderId,
-			AppId:             settingConfig.FcmAppId,
-			MeasurementId:     settingConfig.FcmMeasurementId,
+			ApiKey:            cfg.FcmApiKey,
+			AuthDomain:        cfg.FcmAuthDomain,
+			ProjectId:         cfg.FcmProjectId,
+			StorageBucket:     cfg.FcmStorageBucket,
+			MessagingSenderId: cfg.FcmMessagingSenderId,
+			AppId:             cfg.FcmAppId,
+			MeasurementId:     cfg.FcmMeasurementId,
 		},
 	}
 
@@ -111,14 +113,15 @@ func getFirebaseMessagingSW(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cfg := getGlobalConfig()
 	err = tmpl.Execute(w, map[string]string{
-		"FcmApiKey":            settingConfig.FcmApiKey,
-		"FcmAuthDomain":        settingConfig.FcmAuthDomain,
-		"FcmProjectId":         settingConfig.FcmProjectId,
-		"FcmStorageBucket":     settingConfig.FcmStorageBucket,
-		"FcmMessagingSenderId": settingConfig.FcmMessagingSenderId,
-		"FcmAppId":             settingConfig.FcmAppId,
-		"FcmMeasurementId":     settingConfig.FcmMeasurementId,
+		"FcmApiKey":            cfg.FcmApiKey,
+		"FcmAuthDomain":        cfg.FcmAuthDomain,
+		"FcmProjectId":         cfg.FcmProjectId,
+		"FcmStorageBucket":     cfg.FcmStorageBucket,
+		"FcmMessagingSenderId": cfg.FcmMessagingSenderId,
+		"FcmAppId":             cfg.FcmAppId,
+		"FcmMeasurementId":     cfg.FcmMeasurementId,
 	})
 	if err != nil {
 		http.Error(w, "Failed to generate service worker", http.StatusInternalServerError)
@@ -156,7 +159,10 @@ func subscribeNotifications(w http.ResponseWriter, r *http.Request) {
 }
 
 func pushFcmMessage(slug string, m *Message) {
-	if !settingConfig.OnNotification {
+	// One snapshot for the whole function: reading the global per field would
+	// let a concurrent settings save splice two service-account credentials.
+	cfg := getGlobalConfig()
+	if !cfg.OnNotification {
 		return
 	}
 
@@ -186,17 +192,17 @@ func pushFcmMessage(slug string, m *Message) {
 	}
 
 	fcmSet := &FcmJsonConfing{
-		Type:                    settingConfig.FcmJson.Type,
-		ProjectId:               settingConfig.FcmJson.ProjectId,
-		PrivateKeyId:            settingConfig.FcmJson.PrivateKeyId,
-		PrivateKey:              settingConfig.FcmJson.PrivateKey,
-		ClientEmail:             settingConfig.FcmJson.ClientEmail,
-		ClientId:                settingConfig.FcmJson.ClientId,
-		AuthUri:                 settingConfig.FcmJson.AuthUri,
-		TokenUri:                settingConfig.FcmJson.TokenUri,
-		AuthProviderX509CertUrl: settingConfig.FcmJson.AuthProviderX509CertUrl,
-		ClientX509CertUrl:       settingConfig.FcmJson.ClientX509CertUrl,
-		UniverseDomain:          settingConfig.FcmJson.UniverseDomain,
+		Type:                    cfg.FcmJson.Type,
+		ProjectId:               cfg.FcmJson.ProjectId,
+		PrivateKeyId:            cfg.FcmJson.PrivateKeyId,
+		PrivateKey:              cfg.FcmJson.PrivateKey,
+		ClientEmail:             cfg.FcmJson.ClientEmail,
+		ClientId:                cfg.FcmJson.ClientId,
+		AuthUri:                 cfg.FcmJson.AuthUri,
+		TokenUri:                cfg.FcmJson.TokenUri,
+		AuthProviderX509CertUrl: cfg.FcmJson.AuthProviderX509CertUrl,
+		ClientX509CertUrl:       cfg.FcmJson.ClientX509CertUrl,
+		UniverseDomain:          cfg.FcmJson.UniverseDomain,
 	}
 
 	fcmSetJson, err := json.Marshal(fcmSet)
@@ -215,10 +221,18 @@ func pushFcmMessage(slug string, m *Message) {
 	}
 
 	data := map[string]string{
-		"url":   settingConfig.ProjectDomain,
+		// project_domain is global, so it must be joined with the channel slug
+		// or every channel's notification opens the same page.
+		"url":   strings.TrimRight(cfg.ProjectDomain, "/") + "/channel/" + slug,
 		"title": channelName["name"],
 		"body":  m.Text,
 	}
+
+	// The send loop gets its own budget: ctx above also covers the config and
+	// subscription lookups, and its deadline expiring mid-loop would silently
+	// drop every remaining chunk.
+	sendCtx, sendCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer sendCancel()
 
 	for chunk := range slices.Chunk(list, 500) {
 		message := &messaging.MulticastMessage{
@@ -226,10 +240,10 @@ func pushFcmMessage(slug string, m *Message) {
 			Data:   data,
 		}
 
-		r, err := client.SendMulticast(ctx, message)
+		r, err := client.SendMulticast(sendCtx, message)
 		if err != nil {
 			log.Println("Failed to send push notification:", err)
-			return
+			continue
 		}
 		log.Printf("Push notification sent to %d tokens: \n", r.SuccessCount)
 		log.Printf("Failed to send to %d tokens: \n", r.FailureCount)

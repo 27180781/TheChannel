@@ -111,18 +111,21 @@ func main() {
 		r.Group(func(r chi.Router) {
 			r.Use(checkLogin)
 			r.Post("/notifications-subscribe", subscribeNotifications)
-			r.Post("/reactions/set-reactions", setReactions)
-			r.Post("/messages/report", reportMessage)
+			r.Post("/reactions/set-reactions", requireFeature(func(f *ChannelFeatures) bool { return f.Reactions }, setReactions))
+			r.Post("/messages/report", requireFeature(func(f *ChannelFeatures) bool { return f.Reports }, reportMessage))
 			r.Get("/user-info", getUserInfo)
 
 			r.Route("/admin", func(r chi.Router) {
 				// Writer level
 				r.Post("/new", protectedWithChannelRole(RoleWriter, addMessage))
 				r.Post("/edit-message", protectedWithChannelRole(RoleWriter, updateMessage))
+				// Deletion is a state change, so it belongs on DELETE. The GET
+				// route stays registered for existing clients until they migrate.
+				r.Delete("/delete-message/{id}", protectedWithChannelRole(RoleWriter, deleteMessage))
 				r.Get("/delete-message/{id}", protectedWithChannelRole(RoleWriter, deleteMessage))
-				r.Post("/upload", protectedWithChannelRole(RoleWriter, uploadRateLimit(uploadFile)))
-				r.Get("/scheduled-messages/get", protectedWithChannelRole(RoleWriter, getScheduledMessages))
-				r.Post("/scheduled-messages/update", protectedWithChannelRole(RoleWriter, updateScheduledMessages))
+				r.Post("/upload", protectedWithChannelRole(RoleWriter, requireFeature(func(f *ChannelFeatures) bool { return f.FileUploads }, uploadRateLimit(uploadFile))))
+				r.Get("/scheduled-messages/get", protectedWithChannelRole(RoleWriter, requireFeature(func(f *ChannelFeatures) bool { return f.ScheduledMessages }, getScheduledMessages)))
+				r.Post("/scheduled-messages/update", protectedWithChannelRole(RoleWriter, requireFeature(func(f *ChannelFeatures) bool { return f.ScheduledMessages }, updateScheduledMessages)))
 
 				// Moderator level
 				r.Post("/edit-channel-info", protectedWithChannelRole(RoleModerator, editChannelInfo))
@@ -142,8 +145,8 @@ func main() {
 		})
 	})
 
-	if settingConfig != nil && settingConfig.RootStaticFolder != "" {
-		r.Handle("/assets/*", http.StripPrefix("/assets/", http.FileServer(http.Dir(settingConfig.RootStaticFolder))))
+	if cfg := getGlobalConfig(); cfg != nil && cfg.RootStaticFolder != "" {
+		r.Handle("/assets/*", http.StripPrefix("/assets/", http.FileServer(http.Dir(cfg.RootStaticFolder))))
 		r.NotFound(serveSpaFile)
 	}
 
@@ -157,23 +160,24 @@ func main() {
 }
 
 func serveSpaFile(w http.ResponseWriter, r *http.Request) {
-	if settingConfig == nil || settingConfig.RootStaticFolder == "" {
+	cfg := getGlobalConfig()
+	if cfg == nil || cfg.RootStaticFolder == "" {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return
 	}
-	htmlPath := filepath.Join(settingConfig.RootStaticFolder, "index.html")
+	htmlPath := filepath.Join(cfg.RootStaticFolder, "index.html")
 	content, err := os.ReadFile(htmlPath)
 	if err != nil {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return
 	}
 
-	if settingConfig.CustomTitle != "" {
-		content = bytes.ReplaceAll(content, []byte("<title></title>"), []byte(settingConfig.CustomTitle))
+	if cfg.CustomTitle != "" {
+		content = bytes.ReplaceAll(content, []byte("<title></title>"), []byte(cfg.CustomTitle))
 	}
 
-	if settingConfig.AnalyticsHead != "" {
-		content = bytes.Replace(content, []byte("</head>"), []byte(settingConfig.AnalyticsHead+"</head>"), 1)
+	if cfg.AnalyticsHead != "" {
+		content = bytes.Replace(content, []byte("</head>"), []byte(cfg.AnalyticsHead+"</head>"), 1)
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
