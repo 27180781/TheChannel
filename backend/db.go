@@ -1,8 +1,10 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -14,7 +16,9 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-var redisType = os.Getenv("REDIS_PROTOCOL")
+// redisType is the network the session store dials on. An empty value makes
+// redistore.NewRediStore fail with "dial: unknown network", so it defaults.
+var redisType = cmp.Or(os.Getenv("REDIS_PROTOCOL"), "tcp")
 var redisAddr = os.Getenv("REDIS_ADDR")
 var redisPass = os.Getenv("REDIS_PASSWORD")
 var rdb redis.UniversalClient
@@ -523,6 +527,46 @@ func dbGetUsersList(ctx context.Context) ([]User, error) {
 	return usersList, nil
 }
 
+// dbUpdateUsersList applies mutate to the whole users:list blob under a
+// WATCH/MULTI, retrying if another writer got there first. Every role change is
+// a read-modify-write of one JSON string, so doing it unguarded means two
+// concurrent administrative edits silently discard one another.
+func dbUpdateUsersList(ctx context.Context, mutate func([]User) []User) error {
+	const maxRetries = 5
+
+	txf := func(tx *redis.Tx) error {
+		var users []User
+		u, err := tx.Get(ctx, "users:list").Result()
+		if err != nil && err != redis.Nil {
+			return err
+		}
+		if err == nil {
+			if err := json.Unmarshal([]byte(u), &users); err != nil {
+				return err
+			}
+		}
+
+		data, err := json.Marshal(mutate(users))
+		if err != nil {
+			return err
+		}
+
+		_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
+			p.Set(ctx, "users:list", data, 0)
+			return nil
+		})
+		return err
+	}
+
+	for i := 0; i < maxRetries; i++ {
+		err := rdb.Watch(ctx, txf, "users:list")
+		if err != redis.TxFailedErr {
+			return err
+		}
+	}
+	return errors.New("users:list: too much contention")
+}
+
 func dbSetSettings(ctx context.Context, slug string, settings *Settings) error {
 	jsonSettings, err := json.Marshal(settings)
 	if err != nil {
@@ -685,18 +729,23 @@ func dbGetReports(ctx context.Context, slug string, status ReportStatus) (Report
 		return nil, err
 	}
 
-	var reports Reports
+	// The handler encodes this value straight to the client, and a nil slice
+	// serialises as null, which the reports screen does not accept.
+	reports := make(Reports, 0)
 	if jsonReports == nil || jsonReports == "{}" {
 		return reports, nil
 	}
 
 	resStr, _ := dyno.GetString(jsonReports)
 	if resStr == "" {
-		return nil, nil
+		return reports, nil
 	}
 
 	if err := json.Unmarshal([]byte(resStr), &reports); err != nil {
 		return nil, err
+	}
+	if reports == nil {
+		reports = make(Reports, 0)
 	}
 
 	return reports, nil
@@ -858,11 +907,31 @@ func dbChannelExists(ctx context.Context, slug string) (bool, error) {
 	return n > 0, nil
 }
 
+// errChannelExists reports that the slug was already claimed. Callers must map
+// it to 409 rather than 500.
+var errChannelExists = errors.New("channel already exists")
+
 func dbCreateChannel(ctx context.Context, channel *ChannelData) error {
 	hashKey := fmt.Sprintf("channel:%s", channel.Slug)
 
+	// Claim the slug atomically. A plain HSet lets two concurrent creates for the
+	// same slug both succeed, overwriting one channel's metadata and granting two
+	// owners; the caller's prior existence check cannot prevent that on its own.
+	claimed, err := rdb.HSetNX(ctx, hashKey, "slug", channel.Slug).Result()
+	if err != nil {
+		return err
+	}
+	if !claimed {
+		return errChannelExists
+	}
+
+	// The claim above is what makes the slug unavailable, so anything that fails
+	// after it has to release the claim or the slug stays wedged forever.
+	releaseClaim := func() {
+		rdb.Del(context.WithoutCancel(ctx), hashKey)
+	}
+
 	if err := rdb.HSet(ctx, hashKey,
-		"slug", channel.Slug,
 		"name", channel.Name,
 		"description", channel.Description,
 		"logoUrl", channel.LogoUrl,
@@ -870,16 +939,19 @@ func dbCreateChannel(ctx context.Context, channel *ChannelData) error {
 		"createdAt", channel.CreatedAt.Format(time.RFC3339),
 		"contactUs", channel.ContactUs,
 	).Err(); err != nil {
+		releaseClaim()
 		return err
 	}
 
 	featuresJSON, err := json.Marshal(channel.Features)
 	if err != nil {
+		releaseClaim()
 		return fmt.Errorf("failed to marshal features: %v", err)
 	}
 
 	featuresKey := fmt.Sprintf("channel:%s:features", channel.Slug)
 	if err := rdb.Set(ctx, featuresKey, featuresJSON, 0).Err(); err != nil {
+		releaseClaim()
 		return err
 	}
 
@@ -887,6 +959,7 @@ func dbCreateChannel(ctx context.Context, channel *ChannelData) error {
 		Score:  float64(channel.CreatedAt.Unix()),
 		Member: channel.Slug,
 	}).Err(); err != nil {
+		releaseClaim()
 		return err
 	}
 
@@ -1043,17 +1116,15 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 
 	// Step 3: revoke every per-channel role for this slug, otherwise recreating
 	// the same slug would immediately hand the old grantees their access back.
-	if users, err := dbGetUsersList(ctx); err == nil {
+	if err := dbUpdateUsersList(ctx, func(users []User) []User {
 		for i := range users {
 			delete(users[i].ChannelRoles, slug) // delete on a nil map is a no-op
 		}
-		if err := dbSetUsersList(ctx, users); err != nil {
-			log.Printf("dbDeleteChannel: clear roles for %s: %v\n", slug, err)
-		} else if err := initializePrivilegeUsers(); err != nil {
-			log.Printf("initializePrivilegeUsers after dbDeleteChannel: %v\n", err)
-		}
-	} else {
-		log.Printf("dbDeleteChannel: get users list for %s: %v\n", slug, err)
+		return users
+	}); err != nil {
+		log.Printf("dbDeleteChannel: clear roles for %s: %v\n", slug, err)
+	} else if err := initializePrivilegeUsers(); err != nil {
+		log.Printf("initializePrivilegeUsers after dbDeleteChannel: %v\n", err)
 	}
 
 	return nil
@@ -1074,31 +1145,21 @@ func dbSetChannelFeatures(ctx context.Context, slug string, features *ChannelFea
 }
 
 func dbAssignChannelRole(ctx context.Context, email, slug string, role ChannelRole) error {
-	users, err := dbGetUsersList(ctx)
-	if err != nil {
-		return err
-	}
-
-	found := false
-	for i, u := range users {
-		if u.Email == email {
-			if users[i].ChannelRoles == nil {
-				users[i].ChannelRoles = make(map[string]ChannelRole)
+	return dbUpdateUsersList(ctx, func(users []User) []User {
+		for i, u := range users {
+			if u.Email == email {
+				if users[i].ChannelRoles == nil {
+					users[i].ChannelRoles = make(map[string]ChannelRole)
+				}
+				users[i].ChannelRoles[slug] = role
+				return users
 			}
-			users[i].ChannelRoles[slug] = role
-			found = true
-			break
 		}
-	}
-
-	if !found {
-		users = append(users, User{
+		return append(users, User{
 			Email:        email,
 			ChannelRoles: map[string]ChannelRole{slug: role},
 		})
-	}
-
-	return dbSetUsersList(ctx, users)
+	})
 }
 
 // GlobalMagnetConfig stored at global:magnet:config
@@ -1297,10 +1358,15 @@ func dbGetOldestChannelFiles(ctx context.Context, slug string, limit int64) ([]s
 
 func dbGetChannelAutoCleanup(ctx context.Context, slug string) (bool, error) {
 	v, err := rdb.Get(ctx, "channel:"+slug+":storage:auto_cleanup").Result()
-	if err != nil {
+	// "unset" (redis.Nil) means disabled; a real failure must not be reported as
+	// a successful "disabled", or the caller silently acts on a guess.
+	if err == redis.Nil {
 		return false, nil
 	}
-	return v == "true", nil
+	if err != nil {
+		return false, err
+	}
+	return v == "true" || v == "1", nil
 }
 
 func dbSetChannelAutoCleanup(ctx context.Context, slug string, enabled bool) error {
