@@ -98,13 +98,13 @@ func getLastModified(ctx context.Context, slug string) string {
 	return v
 }
 
-func getMessageNextId(ctx context.Context, slug string) int {
+func getMessageNextId(ctx context.Context, slug string) (int, error) {
 	id, err := rdb.Incr(ctx, fmt.Sprintf("channel:%s:message:next_id", slug)).Result()
 	if err != nil {
-		log.Fatalf("Failed to get id: %v\n", err)
+		return 0, fmt.Errorf("failed to get next message id for %s: %w", slug, err)
 	}
 
-	return int(id)
+	return int(id), nil
 }
 
 func setMessage(ctx context.Context, slug string, m *Message, isUpdate bool) error {
@@ -371,6 +371,19 @@ func updateMessageReactions(ctx context.Context, slug string, messageId int, rea
 	}
 
 	return nil
+}
+
+// dbGetMessageFields returns the raw Redis hash of a message.
+// It reports redis.Nil when the message does not exist.
+func dbGetMessageFields(ctx context.Context, slug string, id string) (map[string]string, error) {
+	fields, err := rdb.HGetAll(ctx, fmt.Sprintf("channel:%s:messages:%s", slug, id)).Result()
+	if err != nil {
+		return nil, err
+	}
+	if len(fields) == 0 {
+		return nil, redis.Nil
+	}
+	return fields, nil
 }
 
 func funcDeleteMessage(ctx context.Context, slug string, id string) error {
@@ -938,6 +951,39 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 		reactionKeys = append(reactionKeys, fmt.Sprintf("channel:%s:message:%s:reactions", p, id))
 	}
 
+	// Step 1b: release every uploaded file. Drop the tracking set first so the
+	// per-file cleanup below does not re-scan it once for each file, then reuse
+	// the normal delete path (deleteFileByID) so hash refcounts are decremented
+	// and the R2/disk blob is removed once the last reference is gone.
+	fileMembers, _ := rdb.ZRange(ctx, fmt.Sprintf("channel:%s:files", p), 0, -1).Result()
+	rdb.Del(ctx, fmt.Sprintf("channel:%s:files", p))
+	fileKeys := make([]string, 0, len(fileMembers))
+	for _, m := range fileMembers {
+		// member format: "fileID:size"
+		i := strings.LastIndex(m, ":")
+		if i <= 0 {
+			continue
+		}
+		fileID := m[:i]
+		if len(fileID) >= 4 {
+			deleteFileByID(ctx, p, fileID)
+		}
+		fileKeys = append(fileKeys, "file:"+fileID)
+	}
+
+	// Step 1c: collect the individual report hashes referenced by the reports index
+	reportKeys, _ := rdb.ZRange(ctx, fmt.Sprintf("channel:%s:reports:list", p), 0, -1).Result()
+
+	// Step 1d: monthly SSE statistics keys have no index; enumerate the possible
+	// month/year combinations instead of running a SCAN across the keyspace.
+	currentYear := time.Now().Year()
+	statsKeys := make([]string, 0, 12*11)
+	for year := currentYear - 10; year <= currentYear; year++ {
+		for month := time.January; month <= time.December; month++ {
+			statsKeys = append(statsKeys, fmt.Sprintf("channel:%s:sse_statistics:%d:%d", p, month, year))
+		}
+	}
+
 	// Step 2: delete all known fixed keys in one pipeline
 	fixedKeys := []string{
 		fmt.Sprintf("channel:%s", p),
@@ -964,6 +1010,9 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 	}
 	allKeys := append(fixedKeys, messageKeys...)
 	allKeys = append(allKeys, reactionKeys...)
+	allKeys = append(allKeys, fileKeys...)
+	allKeys = append(allKeys, reportKeys...)
+	allKeys = append(allKeys, statsKeys...)
 
 	pipe := rdb.Pipeline()
 	// Delete in batches of 200 to avoid huge single commands
@@ -978,6 +1027,21 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 	pipe.ZRem(ctx, "scheduled:due_channels", slug)
 	if _, err := pipe.Exec(ctx); err != nil {
 		return err
+	}
+
+	// Step 3: revoke every per-channel role for this slug, otherwise recreating
+	// the same slug would immediately hand the old grantees their access back.
+	if users, err := dbGetUsersList(ctx); err == nil {
+		for i := range users {
+			delete(users[i].ChannelRoles, slug) // delete on a nil map is a no-op
+		}
+		if err := dbSetUsersList(ctx, users); err != nil {
+			log.Printf("dbDeleteChannel: clear roles for %s: %v\n", slug, err)
+		} else if err := initializePrivilegeUsers(); err != nil {
+			log.Printf("initializePrivilegeUsers after dbDeleteChannel: %v\n", err)
+		}
+	} else {
+		log.Printf("dbDeleteChannel: get users list for %s: %v\n", slug, err)
 	}
 
 	return nil
@@ -1093,7 +1157,7 @@ func dbSetGlobalAdsConfig(ctx context.Context, cfg *GlobalAdsConfig) error {
 	return rdb.Set(ctx, "global:ads:config", data, 0).Err()
 }
 
-// ─── Storage Quota & Usage ────────────────────────────────────────────────────
+// ─── Storage Quota & Usage ─────────────────────────────────────────────────────
 
 const defaultStorageQuotaBytes = int64(5 * 1024 * 1024 * 1024) // 5 GB
 
@@ -1229,6 +1293,11 @@ func dbSetChannelAutoCleanup(ctx context.Context, slug string, enabled bool) err
 // dbIncrFileHashRefs increments the reference count for a file hash (dedup tracking).
 func dbIncrFileHashRefs(ctx context.Context, hash string) error {
 	return rdb.Incr(ctx, "file:hash:"+hash+":refs").Err()
+}
+
+// dbDelFileHashRefs removes the ref counter entirely (used once it reaches zero).
+func dbDelFileHashRefs(ctx context.Context, hash string) error {
+	return rdb.Del(ctx, "file:hash:"+hash+":refs").Err()
 }
 
 // dbDecrFileHashRefs decrements ref count; returns new count.
