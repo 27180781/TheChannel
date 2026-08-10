@@ -186,6 +186,16 @@ func getUserInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Authorization resolves roles live (see sessionUser); the copy stored in
+	// the cookie at login time can be stale, so refresh it before responding
+	// or the UI would keep offering actions the backend now rejects.
+	userInfo.GlobalRole = ""
+	userInfo.ChannelRoles = nil
+	if u, ok := sessionUser(r); ok {
+		userInfo.GlobalRole = u.GlobalRole
+		userInfo.ChannelRoles = u.ChannelRoles
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(userInfo)
 }

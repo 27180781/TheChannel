@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -54,7 +55,12 @@ func runScheduledMessages() {
 				go func(m *Message, s string) {
 					postCtx, postCancel := context.WithTimeout(context.Background(), 5*time.Second)
 					defer postCancel()
-					m.ID = getMessageNextId(postCtx, s)
+					id, err := getMessageNextId(postCtx, s)
+					if err != nil {
+						log.Printf("Failed to allocate message id for scheduled post on %s: %v\n", s, err)
+						return
+					}
+					m.ID = id
 					m.Timestamp = time.Now()
 					m.Author = "Scheduled"
 					m.AuthorId = "0"

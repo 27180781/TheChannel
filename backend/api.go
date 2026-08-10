@@ -38,7 +38,11 @@ func addNewPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	message.ID = getMessageNextId(ctx, slug)
+	if message.ID, err = getMessageNextId(ctx, slug); err != nil {
+		log.Printf("Failed to allocate message id: %v\n", err)
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
+	}
 	message.Type = "md" //body.Type
 	message.Author = body.Author
 	message.Timestamp = body.Timestamp

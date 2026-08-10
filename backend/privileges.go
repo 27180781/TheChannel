@@ -82,28 +82,42 @@ func initializePrivilegeUsers() error {
 	return nil
 }
 
-func isSuperAdmin(r *http.Request) bool {
+// sessionUser resolves the privileged user record for the current session.
+// The session cookie is used only as an identity (email) carrier — the roles
+// themselves are read live from privilegesUsers so that a revocation takes
+// effect immediately instead of after the 30 day cookie lifetime.
+// A logged-in user with no entry in privilegesUsers is simply unprivileged.
+func sessionUser(r *http.Request) (User, bool) {
 	session, _ := store.Get(r, cookieName)
 	s, ok := session.Values["user"].(Session)
-	if !ok {
-		return false
+	if !ok || s.Email == "" {
+		return User{}, false
 	}
-	return s.GlobalRole == RoleSuperAdmin
+	v, ok := privilegesUsers.Load(s.Email)
+	if !ok {
+		return User{}, false
+	}
+	u, ok := v.(User)
+	if !ok {
+		return User{}, false
+	}
+	return u, true
+}
+
+func isSuperAdmin(r *http.Request) bool {
+	u, ok := sessionUser(r)
+	return ok && u.GlobalRole == RoleSuperAdmin
 }
 
 func hasChannelRole(r *http.Request, slug string, minRole ChannelRole) bool {
 	if isSuperAdmin(r) {
 		return true
 	}
-	session, _ := store.Get(r, cookieName)
-	s, ok := session.Values["user"].(Session)
-	if !ok {
+	u, ok := sessionUser(r)
+	if !ok || u.ChannelRoles == nil {
 		return false
 	}
-	if s.ChannelRoles == nil {
-		return false
-	}
-	role, exists := s.ChannelRoles[slug]
+	role, exists := u.ChannelRoles[slug]
 	if !exists {
 		return false
 	}

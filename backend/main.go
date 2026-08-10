@@ -31,6 +31,11 @@ func main() {
 	}
 	store.SetMaxAge(60 * 60 * 24 * 30)
 	store.Options.HttpOnly = true
+	// Secure by default; set COOKIE_INSECURE=1 only for local plain-HTTP dev.
+	store.Options.Secure = os.Getenv("COOKIE_INSECURE") != "1"
+	// Lax (not Strict) so the cookie still rides along on the Google OAuth
+	// redirect back to the site and on inbound links to authenticated views.
+	store.Options.SameSite = http.SameSiteLaxMode
 	defer store.Close()
 
 	r := chi.NewRouter()
@@ -97,7 +102,7 @@ func main() {
 		r.Get("/info", getChannelInfo)
 		r.Get("/messages", getMessages)
 		r.Get("/events", getEvents)
-		r.Get("/files/{fileid}", serveFile)
+		r.With(channelIfRequireAuthFiles).Get("/files/{fileid}", serveFile)
 		r.Get("/emojis/list", getEmojisList)
 		r.Get("/notifications-config", getNotificationsConfig)
 		r.Get("/ads/settings", getAdsSettings)
