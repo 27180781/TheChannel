@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -15,6 +16,10 @@ const migrationsAppliedKey = "migrations:applied"
 // operator-controlled ChannelFeatures toggles from what each channel was
 // actually configured to do before those toggles were enforced.
 const channelFeaturesBackfillID = "2026-08-channel-features-backfill"
+
+// fileChannelSlugBackfillID is the one-shot backfill that stamps the owning
+// channel onto file records written before FileMetadata had a ChannelSlug.
+const fileChannelSlugBackfillID = "2026-08-file-channel-slug-backfill"
 
 // runMigrations applies any data migration that has not run yet.
 //
@@ -33,6 +38,7 @@ func runMigrations(ctx context.Context) {
 		run func(context.Context) error
 	}{
 		{channelFeaturesBackfillID, backfillChannelFeatures},
+		{fileChannelSlugBackfillID, backfillFileChannelSlugs},
 	}
 
 	for _, m := range migrations {
@@ -105,12 +111,16 @@ func backfillChannelFeatures(ctx context.Context) error {
 		return fmt.Errorf("get global ads config: %w", err)
 	}
 
-	// Honouring require_auth / require_auth_for_view_files / count_views makes a
-	// channel MORE restrictive, which is what the owner asked for when they ticked
-	// the box — but it is a visible change, so it can be opted out of.
-	skipAuthFlags := os.Getenv("MIGRATION_SKIP_AUTH_FLAGS") == "1"
-	if skipAuthFlags {
-		log.Println("migrations: MIGRATION_SKIP_AUTH_FLAGS=1, leaving auth/view toggles untouched")
+	// require_auth / require_auth_for_view_files / count_views were removed from
+	// the owner settings form, so any surviving value is leftover configuration
+	// the owner can neither see nor undo. Honouring it would wall a channel off
+	// or start 401ing file requests that serve today, with no way back through
+	// the UI — unlike the ads/notifications/webhook part above, which only keeps
+	// live behaviour alive. So it is opt-in, for an operator who knows the
+	// leftovers are still what their owners want.
+	applyAuthFlags := os.Getenv("MIGRATION_APPLY_AUTH_FLAGS") == "1"
+	if applyAuthFlags {
+		log.Println("migrations: MIGRATION_APPLY_AUTH_FLAGS=1, applying leftover auth/view settings to features")
 	}
 
 	var changed int
@@ -123,6 +133,16 @@ func backfillChannelFeatures(ctx context.Context) error {
 
 		before := ch.Features
 		f := ch.Features
+
+		// Reactions, uploads, reports and scheduling were available to everyone
+		// before requireFeature started gating them, and nothing outside
+		// dbCreateChannel ever set them — so a channel whose features blob was
+		// written before that would silently lose all four on the first boot
+		// after the gates ship.
+		f.Reactions = true
+		f.FileUploads = true
+		f.Reports = true
+		f.ScheduledMessages = true
 
 		// Configured to call out to a webhook.
 		if settingString(settings, "webhook_url") != "" {
@@ -142,7 +162,7 @@ func backfillChannelFeatures(ctx context.Context) error {
 			f.Ads = true
 		}
 
-		if !skipAuthFlags {
+		if applyAuthFlags {
 			// These three keys were offered in the channel settings UI but the
 			// backend only ever read the Features equivalents, so the owner's
 			// choice has silently had no effect until now.
@@ -165,18 +185,71 @@ func backfillChannelFeatures(ctx context.Context) error {
 			return fmt.Errorf("set features for %s: %w", ch.Slug, err)
 		}
 		changed++
-		log.Printf("migrations: %s features updated: ads %v->%v notifications %v->%v webhook %v->%v countViews %v->%v requireAuth %v->%v requireAuthFiles %v->%v",
-			ch.Slug,
-			before.Ads, f.Ads,
-			before.Notifications, f.Notifications,
-			before.Webhook, f.Webhook,
-			before.CountViews, f.CountViews,
-			before.RequireAuth, f.RequireAuth,
-			before.RequireAuthFiles, f.RequireAuthFiles,
-		)
+		log.Printf("migrations: %s features updated: %+v -> %+v", ch.Slug, before, f)
 	}
 
 	log.Printf("migrations: channel features backfill touched %d of %d channels", changed, len(channels))
+	return nil
+}
+
+// backfillFileChannelSlugs stamps the owning channel onto file records that
+// predate FileMetadata.ChannelSlug.
+//
+// Why this is needed: fileVisibleToChannel now denies any record whose
+// ChannelSlug does not match the channel serving it, and every file uploaded
+// before that field existed has an empty one. Without this backfill, historical
+// attachments and channel logos 404 on the first boot after deploy, and the only
+// way out is ALLOW_LEGACY_UNSCOPED_FILES, which re-opens the cross-tenant read
+// the isolation check was written to close.
+//
+// Ownership is taken from the per-channel file index each record is already
+// listed in, so nothing is guessed. Records that already carry a slug are left
+// alone. As with the features backfill, a read/write failure returns the error
+// and leaves the ID unmarked so the whole thing is retried on the next boot.
+func backfillFileChannelSlugs(ctx context.Context) error {
+	channels, err := dbListChannels(ctx)
+	if err != nil {
+		return fmt.Errorf("list channels: %w", err)
+	}
+
+	var stamped int
+	for _, ch := range channels {
+		members, err := rdb.ZRange(ctx, fmt.Sprintf("channel:%s:files", ch.Slug), 0, -1).Result()
+		if err != nil {
+			return fmt.Errorf("list files for %s: %w", ch.Slug, err)
+		}
+
+		for _, m := range members {
+			// member format: "fileID:size"
+			i := strings.LastIndex(m, ":")
+			if i <= 0 {
+				continue
+			}
+			fileID := m[:i]
+
+			meta, err := dbGetFileMetadata(ctx, fileID)
+			if err != nil {
+				// A tracked id whose metadata is gone (neither in Redis nor on
+				// disk) is index debris, not a reason to abandon the run.
+				log.Printf("migrations: %s: no metadata for tracked file %s, skipping", ch.Slug, fileID)
+				continue
+			}
+			if meta.ChannelSlug != "" {
+				continue
+			}
+
+			// A YAML-era record reaches this point through the fallback path,
+			// which does not populate ChannelSlug either; saving it promotes it
+			// into Redis with the owner attached.
+			meta.ChannelSlug = ch.Slug
+			if err := dbSaveFileMetadata(ctx, meta); err != nil {
+				return fmt.Errorf("save metadata for %s: %w", fileID, err)
+			}
+			stamped++
+		}
+	}
+
+	log.Printf("migrations: stamped channel ownership onto %d legacy file records across %d channels", stamped, len(channels))
 	return nil
 }
 

@@ -23,19 +23,13 @@ func main() {
 		panic(err)
 	}
 
-	// Data migrations run to completion before the listener starts, so a request
-	// never observes a half-migrated state. A failure is logged and retried on
-	// the next boot rather than taking the server down.
-	migCtx, migCancel := migrationContext()
-	runMigrations(migCtx)
-	migCancel()
-
-	go statLogger()
-
+	// The session store is built before the migrations run: a misconfiguration
+	// here is fatal, and failing after a one-shot migration has been marked
+	// applied would consume it without ever serving a request.
 	var err error
 	store, err = redistore.NewRediStore(10, redisType, redisAddr, "", redisPass, []byte(secretKey))
 	if err != nil {
-		panic(err)
+		log.Fatalf("Session store init failed (REDIS_PROTOCOL=%q, REDIS_ADDR=%q): %v", redisType, redisAddr, err)
 	}
 	store.SetMaxAge(60 * 60 * 24 * 30)
 	store.Options.HttpOnly = true
@@ -45,6 +39,15 @@ func main() {
 	// redirect back to the site and on inbound links to authenticated views.
 	store.Options.SameSite = http.SameSiteLaxMode
 	defer store.Close()
+
+	// Data migrations run to completion before the listener starts, so a request
+	// never observes a half-migrated state. A failure is logged and retried on
+	// the next boot rather than taking the server down.
+	migCtx, migCancel := migrationContext()
+	runMigrations(migCtx)
+	migCancel()
+
+	go statLogger()
 
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
@@ -158,9 +161,16 @@ func main() {
 		r.NotFound(serveSpaFile)
 	}
 
-	go func() {
-		log.Fatal(http.ListenAndServe("localhost:6060", nil))
-	}()
+	// The pprof listener is a debugging aid, not part of the service. Binding it
+	// must never be able to take the real server down, so the error is logged
+	// instead of fatal, and it only starts when explicitly asked for.
+	if pprofAddr := os.Getenv("PPROF_ADDR"); pprofAddr != "" {
+		go func() {
+			if err := http.ListenAndServe(pprofAddr, nil); err != nil {
+				log.Printf("pprof listener stopped: %v\n", err)
+			}
+		}()
+	}
 
 	if err := http.ListenAndServe(":"+os.Getenv("SERVER_PORT"), r); err != nil {
 		log.Fatal(err)

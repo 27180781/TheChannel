@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -15,6 +16,13 @@ import (
 
 // maxMessagesPerRequest caps the client-supplied page size for /messages.
 const maxMessagesPerRequest = 100
+
+// maxStreamReadFailures bounds how long an SSE connection keeps retrying a
+// stream read that consistently fails before the handler gives up.
+const maxStreamReadFailures = 5
+
+// streamIDRegex matches a Redis stream entry ID ("<ms>" or "<ms>-<seq>").
+var streamIDRegex = regexp.MustCompile(`^\d+(-\d+)?$`)
 
 func getMessages(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -124,6 +132,13 @@ func canModifyMessage(r *http.Request, slug, authorId string) bool {
 	if hasChannelRole(r, slug, RoleModerator) {
 		return true
 	}
+	// System posts have no real author: the scheduler stamps "0" and the API
+	// import path never sets the field at all. They are channel content rather
+	// than anyone's personal post, so any writer may manage them — the caller is
+	// already behind protectedWithChannelRole(RoleWriter, ...).
+	if authorId == "" || authorId == "0" {
+		return true
+	}
 	session, _ := store.Get(r, cookieName)
 	user, ok := session.Values["user"].(Session)
 	if !ok || user.ID == "" {
@@ -143,8 +158,8 @@ func updateMessage(w http.ResponseWriter, r *http.Request) {
 
 	body := Message{}
 	if err = json.NewDecoder(r.Body).Decode(&body); err != nil {
-		response := Response{Success: false}
-		json.NewEncoder(w).Encode(response)
+		log.Printf("Failed to decode message: %v\n", err)
+		http.Error(w, "error", http.StatusBadRequest)
 		return
 	}
 
@@ -181,9 +196,11 @@ func updateMessage(w http.ResponseWriter, r *http.Request) {
 
 	body.LastEdit = time.Now()
 
+	// A storage failure must not read as success: the client replaces the
+	// composer contents on a 2xx, so the user's edit would be lost silently.
 	if err := setMessage(ctx, slug, &body, true); err != nil {
-		response := Response{Success: false}
-		json.NewEncoder(w).Encode(response)
+		log.Printf("Failed to update message: %v\n", err)
+		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
 
@@ -215,8 +232,8 @@ func deleteMessage(w http.ResponseWriter, r *http.Request) {
 	message := Message{ID: idInt, Deleted: true}
 
 	if err := funcDeleteMessage(ctx, slug, id); err != nil {
-		response := Response{Success: false}
-		json.NewEncoder(w).Encode(response)
+		log.Printf("Failed to delete message: %v\n", err)
+		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
 
@@ -244,8 +261,10 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 
 	// Support SSE reconnection: browser sends Last-Event-ID with the stream entry ID
 	// from the last event it received. On fresh connect, start from "now".
+	// A malformed value would make every XREAD fail, turning the loop below into
+	// a busy retry against Redis, so anything that is not a stream ID is ignored.
 	lastID := r.Header.Get("Last-Event-ID")
-	if lastID == "" {
+	if !streamIDRegex.MatchString(lastID) {
 		lastID = "$"
 	}
 
@@ -259,11 +278,15 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	flusher.Flush()
 
-	go increaseCounterSSE(slug)
+	// Increment synchronously: the deferred decrement runs as soon as the loop
+	// notices a dead client, which can happen before a spawned goroutine is even
+	// scheduled, leaving the counter one below where it started.
+	increaseCounterSSE(slug)
 	defer decreaseCounterSSE(slug)
 
 	clientCtx := r.Context()
 	lastHeartbeat := time.Now()
+	failures := 0
 	const blockDuration = 5 * time.Second
 	const heartbeatInterval = 25 * time.Second
 
@@ -293,12 +316,20 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err != nil {
-			// redis.Nil = block timeout with no messages; other errors: brief pause then retry
+			// redis.Nil = block timeout with no messages; other errors: brief pause
+			// then retry, but a stream that keeps failing must not be retried
+			// forever at 2 Hz.
 			if err != redis.Nil {
+				failures++
+				if failures > maxStreamReadFailures {
+					log.Printf("SSE stream %s: giving up after %d failed reads: %v\n", streamKey, failures, err)
+					return
+				}
 				time.Sleep(500 * time.Millisecond)
 			}
 			continue
 		}
+		failures = 0
 
 		for _, stream := range streams {
 			for _, msg := range stream.Messages {

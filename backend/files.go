@@ -100,8 +100,6 @@ type FileMetadata struct {
 	ChannelSlug string `json:"channelSlug"` // which channel owns this file
 }
 
-var maxBytesReader *http.MaxBytesError
-
 // allowLegacyUnscopedFiles re-opens the pre-migration corpus (records with no
 // ChannelSlug) to every tenant. Off by default: unscoped records are the normal
 // shape of every YAML-era file, so exempting them from isolation would leave a
@@ -242,7 +240,10 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 
 	file, handler, err := r.FormFile("file")
 	if err != nil {
-		if errors.As(err, &maxBytesReader) {
+		// The errors.As target must be a local: a package-level one is written
+		// concurrently by every upload.
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
 			http.Error(w, "File too large", http.StatusRequestEntityTooLarge)
 			return
 		}
@@ -370,7 +371,10 @@ func enforceStorageQuota(ctx context.Context, slug string, newFileSize int64) er
 		return nil // within quota
 	}
 
-	autoCleanup, _ := dbGetChannelAutoCleanup(ctx, slug)
+	autoCleanup, err := dbGetChannelAutoCleanup(ctx, slug)
+	if err != nil {
+		return fmt.Errorf("storage configuration unavailable")
+	}
 	if !autoCleanup {
 		return fmt.Errorf("storage quota exceeded (%d/%d bytes)", used, quota)
 	}

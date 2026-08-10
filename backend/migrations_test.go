@@ -107,8 +107,10 @@ func TestMigrationBackfillsFeaturesFromSettings(t *testing.T) {
 		t.Error("channel with ad-iframe-src should have Ads enabled")
 	}
 
-	if f := featuresOf(t, ctx, "mig-test-auth"); !f.RequireAuth || !f.RequireAuthFiles || !f.CountViews {
-		t.Errorf("auth/view settings should have been honoured, got %+v", f)
+	// require_auth / require_auth_for_view_files / count_views are no longer in
+	// the settings form, so a leftover value must not silently change behaviour.
+	if f := featuresOf(t, ctx, "mig-test-auth"); f.RequireAuth || f.RequireAuthFiles || f.CountViews {
+		t.Errorf("auth/view settings must not be applied by default, got %+v", f)
 	}
 
 	if f := featuresOf(t, ctx, "mig-test-bare"); f.Ads || f.Notifications || f.Webhook {
@@ -121,6 +123,56 @@ func TestMigrationBackfillsFeaturesFromSettings(t *testing.T) {
 
 	if f := featuresOf(t, ctx, "mig-test-empty"); f.Webhook || f.Notifications {
 		t.Errorf("empty/false settings must not enable anything, got %+v", f)
+	}
+}
+
+// The auth/view toggles are opt-in: an operator who knows the leftover settings
+// still reflect their owners' wishes turns them on with MIGRATION_APPLY_AUTH_FLAGS.
+func TestMigrationAppliesAuthFlagsWhenOptedIn(t *testing.T) {
+	ctx := testCtx(t)
+
+	if err := dbSetGlobalAdsConfig(ctx, &GlobalAdsConfig{}); err != nil {
+		t.Fatalf("reset global ads: %v", err)
+	}
+	seedChannel(t, ctx, "mig-test-auth-optin", Settings{
+		{Key: "require_auth", Value: "1"},
+		{Key: "require_auth_for_view_files", Value: "1"},
+		{Key: "count_views", Value: "1"},
+	})
+
+	t.Setenv("MIGRATION_APPLY_AUTH_FLAGS", "1")
+
+	if err := backfillChannelFeatures(ctx); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+
+	if f := featuresOf(t, ctx, "mig-test-auth-optin"); !f.RequireAuth || !f.RequireAuthFiles || !f.CountViews {
+		t.Errorf("auth/view settings should have been honoured, got %+v", f)
+	}
+}
+
+// Reactions, uploads, reports and scheduling were universally available before
+// requireFeature started gating them, so the backfill must guarantee them.
+func TestMigrationDefaultsEverydayFeaturesOn(t *testing.T) {
+	ctx := testCtx(t)
+
+	if err := dbSetGlobalAdsConfig(ctx, &GlobalAdsConfig{}); err != nil {
+		t.Fatalf("reset global ads: %v", err)
+	}
+
+	// A channel whose features blob predates dbCreateChannel setting the four.
+	seedChannel(t, ctx, "mig-test-nofeatures", Settings{})
+	if err := dbSetChannelFeatures(ctx, "mig-test-nofeatures", &ChannelFeatures{}); err != nil {
+		t.Fatalf("clear features: %v", err)
+	}
+
+	if err := backfillChannelFeatures(ctx); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+
+	f := featuresOf(t, ctx, "mig-test-nofeatures")
+	if !f.Reactions || !f.FileUploads || !f.Reports || !f.ScheduledMessages {
+		t.Errorf("everyday features should have been defaulted on, got %+v", f)
 	}
 }
 
