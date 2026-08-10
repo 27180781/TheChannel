@@ -9,7 +9,7 @@ import (
 	"github.com/go-chi/chi"
 )
 
-// ─── Storage Info Response ─────────────────────────────────────────────────────────────────────
+// ─── Storage Info Response ────────────────────────────────────────────────────
 
 type StorageInfo struct {
 	UsedBytes   int64   `json:"usedBytes"`
@@ -55,7 +55,7 @@ func buildStorageInfo(ctx context.Context, slug string) (*StorageInfo, error) {
 	}, nil
 }
 
-// ─── Channel Owner Handlers ────────────────────────────────────────────────────────────────────
+// ─── Channel Owner Handlers ───────────────────────────────────────────────────
 
 // GET /api/channel/{slug}/admin/storage
 func getChannelStorageInfo(w http.ResponseWriter, r *http.Request) {
@@ -98,7 +98,7 @@ func setChannelAutoCleanup(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(Response{Success: true})
 }
 
-// ─── Super Admin Handlers ──────────────────────────────────────────────────────────────────────
+// ─── Super Admin Handlers ─────────────────────────────────────────────────────
 
 type GlobalStorageConfig struct {
 	DefaultQuotaGB float64 `json:"defaultQuotaGb"` // in GB for display
