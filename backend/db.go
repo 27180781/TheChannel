@@ -1111,8 +1111,8 @@ type GlobalMagnetConfig struct {
 	PerSeconds           int64    `json:"perSeconds"`
 	MinMessagesSinceLast int64    `json:"minMessagesSinceLast"`
 	ApiKey               string   `json:"apiKey"`
-	LockAll              bool     `json:"lockAll"`          // override ALL channels
-	LockedChannels       []string `json:"lockedChannels"`   // override specific channels
+	LockAll              bool     `json:"lockAll"`        // override ALL channels
+	LockedChannels       []string `json:"lockedChannels"` // override specific channels
 }
 
 func dbGetGlobalMagnetConfig(ctx context.Context) (*GlobalMagnetConfig, error) {
@@ -1169,7 +1169,7 @@ func dbSetGlobalAdsConfig(ctx context.Context, cfg *GlobalAdsConfig) error {
 	return rdb.Set(ctx, "global:ads:config", data, 0).Err()
 }
 
-// ─── Storage Quota & Usage ────────────────────────────────────────────────────
+// ─── Storage Quota & Usage ───────────────────────────────────────────────────
 
 const defaultStorageQuotaBytes = int64(5 * 1024 * 1024 * 1024) // 5 GB
 
@@ -1265,12 +1265,18 @@ func dbRemoveChannelFile(ctx context.Context, slug, fileID string) error {
 }
 
 // dbGetOldestChannelFiles returns the oldest file IDs and their sizes (oldest first).
-func dbGetOldestChannelFiles(ctx context.Context, slug string, limit int64) ([]struct{ ID string; Size int64 }, error) {
+func dbGetOldestChannelFiles(ctx context.Context, slug string, limit int64) ([]struct {
+	ID   string
+	Size int64
+}, error) {
 	members, err := rdb.ZRange(ctx, "channel:"+slug+":files", 0, limit-1).Result()
 	if err != nil {
 		return nil, err
 	}
-	result := make([]struct{ ID string; Size int64 }, 0, len(members))
+	result := make([]struct {
+		ID   string
+		Size int64
+	}, 0, len(members))
 	for _, m := range members {
 		// format: "fileID:size"
 		for i := len(m) - 1; i >= 0; i-- {
@@ -1278,7 +1284,10 @@ func dbGetOldestChannelFiles(ctx context.Context, slug string, limit int64) ([]s
 				fileID := m[:i]
 				var size int64
 				fmt.Sscanf(m[i+1:], "%d", &size)
-				result = append(result, struct{ ID string; Size int64 }{fileID, size})
+				result = append(result, struct {
+					ID   string
+					Size int64
+				}{fileID, size})
 				break
 			}
 		}
