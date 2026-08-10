@@ -3,12 +3,22 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/icza/dyno"
+)
+
+const (
+	// defaultMaxFileSizeMB is used when a channel has no (or an invalid) max_file_size.
+	defaultMaxFileSizeMB int64 = 100
+	// maxAllowedFileSizeMB is the absolute server-side ceiling a channel owner
+	// cannot raise, since the whole upload is buffered in memory.
+	maxAllowedFileSizeMB int64 = 512
 )
 
 type ReplaceRegex struct {
@@ -58,8 +68,26 @@ type Setting struct {
 	Value any    `json:"value"`
 }
 
-// settingConfig is the global config (FCM/VAPID/global notifications)
-var settingConfig *SettingConfig
+// settingConfig is the global config (FCM/VAPID/global notifications). It is
+// replaced wholesale by an HTTP handler, so every access goes through the
+// accessors below; readers must take one snapshot per function rather than
+// dereferencing the global repeatedly, or a swap mid-read splices two configs.
+var (
+	settingMu     sync.RWMutex
+	settingConfig *SettingConfig
+)
+
+func getGlobalConfig() *SettingConfig {
+	settingMu.RLock()
+	defer settingMu.RUnlock()
+	return settingConfig
+}
+
+func setGlobalConfigCache(c *SettingConfig) {
+	settingMu.Lock()
+	settingConfig = c
+	settingMu.Unlock()
+}
 
 type Settings []Setting
 
@@ -72,7 +100,7 @@ func init() {
 		panic("Failed to load settings from database: " + err.Error())
 	}
 
-	settingConfig = s.ToConfig()
+	setGlobalConfigCache(s.ToConfig())
 }
 
 func (s *Settings) ToConfig() *SettingConfig {
@@ -85,7 +113,7 @@ func (s *Settings) ToConfig() *SettingConfig {
 		config.RootStaticFolder = "/usr/share/ng"
 	}
 
-	config.MaxFileSize = 100
+	config.MaxFileSize = defaultMaxFileSizeMB
 
 	for _, setting := range *s {
 		switch setting.Key {
@@ -114,14 +142,19 @@ func (s *Settings) ToConfig() *SettingConfig {
 			config.CountViews = setting.GetBool()
 
 		case "regex-replace":
+			// The rule is encoded as "<pattern>#<replacement>" and the UI splits
+			// it on the FIRST '#', so splitting on every '#' here would silently
+			// drop any rule that legitimately contains one (e.g. a hashtag).
 			if r := setting.GetString(); r != "" {
-				parts := strings.Split(r, "#")
-				if len(parts) == 2 {
-					if r, err := regexp.Compile(parts[0]); err == nil {
+				if i := strings.Index(r, "#"); i >= 0 {
+					pat, rep := r[:i], r[i+1:]
+					if re, err := regexp.Compile(pat); err == nil {
 						config.RegexReplace = append(config.RegexReplace, &ReplaceRegex{
-							Pattern: r,
-							Replace: parts[1],
+							Pattern: re,
+							Replace: rep,
 						})
+					} else {
+						log.Printf("regex-replace: bad pattern %q: %v\n", pat, err)
 					}
 				}
 			}
@@ -157,7 +190,11 @@ func (s *Settings) ToConfig() *SettingConfig {
 			config.ProjectDomain = setting.GetString()
 
 		case "max_file_size":
-			config.MaxFileSize = setting.GetInt()
+			// A zero/unparseable or oversized value keeps the default instead of
+			// bricking uploads or letting an owner exhaust server memory.
+			if v := setting.GetInt(); v > 0 && v <= maxAllowedFileSizeMB {
+				config.MaxFileSize = v
+			}
 
 		case "custom_title":
 			config.CustomTitle = setting.GetString()
@@ -252,7 +289,9 @@ func (s *Setting) GetInt() int64 {
 func getChannelConfig(ctx context.Context, slug string) *SettingConfig {
 	s, err := dbGetSettings(ctx, slug)
 	if err != nil {
-		return &SettingConfig{FcmJson: &FcmJsonConfing{}}
+		// Route the failure through the same defaulting logic, or MaxFileSize
+		// lands at 0 and MaxBytesReader rejects every upload as "too large".
+		return (&Settings{}).ToConfig()
 	}
 	return s.ToConfig()
 }
@@ -328,7 +367,7 @@ func setGlobalSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	settingConfig = newSettings.ToConfig()
+	setGlobalConfigCache(newSettings.ToConfig())
 
 	res := Response{
 		Success: true,
