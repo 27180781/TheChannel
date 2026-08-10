@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -141,14 +142,19 @@ func (s *Settings) ToConfig() *SettingConfig {
 			config.CountViews = setting.GetBool()
 
 		case "regex-replace":
+			// The rule is encoded as "<pattern>#<replacement>" and the UI splits
+			// it on the FIRST '#', so splitting on every '#' here would silently
+			// drop any rule that legitimately contains one (e.g. a hashtag).
 			if r := setting.GetString(); r != "" {
-				parts := strings.Split(r, "#")
-				if len(parts) == 2 {
-					if r, err := regexp.Compile(parts[0]); err == nil {
+				if i := strings.Index(r, "#"); i >= 0 {
+					pat, rep := r[:i], r[i+1:]
+					if re, err := regexp.Compile(pat); err == nil {
 						config.RegexReplace = append(config.RegexReplace, &ReplaceRegex{
-							Pattern: r,
-							Replace: parts[1],
+							Pattern: re,
+							Replace: rep,
 						})
+					} else {
+						log.Printf("regex-replace: bad pattern %q: %v\n", pat, err)
 					}
 				}
 			}

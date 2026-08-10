@@ -29,7 +29,10 @@ func buildStorageInfo(ctx context.Context, slug string) (*StorageInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	autoCleanup, _ := dbGetChannelAutoCleanup(ctx, slug)
+	autoCleanup, err := dbGetChannelAutoCleanup(ctx, slug)
+	if err != nil {
+		return nil, err
+	}
 
 	var pct float64
 	if quota > 0 {

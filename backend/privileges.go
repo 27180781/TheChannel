@@ -10,8 +10,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/redis/go-redis/v9"
 )
 
 type GlobalRole string
@@ -34,51 +32,67 @@ var channelRoleLevels = map[ChannelRole]int{
 }
 
 var privilegesUsers sync.Map
-var superAdminEmails []string
 
 // initializePrivilegeUsers rebuilds the in-memory privilegesUsers map from Redis.
 // At startup, call it directly (panicking is acceptable). From request handlers
 // use the returned error instead of panicking so a transient Redis error does not
 // crash the entire server.
 func initializePrivilegeUsers() error {
-	superAdminEmails = strings.Split(os.Getenv("ADMIN_USERS"), ",")
+	superAdminEmails := strings.Split(os.Getenv("ADMIN_USERS"), ",")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	privilegesUsers.Clear()
-	users, err := dbGetUsersList(ctx)
-	if err != nil && err != redis.Nil {
-		return fmt.Errorf("get users list: %w", err)
-	}
-
-	emailToIdx := make(map[string]int)
-	for i, u := range users {
-		emailToIdx[u.Email] = i
-	}
-
-	for _, email := range superAdminEmails {
-		email = strings.TrimSpace(email)
-		if email == "" {
-			continue
+	// The super-admin stamping is a read-modify-write of the same blob every role
+	// edit touches, so it goes through the guarded update too.
+	var merged []User
+	if err := dbUpdateUsersList(ctx, func(users []User) []User {
+		emailToIdx := make(map[string]int)
+		for i, u := range users {
+			emailToIdx[u.Email] = i
 		}
-		if i, exists := emailToIdx[email]; exists {
-			users[i].GlobalRole = RoleSuperAdmin
-		} else {
-			users = append(users, User{
-				Email:      email,
-				GlobalRole: RoleSuperAdmin,
-			})
+
+		for _, email := range superAdminEmails {
+			email = strings.TrimSpace(email)
+			if email == "" {
+				continue
+			}
+			if i, exists := emailToIdx[email]; exists {
+				users[i].GlobalRole = RoleSuperAdmin
+			} else {
+				emailToIdx[email] = len(users)
+				users = append(users, User{
+					Email:      email,
+					GlobalRole: RoleSuperAdmin,
+				})
+			}
 		}
+
+		merged = users
+		return users
+	}); err != nil {
+		return fmt.Errorf("update users list: %w", err)
 	}
 
-	for _, user := range users {
+	// Authorization resolves live from this map, so it must never be empty even
+	// for an instant: clearing it first would make every request that landed in
+	// the gap look unprivileged. Upsert everything, then prune what is gone.
+	seen := make(map[string]struct{}, len(merged))
+	for _, user := range merged {
 		privilegesUsers.Store(user.Email, user)
+		seen[user.Email] = struct{}{}
 	}
-
-	if err := dbSetUsersList(ctx, users); err != nil {
-		return fmt.Errorf("set users list: %w", err)
-	}
+	privilegesUsers.Range(func(key, _ any) bool {
+		email, ok := key.(string)
+		if !ok {
+			privilegesUsers.Delete(key)
+			return true
+		}
+		if _, kept := seen[email]; !kept {
+			privilegesUsers.Delete(key)
+		}
+		return true
+	})
 	return nil
 }
 

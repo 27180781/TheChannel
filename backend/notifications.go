@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"html/template"
 	"log"
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"firebase.google.com/go/v4/messaging"
@@ -163,6 +165,35 @@ func subscribeNotifications(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// The FCM client owns an OAuth token source, so rebuilding one per push throws
+// away every cached token and mints fresh credentials for every message. Cache
+// it, keyed on the credential bytes so a settings change still takes effect.
+var (
+	fcmClientMu   sync.Mutex
+	fcmClient     *fcm.Client
+	fcmClientHash [32]byte
+)
+
+func getFcmClient(credentials []byte) (*fcm.Client, error) {
+	h := sha256.Sum256(credentials)
+
+	fcmClientMu.Lock()
+	defer fcmClientMu.Unlock()
+
+	if fcmClient != nil && h == fcmClientHash {
+		return fcmClient, nil
+	}
+
+	// context.Background(), not the caller's: the cached client's token source
+	// outlives the request that happened to create it.
+	c, err := fcm.NewClient(context.Background(), fcm.WithCredentialsJSON(credentials))
+	if err != nil {
+		return nil, err
+	}
+	fcmClient, fcmClientHash = c, h
+	return c, nil
+}
+
 func pushFcmMessage(slug string, m *Message) {
 	// One snapshot for the whole function: reading the global per field would
 	// let a concurrent settings save splice two service-account credentials.
@@ -221,10 +252,7 @@ func pushFcmMessage(slug string, m *Message) {
 		return
 	}
 
-	client, err := fcm.NewClient(
-		ctx,
-		fcm.WithCredentialsJSON(fcmSetJson),
-	)
+	client, err := getFcmClient(fcmSetJson)
 	if err != nil {
 		log.Println("Failed to create FCM client:", err)
 		return

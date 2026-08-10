@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -10,8 +11,6 @@ import (
 )
 
 var openSSEConnections = atomic.Int64{}
-var peakSSEConnections = &PeakSSEConnections{}
-var peakMu = sync.Mutex{}
 
 // Per-channel SSE counters
 var channelSSEConnections sync.Map // slug -> *atomic.Int64
@@ -36,29 +35,22 @@ func getOrCreateChannelPeak(slug string) (*PeakSSEConnections, *sync.Mutex) {
 	mu, _ := channelPeakMu.LoadOrStore(slug, &sync.Mutex{})
 	m := mu.(*sync.Mutex)
 
-	peak, loaded := channelPeakSSE.LoadOrStore(slug, &PeakSSEConnections{})
-	if !loaded {
-		// Try to load from DB
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if p, err := dbGetPeakSSEConnections(ctx, slug); err == nil && p != nil {
-			peak = p
-			channelPeakSSE.Store(slug, p)
-		}
+	if v, ok := channelPeakSSE.Load(slug); ok {
+		return v.(*PeakSSEConnections), m
 	}
-	return peak.(*PeakSSEConnections), m
-}
 
-func init() {
-	// Global peak initialization (legacy - for backward compat)
+	// Publish the entry only once it is fully loaded. Storing a placeholder
+	// first and replacing it afterwards hands concurrent callers a pointer that
+	// is then orphaned, so their peak updates are silently dropped.
+	p := &PeakSSEConnections{}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	if loaded, err := dbGetPeakSSEConnections(ctx, slug); err == nil && loaded != nil {
+		p = loaded
+	}
 
-	// Try to load from a default channel or just use zero values
-	_ = ctx
-	peakMu.Lock()
-	defer peakMu.Unlock()
-	// peakSSEConnections remains zero-valued if no default slug
+	actual, _ := channelPeakSSE.LoadOrStore(slug, p)
+	return actual.(*PeakSSEConnections), m
 }
 
 func statLogger() {
@@ -99,6 +91,12 @@ func decreaseCounterSSE(slug string) {
 
 	counter := getOrCreateChannelCounter(slug)
 	newVal := counter.Add(-1)
+	// A decrement that outruns its increment must not persist a negative
+	// datapoint into the statistics series.
+	if newVal < 0 {
+		counter.Store(0)
+		newVal = 0
+	}
 	go dbSaveSSEStatistics(slug, newVal)
 }
 
@@ -142,13 +140,31 @@ func getStatistics(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// resetStatistics clears the recorded peak for every channel. Everything the
+// statistics endpoint serves comes from the per-channel state (channelPeakSSE
+// plus channel:<slug>:peak_sse_connections), so both have to be cleared or the
+// reset is reported as successful while changing nothing.
 func resetStatistics(w http.ResponseWriter, r *http.Request) {
-	peakMu.Lock()
-	defer peakMu.Unlock()
-	peakSSEConnections.Value = 0
-	peakSSEConnections.Timestamp = time.Time{}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	channels, err := dbListChannels(ctx)
+	if err != nil {
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
+	}
+
+	for _, ch := range channels {
+		peak, mu := getOrCreateChannelPeak(ch.Slug)
+		mu.Lock()
+		peak.Value = 0
+		peak.Timestamp = time.Time{}
+		mu.Unlock()
+		rdb.Del(ctx, fmt.Sprintf("channel:%s:peak_sse_connections", ch.Slug))
+	}
 
 	var response Response
 	response.Success = true
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
