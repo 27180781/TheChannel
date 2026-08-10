@@ -11,6 +11,31 @@
       <p class="text-center">טוען...</p>
     } @else {
 
+      <!-- General Section -->
+      <nb-accordion class="mb-3">
+        <nb-accordion-item [expanded]="true">
+          <nb-accordion-item-header>
+            <nb-icon icon="settings-2-outline" class="me-2"></nb-icon>
+            הגדרות כלליות
+          </nb-accordion-item-header>
+          <nb-accordion-item-body>
+            <div class="row g-3">
+              <div class="col-12">
+                <label class="form-label">כותרת האתר (SEO)</label>
+                <div class="text-muted small mb-1">כותרת שתשמש לקידום האתר בתוצאות חיפוש. משותפת לכל הערוצים.</div>
+                <input nbInput fullWidth type="text" [(ngModel)]="values['custom_title']" placeholder="לדוגמא: הערוץ החדשותי שלי">
+              </div>
+              <div class="col-12">
+                <label class="form-label">קוד אנליטיקס להטמעה ב-&lt;head&gt;</label>
+                <div class="text-muted small mb-1">קוד HTML/JS מ-Google Analytics / GTM / Meta Pixel וכדומה. מוזרק לכל עמוד באתר.</div>
+                <textarea nbInput fullWidth rows="5" [(ngModel)]="values['analytics_head']"
+                  placeholder="&lt;!-- Google tag --&gt;&#10;&lt;script async src=&quot;...&quot;&gt;&lt;/script&gt;"></textarea>
+              </div>
+            </div>
+          </nb-accordion-item-body>
+        </nb-accordion-item>
+      </nb-accordion>
+
       <!-- Push Notifications Section -->
       <nb-accordion>
         <nb-accordion-item [expanded]="true">
