@@ -19,7 +19,7 @@ import {
 } from "@nebular/theme";
 import { MarkdownComponent } from "ngx-markdown";
 import { NgIconsModule } from "@ng-icons/core";
-import { Attachment, ChatFile, ChatMessage } from '../../../../services/chat.service';
+import { Attachment, ChatFile, ChatMessage, ChatService } from '../../../../services/chat.service';
 import { AdminService, EditMsg } from '../../../../services/admin.service';
 import { AutosizeModule } from "ngx-autosize";
 import { TimePickerComponent } from './time-picker/time-picker.component';
@@ -74,7 +74,8 @@ export class InputFormComponent implements OnInit, OnDestroy {
   constructor(
     private adminService: AdminService,
     private toastrService: NbToastrService,
-    private dialogService: NbDialogService
+    private dialogService: NbDialogService,
+    protected chatService: ChatService,
   ) { }
 
   ngOnInit() {
@@ -217,7 +218,10 @@ export class InputFormComponent implements OnInit, OnDestroy {
     this.message.text = this.input;
     this.message.deleted = false;
     this.message.is_ads = this.isAds;
-    await firstValueFrom(this.adminService.editMessage(this.message));
+    // A rejected save must leave the composer untouched — reporting success here
+    // would clear the textarea and lose whatever the user just wrote.
+    const res = await firstValueFrom(this.adminService.editMessage(this.message));
+    if (!res?.success) return false;
     this.cancelUpdateMessage();
     return true;
   }

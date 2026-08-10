@@ -35,13 +35,15 @@
         <button nbButton ghost shape="round" title="הוסף בלוק קוד" (click)="applyFormat('code')" class="toolbar-button">
             <ng-icon name="heroCodeBracket" class="toolbar-icon"></ng-icon>
         </button>
+        @if (chatService.fileUploadsEnabled) {
         <button nbButton ghost shape="round" title="צרף קובץ" (click)="fileInput.click()" class="toolbar-button">
             <ng-icon name="heroPaperClip" class="toolbar-icon"></ng-icon>
         </button>
+        <input type="file" #fileInput multiple (change)="onFileSelected($event)" hidden>
+        }
         <button nbButton ghost shape="round" title="עזרה לmarkdown" (click)="openMarkdownDocs()" class="toolbar-button">
             <ng-icon name="heroQuestionMarkCircle" class="toolbar-icon"></ng-icon>
         </button>
-        <input type="file" #fileInput multiple (change)="onFileSelected($event)" hidden>
         <nb-toggle class="me-md-auto" labelPosition="start" [(checked)]="showMarkdownPreview" [disabled]="!input">
             <span class="d-none d-md-inline-block">תצוגה מקדימה</span>
         </nb-toggle>
@@ -84,10 +86,12 @@
                         <ng-icon class="fs-4" [name]="'heroCheck'"></ng-icon>
                     </button>
                     } @else {
+                    @if (chatService.scheduledMessagesEnabled) {
                     <button nbButton ghost title="תזמן הודעה" shape="round" [size]="'medium'"
                         (click)="openTimePicker()">
                         <nb-icon [icon]="schedulingMessage ? 'clock' : 'clock-outline'"></nb-icon>
                     </button>
+                    }
                     <button nbButton ghost title="שלח" shape="round" [size]="'tiny'" (click)="sendMessage()">
                         <ng-icon class="fs-4" [name]="'heroPaperAirplane'" style="scale: -1 1"></ng-icon>
                     </button>

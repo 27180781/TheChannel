@@ -179,7 +179,12 @@ export class MessageComponent implements OnInit, AfterViewInit, OnDestroy {
         this._adminService.deleteScheduledMessage(message.id);
         return;
       }
-      this._adminService.deleteMessage(message.id).subscribe();
+      this._adminService.deleteMessage(message.id).subscribe({
+        next: (res) => {
+          if (!res?.success) this.toastrService.danger('', 'שגיאה במחיקת ההודעה');
+        },
+        error: () => this.toastrService.danger('', 'שגיאה במחיקת ההודעה'),
+      });
     }
   }
 
@@ -266,6 +271,8 @@ export class MessageComponent implements OnInit, AfterViewInit, OnDestroy {
 
   showEmojiMenu() {
     if (!this._authService.userInfo || this.isScrolling || this.message?.is_ads || this.isSchedulingMessage) return;
+    // The channel operator can switch reactions off; the backend answers 403.
+    if (!this.chatService.reactionsEnabled) return;
     this.clearHoverTimer();
     this.hoverTimer = setTimeout(() => {
       if (!this.isScrolling) {
