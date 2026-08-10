@@ -39,9 +39,14 @@ func getAdsSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var settings AdsSettings
-	if isChannelAdsLocked(globalAds, ch) {
+	switch {
+	case ch != nil && !ch.Features.Ads:
+		// Operator-level kill switch. Answer with empty settings rather than an
+		// error so the client simply renders no ad frame.
+		settings = AdsSettings{}
+	case isChannelAdsLocked(globalAds, ch):
 		settings = AdsSettings{Src: globalAds.Src, Width: globalAds.Width}
-	} else {
+	default:
 		cfg := getChannelConfig(ctx, slug)
 		settings = AdsSettings{Src: cfg.AdSrc, Width: cfg.AdWidth}
 	}
