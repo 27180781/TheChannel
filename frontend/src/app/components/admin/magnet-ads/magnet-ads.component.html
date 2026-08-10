@@ -131,6 +131,9 @@
     </nb-card-body>
   </nb-card>
 
+  <!-- נתוני מגנט מגיעים מנקודת קצה של מנהל-על בלבד (לפי המפתח הגלובלי), ולכן
+       מוצגים רק למנהל-על. -->
+  @if (isSuperAdmin) {
   <nb-card>
     <nb-card-header class="card-header">
       <nb-icon icon="bar-chart-2-outline"></nb-icon>
@@ -219,6 +222,7 @@
       }
     </nb-card-body>
   </nb-card>
+  }
 
   <div class="save-bar">
     <button nbButton status="primary" (click)="save()" [disabled]="inProgress">
