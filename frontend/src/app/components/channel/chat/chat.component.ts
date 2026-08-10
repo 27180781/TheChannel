@@ -13,7 +13,7 @@ import {
 } from "@nebular/theme";
 import { MessageComponent } from "./message/message.component";
 import { MagnetAdSlotComponent } from "./magnet-ad-slot/magnet-ad-slot.component";
-import { firstValueFrom, interval } from 'rxjs';
+import { firstValueFrom, interval, Subscription } from 'rxjs';
 import { ChatMessage, ChatService } from '../../../services/chat.service';
 import { AuthService } from '../../../services/auth.service';
 import { ActivatedRoute } from '@angular/router';
@@ -21,6 +21,7 @@ import { NotificationsService } from '../../../services/notifications.service';
 import { User } from '../../../models/user.model';
 import { AdminService } from '../../../services/admin.service';
 import { MagnetAdsService } from '../../../services/magnet-ads.service';
+import { SlugService } from '../../../services/slug.service';
 
 type LoadMsgOpt = {
   scrollDown?: boolean;
@@ -71,7 +72,8 @@ export class ChatComponent implements OnInit, OnDestroy {
   thereNewMessages: boolean = false;
   showScrollToBottom: boolean = false;
   private lastHeartbeat: number = Date.now();
-  private subLastHeartbeat: any;
+  private subLastHeartbeat?: Subscription;
+  private schedulingSub?: Subscription;
   lastReadMessageId: number = 0;
 
   constructor(
@@ -81,13 +83,19 @@ export class ChatComponent implements OnInit, OnDestroy {
     private toastrService: NbToastrService,
     private notificationService: NotificationsService,
     private magnetAds: MagnetAdsService,
+    private slugService: SlugService,
     private zone: NgZone,
     private router: ActivatedRoute,
-  ) {
-    this._adminService.schedulingBusObservable.subscribe(() => {
-      //this.scheduledMessages.length = 0;
-      this.loadScheduledMessages();
-    });
+  ) { }
+
+  // A role on some other channel grants nothing here — the scheduled-messages
+  // routes are gated per channel, so only the role on the current slug counts.
+  private hasWriteRole(): boolean {
+    const user = this.userInfo;
+    if (!user) return false;
+    if (user.globalRole === 'super_admin') return true;
+    const role = user.channelRoles?.[this.slugService.slug];
+    return role === 'owner' || role === 'moderator' || role === 'writer';
   }
 
   @HostListener('window:online')
@@ -152,6 +160,10 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit() {
+    this.schedulingSub = this._adminService.schedulingBusObservable.subscribe(() => {
+      this.loadScheduledMessages();
+    });
+
     this.chatService.getEmojisList(true);
 
     this.magnetAds.loadSettings()
@@ -163,8 +175,11 @@ export class ChatComponent implements OnInit, OnDestroy {
 
     this._authService.loadUserInfo().then((res) => {
       this.userInfo = res;
-      this.userInfo.channelRoles && Object.keys(this.userInfo.channelRoles).length > 0 && this.loadScheduledMessages();
+      this.loadScheduledMessagesIfAllowed();
       this.notificationService.init();
+    }).catch(() => {
+      // Anonymous visitor on a public channel — read-only view.
+      this.userInfo = undefined;
     });
 
     this.loadMessages().then(() => {
@@ -226,13 +241,13 @@ export class ChatComponent implements OnInit, OnDestroy {
             this.messages.unshift(message.message);
             this.thereNewMessages = !this.isAtBottom() && !(message.message.author === this.userInfo?.username);
             this.setLastReadMessage(message.message.id!.toString());
-            if (this.userInfo?.channelRoles && Object.keys(this.userInfo.channelRoles).length > 0 && this.scheduledMessages && message.message.author === "Scheduled") {
+            if (this.hasWriteRole() && this.scheduledMessages && message.message.author === "Scheduled") {
               this.loadScheduledMessages(true);
             }
           });
           break;
         case 'delete-message':
-          if (this.userInfo?.channelRoles && Object.keys(this.userInfo.channelRoles).length > 0) {
+          if (this.hasWriteRole()) {
             this.zone.run(() => {
               const index = this.messages.findIndex(m => m.id === message.message.id);
               if (index !== -1) {
@@ -272,7 +287,8 @@ export class ChatComponent implements OnInit, OnDestroy {
 
   ngOnDestroy() {
     this.chatService.sseClose();
-    clearInterval(this.subLastHeartbeat);
+    this.subLastHeartbeat?.unsubscribe();
+    this.schedulingSub?.unsubscribe();
   }
 
   private rebuildItems() {
@@ -285,7 +301,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
 
   async keepAliveSSE() {
-    clearInterval(this.subLastHeartbeat);
+    this.subLastHeartbeat?.unsubscribe();
     // Backend sends heartbeat every 25s; if 35s pass without one the SSE is dead.
     this.subLastHeartbeat = interval(10000)
       .subscribe(() => {
@@ -365,6 +381,16 @@ export class ChatComponent implements OnInit, OnDestroy {
       window.scrollTo({ top: document.body.scrollHeight, behavior: smooth ? 'smooth' : 'instant' });
     }, 200);
     this.thereNewMessages = false;
+  }
+
+  // The endpoint answers 403 when the operator switched scheduled messages off,
+  // and the flag only arrives with the channel info — which is still in flight on
+  // first paint, so wait for it instead of firing a request that cannot succeed.
+  private async loadScheduledMessagesIfAllowed(reload: boolean = false) {
+    if (!this.hasWriteRole()) return;
+    await this.chatService.ensureChannelInfo().catch(() => null);
+    if (!this.chatService.scheduledMessagesEnabled) return;
+    this.loadScheduledMessages(reload);
   }
 
   private async loadScheduledMessages(reload: boolean = false) {
