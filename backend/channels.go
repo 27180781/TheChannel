@@ -13,18 +13,18 @@ import (
 )
 
 type ChannelFeatures struct {
-	Reactions              bool `json:"reactions"`
-	FileUploads            bool `json:"fileUploads"`
-	Reports                bool `json:"reports"`
-	Ads                    bool `json:"ads"`
-	Notifications          bool `json:"notifications"`
-	RequireAuth            bool `json:"requireAuth"`
-	RequireAuthFiles       bool `json:"requireAuthFiles"`
-	CountViews             bool `json:"countViews"`
-	ScheduledMessages      bool `json:"scheduledMessages"`
-	Webhook                bool `json:"webhook"`
-	MagnetLockedByAdmin    bool `json:"magnetLockedByAdmin"` // set by super admin, owner cannot change
-	AdsLockedByAdmin       bool `json:"adsLockedByAdmin"`    // set by super admin, owner cannot change
+	Reactions           bool `json:"reactions"`
+	FileUploads         bool `json:"fileUploads"`
+	Reports             bool `json:"reports"`
+	Ads                 bool `json:"ads"`
+	Notifications       bool `json:"notifications"`
+	RequireAuth         bool `json:"requireAuth"`
+	RequireAuthFiles    bool `json:"requireAuthFiles"`
+	CountViews          bool `json:"countViews"`
+	ScheduledMessages   bool `json:"scheduledMessages"`
+	Webhook             bool `json:"webhook"`
+	MagnetLockedByAdmin bool `json:"magnetLockedByAdmin"` // set by super admin, owner cannot change
+	AdsLockedByAdmin    bool `json:"adsLockedByAdmin"`    // set by super admin, owner cannot change
 }
 
 type ChannelData struct {
@@ -174,6 +174,12 @@ func createChannel(w http.ResponseWriter, r *http.Request) {
 			FileUploads:       true,
 			Reports:           true,
 			ScheduledMessages: true,
+			// Permission to use the feature, not a request to use it: each one
+			// still needs the owner to configure it in channel settings. Left
+			// false these would be unusable and undiagnosable for a new tenant.
+			Ads:           true,
+			Notifications: true,
+			Webhook:       true,
 		},
 	}
 

@@ -51,8 +51,13 @@ func getNotificationsConfig(w http.ResponseWriter, r *http.Request) {
 	channelCfg := getChannelConfig(ctx, slug)
 	cfg := getGlobalConfig()
 
+	// Push needs all three: the platform configured (global), the tenant allowed
+	// (operator toggle) and the owner opted in (channel setting).
+	ch := channelFromCtx(r)
+	featureAllowed := ch != nil && ch.Features.Notifications
+
 	response := NotificationsConfig{
-		EnableNotifications: cfg.OnNotification && channelCfg.OnNotification,
+		EnableNotifications: cfg.OnNotification && channelCfg.OnNotification && featureAllowed,
 		VAPID:               cfg.VAPID,
 		FirebaseConfig: FirebaseConfig{
 			ApiKey:            cfg.FcmApiKey,
@@ -168,6 +173,11 @@ func pushFcmMessage(slug string, m *Message) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
+
+	// Operator-level kill switch, independent of the owner's on_notification.
+	if ch, err := dbGetChannel(ctx, slug); err == nil && !ch.Features.Notifications {
+		return
+	}
 
 	channelCfg := getChannelConfig(ctx, slug)
 	if !channelCfg.OnNotification {
