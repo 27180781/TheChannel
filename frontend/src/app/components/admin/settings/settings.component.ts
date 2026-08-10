@@ -66,10 +66,8 @@ export class SettingsComponent implements OnInit {
 
   ngOnInit(): void {
     this.adminService.getSettings()
-      .then(settings => {
-        this.loadFromSettings(settings || []);
-        this.adminService.enterSendsMessage = this.toBool(this.values['enter_sends_message']);
-      });
+      .then(settings => this.loadFromSettings(settings || []))
+      .catch(() => this.tostService.danger('', 'אין הרשאה לצפות בהגדרות'));
   }
 
   private loadFromSettings(settings: Setting[]) {
@@ -222,10 +220,7 @@ export class SettingsComponent implements OnInit {
     this.setInProgress = true;
     const payload = this.buildSettingsArray();
     this.adminService.setSettings(payload)
-      .then(() => {
-        this.adminService.enterSendsMessage = this.toBool(this.values['enter_sends_message']);
-        this.tostService.success('', 'השינויים נשמרו בהצלחה!');
-      })
+      .then(() => this.tostService.success('', 'השינויים נשמרו בהצלחה!'))
       .catch(() => this.tostService.danger('', 'שגיאה בשמירת השינויים'))
       .finally(() => this.setInProgress = false);
   }

@@ -32,13 +32,6 @@ export const SETTINGS_SCHEMA: SettingsCategorySchema[] = [
         placeholder: '100',
         default: 100,
       },
-      {
-        key: 'enter_sends_message',
-        label: 'Enter שולח הודעה',
-        description: 'לחיצה על Enter תשלח את ההודעה. לחיצה על Ctrl+Enter תוריד שורה.',
-        type: 'boolean',
-        default: false,
-      },
     ],
   },
   {
@@ -142,11 +135,20 @@ export const FCM_JSON_KEY_MAP: Record<string, string> = {
   universe_domain: 'fcm_json_universe_domain',
 };
 
+// Keys that used to be stored on the channel but are no longer part of the form.
+// They are still recognised so they are not shown as raw "extra settings", and
+// they are dropped from the payload on the next save.
+export const LEGACY_SETTING_KEYS = [
+  // Moved to a per-user localStorage preference — the server never read it.
+  'enter_sends_message',
+];
+
 export function getAllKnownKeys(): Set<string> {
   const keys = new Set<string>();
   for (const cat of SETTINGS_SCHEMA) {
     for (const f of cat.fields) keys.add(f.key);
   }
+  for (const k of LEGACY_SETTING_KEYS) keys.add(k);
   keys.add('regex-replace');
   return keys;
 }
