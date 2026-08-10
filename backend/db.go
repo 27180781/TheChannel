@@ -207,15 +207,18 @@ var getMessageRange = redis.NewScript(`
 	local direction = ARGV[4] or 'desc'
 
 
-	local start_index
+	-- ZRANK returns false when the offset key is absent (initial load), which
+	-- must start at rank 0; a real rank of 0 must still advance past itself.
+	local rank
 	if direction == 'asc' then
-	    start_index = redis.call('ZRANK', time_set_key, offset_key) or 0
+	    rank = redis.call('ZRANK', time_set_key, offset_key)
 	else
-	    start_index = redis.call('ZREVRANK', time_set_key, offset_key) or 0
+	    rank = redis.call('ZREVRANK', time_set_key, offset_key)
 	end
 
-	if start_index > 0 then
-		start_index = start_index + 1
+	local start_index = 0
+	if rank then
+		start_index = rank + 1
 	end
 
 	local messages = {}
@@ -225,7 +228,11 @@ var getMessageRange = redis.NewScript(`
 		scan_rounds = scan_rounds + 1
 		if scan_rounds > max_scan_rounds then break end
 		local batch_size = required_length - #messages
-		local stop_index = start_index + batch_size
+		-- ZRANGE/ZREVRANGE are inclusive on both ends, so the window is
+		-- batch_size wide only when stop is one short of start + batch_size.
+		-- Line 'start_index = start_index + batch_size' below then advances to
+		-- the next window without re-reading the boundary entry.
+		local stop_index = start_index + batch_size - 1
 		local message_ids
 
 		if direction == 'asc' then
@@ -801,9 +808,15 @@ func dbSaveScheduledMessages(ctx context.Context, slug string, messages *[]Messa
 
 	// Maintain a global sorted set of "next due time" per channel so the
 	// scheduler only wakes channels that actually have pending messages.
+	// A zero time.Time scores far below any real timestamp, so including it
+	// would win the minimum, fail the earliest > 0 test and drop the channel
+	// from due_channels entirely — silently stalling its other pending posts.
 	var earliest float64
 	for _, m := range *messages {
 		ts := float64(m.Timestamp.Unix())
+		if ts <= 0 {
+			continue
+		}
 		if earliest == 0 || ts < earliest {
 			earliest = ts
 		}
@@ -999,7 +1012,6 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 		fmt.Sprintf("channel:%s:reports:closed", p),
 		fmt.Sprintf("channel:%s:report:next_id", p),
 		fmt.Sprintf("channel:%s:scheduled_messages:list", p),
-		fmt.Sprintf("channel:%s:sse_statistics:total", p),
 		fmt.Sprintf("channel:%s:peak_sse_connections", p),
 		fmt.Sprintf("channel:%s:storage:used_bytes", p),
 		fmt.Sprintf("channel:%s:storage:quota_bytes", p),
@@ -1157,7 +1169,7 @@ func dbSetGlobalAdsConfig(ctx context.Context, cfg *GlobalAdsConfig) error {
 	return rdb.Set(ctx, "global:ads:config", data, 0).Err()
 }
 
-// ─── Storage Quota & Usage ────────────────────────────────────────────────────
+// ─── Storage Quota & Usage ──────────────────────────────────────────────────
 
 const defaultStorageQuotaBytes = int64(5 * 1024 * 1024 * 1024) // 5 GB
 
