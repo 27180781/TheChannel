@@ -28,7 +28,18 @@ export class NotificationsService {
     private slugService: SlugService,
   ) { }
 
+  // Cleared on channel switch: the push toggle is per channel, so the state
+  // fetched for the previous channel must not leak into the next one.
+  reset() {
+    this.initialized = false;
+    this.config = null;
+    this.app = null;
+    this.messaging = undefined;
+  }
+
   async init() {
+    // Called at bootstrap too, before any channel slug is resolved.
+    if (!this.slugService.slug) return;
     if (this.initialized) return;
 
     await firstValueFrom(this.http.get<NotificationsConfig>(`/api/channel/${this.slugService.slug}/notifications-config`))

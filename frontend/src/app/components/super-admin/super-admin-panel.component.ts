@@ -1,5 +1,6 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { filter, Subscription } from 'rxjs';
 import {
   NbButtonModule,
   NbIconModule,
@@ -51,9 +52,10 @@ type ViewName = 'channels' | 'channel-features' | 'channel-users' | 'channel-sto
   templateUrl: './super-admin-panel.component.html',
   styleUrl: './super-admin-panel.component.scss',
 })
-export class SuperAdminPanelComponent implements OnInit {
+export class SuperAdminPanelComponent implements OnInit, OnDestroy {
   selectedView: ViewName = 'channels';
   selectedChannelSlug = '';
+  private menuSub?: Subscription;
 
   readonly MENU_TAG = 'super-admin-menu';
 
@@ -95,41 +97,47 @@ export class SuperAdminPanelComponent implements OnInit {
     }
   }
 
-  ngOnInit(): void {
-    this.menuService.onItemClick().subscribe(event => {
-      this.navigationMenu.forEach(item => (item.selected = false));
-      event.item.selected = true;
+  ngOnDestroy(): void {
+    this.menuSub?.unsubscribe();
+  }
 
-      switch (event.item.icon) {
-        case 'inbox-outline':
-          this.selectedView = this.VIEW_REQUESTS;
-          this.selectedChannelSlug = '';
-          break;
-        case 'list-outline':
-          this.selectedView = this.VIEW_CHANNELS;
-          this.selectedChannelSlug = '';
-          break;
-        case 'film-outline':
-          this.selectedView = this.VIEW_ADS;
-          break;
-        case 'pricetags-outline':
-          this.selectedView = this.VIEW_MAGNET;
-          break;
-        case 'people-outline':
-          this.selectedView = this.VIEW_USERS;
-          break;
-        case 'settings-2-outline':
-          this.selectedView = this.VIEW_SETTINGS;
-          break;
-        case 'hard-drive-outline':
-          this.selectedView = this.VIEW_GLOBAL_STORAGE;
-          this.selectedChannelSlug = '';
-          break;
-        case 'bar-chart-outline':
-          this.selectedView = this.VIEW_STATISTICS;
-          break;
-      }
-    });
+  ngOnInit(): void {
+    this.menuSub = this.menuService.onItemClick()
+      .pipe(filter(({ tag }) => tag === this.MENU_TAG))
+      .subscribe(event => {
+        this.navigationMenu.forEach(item => (item.selected = false));
+        event.item.selected = true;
+
+        switch (event.item.icon) {
+          case 'inbox-outline':
+            this.selectedView = this.VIEW_REQUESTS;
+            this.selectedChannelSlug = '';
+            break;
+          case 'list-outline':
+            this.selectedView = this.VIEW_CHANNELS;
+            this.selectedChannelSlug = '';
+            break;
+          case 'film-outline':
+            this.selectedView = this.VIEW_ADS;
+            break;
+          case 'pricetags-outline':
+            this.selectedView = this.VIEW_MAGNET;
+            break;
+          case 'people-outline':
+            this.selectedView = this.VIEW_USERS;
+            break;
+          case 'settings-2-outline':
+            this.selectedView = this.VIEW_SETTINGS;
+            break;
+          case 'hard-drive-outline':
+            this.selectedView = this.VIEW_GLOBAL_STORAGE;
+            this.selectedChannelSlug = '';
+            break;
+          case 'bar-chart-outline':
+            this.selectedView = this.VIEW_STATISTICS;
+            break;
+        }
+      });
   }
 
   onEditFeatures(slug: string) {

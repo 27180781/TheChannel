@@ -61,7 +61,8 @@ export class MagnetAdsService {
 
     const chrono = [...messages].reverse();
 
-    if (s.mode === 'by_time') {
+    // 'per_seconds' is a legacy value stored by an older super-admin form.
+    if (s.mode === 'by_time' || s.mode === 'per_seconds') {
       this.fillByTime(result, chrono, s);
     } else {
       this.fillByMessages(result, chrono, s);

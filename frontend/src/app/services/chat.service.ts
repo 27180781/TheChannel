@@ -73,8 +73,13 @@ export class ChatService {
     return firstValueFrom(this.http.post<ResponseResult>(`/api/channel/${this.slug}/reactions/set-reactions`, { messageId, emoji: react }));
   }
 
+  clearCache() {
+    this.emojis = [];
+    this.channelInfo = undefined;
+  }
+
   async getEmojisList(reload: boolean = false): Promise<string[]> {
-    if (this.emojis && !reload) return Promise.resolve(this.emojis);
+    if (this.emojis.length && !reload) return this.emojis;
     this.emojis = await firstValueFrom(this.http.get<string[]>(`/api/channel/${this.slug}/emojis/list`));
     return this.emojis;
   }
