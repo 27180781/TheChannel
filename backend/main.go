@@ -22,16 +22,32 @@ func main() {
 	if err := initializePrivilegeUsers(); err != nil {
 		panic(err)
 	}
-	go statLogger()
 
+	// The session store is built before the migrations run: a misconfiguration
+	// here is fatal, and failing after a one-shot migration has been marked
+	// applied would consume it without ever serving a request.
 	var err error
 	store, err = redistore.NewRediStore(10, redisType, redisAddr, "", redisPass, []byte(secretKey))
 	if err != nil {
-		panic(err)
+		log.Fatalf("Session store init failed (REDIS_PROTOCOL=%q, REDIS_ADDR=%q): %v", redisType, redisAddr, err)
 	}
 	store.SetMaxAge(60 * 60 * 24 * 30)
 	store.Options.HttpOnly = true
+	// Secure by default; set COOKIE_INSECURE=1 only for local plain-HTTP dev.
+	store.Options.Secure = os.Getenv("COOKIE_INSECURE") != "1"
+	// Lax (not Strict) so the cookie still rides along on the Google OAuth
+	// redirect back to the site and on inbound links to authenticated views.
+	store.Options.SameSite = http.SameSiteLaxMode
 	defer store.Close()
+
+	// Data migrations run to completion before the listener starts, so a request
+	// never observes a half-migrated state. A failure is logged and retried on
+	// the next boot rather than taking the server down.
+	migCtx, migCancel := migrationContext()
+	runMigrations(migCtx)
+	migCancel()
+
+	go statLogger()
 
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
@@ -97,7 +113,7 @@ func main() {
 		r.Get("/info", getChannelInfo)
 		r.Get("/messages", getMessages)
 		r.Get("/events", getEvents)
-		r.Get("/files/{fileid}", serveFile)
+		r.With(channelIfRequireAuthFiles).Get("/files/{fileid}", serveFile)
 		r.Get("/emojis/list", getEmojisList)
 		r.Get("/notifications-config", getNotificationsConfig)
 		r.Get("/ads/settings", getAdsSettings)
@@ -106,18 +122,21 @@ func main() {
 		r.Group(func(r chi.Router) {
 			r.Use(checkLogin)
 			r.Post("/notifications-subscribe", subscribeNotifications)
-			r.Post("/reactions/set-reactions", setReactions)
-			r.Post("/messages/report", reportMessage)
+			r.Post("/reactions/set-reactions", requireFeature(func(f *ChannelFeatures) bool { return f.Reactions }, setReactions))
+			r.Post("/messages/report", requireFeature(func(f *ChannelFeatures) bool { return f.Reports }, reportMessage))
 			r.Get("/user-info", getUserInfo)
 
 			r.Route("/admin", func(r chi.Router) {
 				// Writer level
 				r.Post("/new", protectedWithChannelRole(RoleWriter, addMessage))
 				r.Post("/edit-message", protectedWithChannelRole(RoleWriter, updateMessage))
+				// Deletion is a state change, so it belongs on DELETE. The GET
+				// route stays registered for existing clients until they migrate.
+				r.Delete("/delete-message/{id}", protectedWithChannelRole(RoleWriter, deleteMessage))
 				r.Get("/delete-message/{id}", protectedWithChannelRole(RoleWriter, deleteMessage))
-				r.Post("/upload", protectedWithChannelRole(RoleWriter, uploadRateLimit(uploadFile)))
-				r.Get("/scheduled-messages/get", protectedWithChannelRole(RoleWriter, getScheduledMessages))
-				r.Post("/scheduled-messages/update", protectedWithChannelRole(RoleWriter, updateScheduledMessages))
+				r.Post("/upload", protectedWithChannelRole(RoleWriter, requireFeature(func(f *ChannelFeatures) bool { return f.FileUploads }, uploadRateLimit(uploadFile))))
+				r.Get("/scheduled-messages/get", protectedWithChannelRole(RoleWriter, requireFeature(func(f *ChannelFeatures) bool { return f.ScheduledMessages }, getScheduledMessages)))
+				r.Post("/scheduled-messages/update", protectedWithChannelRole(RoleWriter, requireFeature(func(f *ChannelFeatures) bool { return f.ScheduledMessages }, updateScheduledMessages)))
 
 				// Moderator level
 				r.Post("/edit-channel-info", protectedWithChannelRole(RoleModerator, editChannelInfo))
@@ -137,14 +156,21 @@ func main() {
 		})
 	})
 
-	if settingConfig != nil && settingConfig.RootStaticFolder != "" {
-		r.Handle("/assets/*", http.StripPrefix("/assets/", http.FileServer(http.Dir(settingConfig.RootStaticFolder))))
+	if cfg := getGlobalConfig(); cfg != nil && cfg.RootStaticFolder != "" {
+		r.Handle("/assets/*", http.StripPrefix("/assets/", http.FileServer(http.Dir(cfg.RootStaticFolder))))
 		r.NotFound(serveSpaFile)
 	}
 
-	go func() {
-		log.Fatal(http.ListenAndServe("localhost:6060", nil))
-	}()
+	// The pprof listener is a debugging aid, not part of the service. Binding it
+	// must never be able to take the real server down, so the error is logged
+	// instead of fatal, and it only starts when explicitly asked for.
+	if pprofAddr := os.Getenv("PPROF_ADDR"); pprofAddr != "" {
+		go func() {
+			if err := http.ListenAndServe(pprofAddr, nil); err != nil {
+				log.Printf("pprof listener stopped: %v\n", err)
+			}
+		}()
+	}
 
 	if err := http.ListenAndServe(":"+os.Getenv("SERVER_PORT"), r); err != nil {
 		log.Fatal(err)
@@ -152,23 +178,24 @@ func main() {
 }
 
 func serveSpaFile(w http.ResponseWriter, r *http.Request) {
-	if settingConfig == nil || settingConfig.RootStaticFolder == "" {
+	cfg := getGlobalConfig()
+	if cfg == nil || cfg.RootStaticFolder == "" {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return
 	}
-	htmlPath := filepath.Join(settingConfig.RootStaticFolder, "index.html")
+	htmlPath := filepath.Join(cfg.RootStaticFolder, "index.html")
 	content, err := os.ReadFile(htmlPath)
 	if err != nil {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return
 	}
 
-	if settingConfig.CustomTitle != "" {
-		content = bytes.ReplaceAll(content, []byte("<title></title>"), []byte(settingConfig.CustomTitle))
+	if cfg.CustomTitle != "" {
+		content = bytes.ReplaceAll(content, []byte("<title></title>"), []byte(cfg.CustomTitle))
 	}
 
-	if settingConfig.AnalyticsHead != "" {
-		content = bytes.Replace(content, []byte("</head>"), []byte(settingConfig.AnalyticsHead+"</head>"), 1)
+	if cfg.AnalyticsHead != "" {
+		content = bytes.Replace(content, []byte("</head>"), []byte(cfg.AnalyticsHead+"</head>"), 1)
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
