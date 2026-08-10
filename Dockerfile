@@ -1,9 +1,13 @@
 FROM node:20 AS builder1
 
 WORKDIR /app
+
+# Copy manifests first so the dependency layer is cached when only source changes.
+COPY ./frontend/package.json ./frontend/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+
 COPY ./frontend .
-RUN  npm install \
-    && npm run build
+RUN npm run build
 
 FROM golang:1.25 AS builder2
 
