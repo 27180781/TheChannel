@@ -175,7 +175,7 @@ export class ChatComponent implements OnInit, OnDestroy {
 
     this._authService.loadUserInfo().then((res) => {
       this.userInfo = res;
-      this.hasWriteRole() && this.loadScheduledMessages();
+      this.loadScheduledMessagesIfAllowed();
       this.notificationService.init();
     }).catch(() => {
       // Anonymous visitor on a public channel — read-only view.
@@ -381,6 +381,16 @@ export class ChatComponent implements OnInit, OnDestroy {
       window.scrollTo({ top: document.body.scrollHeight, behavior: smooth ? 'smooth' : 'instant' });
     }, 200);
     this.thereNewMessages = false;
+  }
+
+  // The endpoint answers 403 when the operator switched scheduled messages off,
+  // and the flag only arrives with the channel info — which is still in flight on
+  // first paint, so wait for it instead of firing a request that cannot succeed.
+  private async loadScheduledMessagesIfAllowed(reload: boolean = false) {
+    if (!this.hasWriteRole()) return;
+    await this.chatService.ensureChannelInfo().catch(() => null);
+    if (!this.chatService.scheduledMessagesEnabled) return;
+    this.loadScheduledMessages(reload);
   }
 
   private async loadScheduledMessages(reload: boolean = false) {
