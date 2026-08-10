@@ -6,12 +6,23 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"strconv"
 	"time"
 
 	"github.com/go-chi/chi"
 	"github.com/redis/go-redis/v9"
 )
+
+// maxMessagesPerRequest caps the client-supplied page size for /messages.
+const maxMessagesPerRequest = 100
+
+// maxStreamReadFailures bounds how long an SSE connection keeps retrying a
+// stream read that consistently fails before the handler gives up.
+const maxStreamReadFailures = 5
+
+// streamIDRegex matches a Redis stream entry ID ("<ms>" or "<ms>-<seq>").
+var streamIDRegex = regexp.MustCompile(`^\d+(-\d+)?$`)
 
 func getMessages(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -29,17 +40,24 @@ func getMessages(w http.ResponseWriter, r *http.Request) {
 		offset = 0
 	}
 
+	// The limit drives a blocking Lua scan (ZREVRANGE + one HGETALL per member)
+	// on a shared Redis, so an unbounded client value must not reach it.
 	limit, err := strconv.Atoi(limitFromClient)
-	if err != nil {
+	if err != nil || limit <= 0 || limit > maxMessagesPerRequest {
 		limit = 20
 	}
 
 	isAdmin := hasChannelRole(r, slug, RoleWriter)
 	countViews := ch != nil && ch.Features.CountViews
 
-	// ETag: skip expensive query if content hasn't changed since client's copy
-	etag := `"` + getLastModified(ctx, slug) + `"`
-	if etag != `""` {
+	// ETag: skip expensive query if content hasn't changed since client's copy.
+	// The body varies by viewer (admins see real authors and soft-deleted
+	// posts), so the validator has to carry those inputs and the response must
+	// never be reused across identities.
+	w.Header().Set("Cache-Control", "private, no-cache")
+	w.Header().Set("Vary", "Cookie")
+	if lm := getLastModified(ctx, slug); lm != "" {
+		etag := `"` + lm + "-" + strconv.FormatBool(isAdmin) + "-" + strconv.FormatBool(countViews) + `"`
 		w.Header().Set("ETag", etag)
 		if r.Header.Get("If-None-Match") == etag {
 			w.WriteHeader(http.StatusNotModified)
@@ -80,7 +98,11 @@ func addMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	message.ID = getMessageNextId(ctx, slug)
+	if message.ID, err = getMessageNextId(ctx, slug); err != nil {
+		log.Printf("Failed to allocate message id: %v\n", err)
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
+	}
 	message.Type = body.Type
 	message.Author = user.PublicName
 	message.AuthorId = user.ID
@@ -103,6 +125,28 @@ func addMessage(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(message)
 }
 
+// canModifyMessage reports whether the current session may edit or delete a
+// message written by authorId. Writers may only touch their own posts;
+// moderators (and above, including super admins) may touch any message.
+func canModifyMessage(r *http.Request, slug, authorId string) bool {
+	if hasChannelRole(r, slug, RoleModerator) {
+		return true
+	}
+	// System posts have no real author: the scheduler stamps "0" and the API
+	// import path never sets the field at all. They are channel content rather
+	// than anyone's personal post, so any writer may manage them — the caller is
+	// already behind protectedWithChannelRole(RoleWriter, ...).
+	if authorId == "" || authorId == "0" {
+		return true
+	}
+	session, _ := store.Get(r, cookieName)
+	user, ok := session.Values["user"].(Session)
+	if !ok || user.ID == "" {
+		return false
+	}
+	return authorId == user.ID
+}
+
 func updateMessage(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -114,16 +158,49 @@ func updateMessage(w http.ResponseWriter, r *http.Request) {
 
 	body := Message{}
 	if err = json.NewDecoder(r.Body).Decode(&body); err != nil {
-		response := Response{Success: false}
-		json.NewEncoder(w).Encode(response)
+		log.Printf("Failed to decode message: %v\n", err)
+		http.Error(w, "error", http.StatusBadRequest)
 		return
+	}
+
+	// The message must already exist: setMessage would otherwise happily create
+	// an unindexed hash from whatever ID the client sent.
+	stored, err := dbGetMessageFields(ctx, slug, strconv.Itoa(body.ID))
+	if err != nil {
+		http.Error(w, "message not found", http.StatusNotFound)
+		return
+	}
+
+	if !canModifyMessage(r, slug, stored["authorId"]) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	// Only the body of the message is editable — identity, ordering and counters
+	// stay as stored, so they cannot be forged through the request payload.
+	// Deleted is deliberately NOT restored: re-saving a deleted message is how
+	// the composer republishes it, which the edit form promises to the user.
+	body.Author = stored["author"]
+	body.AuthorId = stored["authorId"]
+	body.Views, _ = strconv.Atoi(stored["views"])
+	if ts, perr := time.Parse(time.RFC3339Nano, stored["timestamp"]); perr == nil {
+		body.Timestamp = ts
+	}
+	body.Reactions = nil
+	if raw := stored["reactions"]; raw != "" {
+		var reactions Reactions
+		if json.Unmarshal([]byte(raw), &reactions) == nil {
+			body.Reactions = reactions
+		}
 	}
 
 	body.LastEdit = time.Now()
 
+	// A storage failure must not read as success: the client replaces the
+	// composer contents on a 2xx, so the user's edit would be lost silently.
 	if err := setMessage(ctx, slug, &body, true); err != nil {
-		response := Response{Success: false}
-		json.NewEncoder(w).Encode(response)
+		log.Printf("Failed to update message: %v\n", err)
+		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
 
@@ -140,12 +217,23 @@ func deleteMessage(w http.ResponseWriter, r *http.Request) {
 	slug := channelSlugFromCtx(r)
 	id := chi.URLParam(r, "id")
 
+	stored, err := dbGetMessageFields(ctx, slug, id)
+	if err != nil {
+		http.Error(w, "message not found", http.StatusNotFound)
+		return
+	}
+
+	if !canModifyMessage(r, slug, stored["authorId"]) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
 	idInt, _ := strconv.Atoi(id)
 	message := Message{ID: idInt, Deleted: true}
 
 	if err := funcDeleteMessage(ctx, slug, id); err != nil {
-		response := Response{Success: false}
-		json.NewEncoder(w).Encode(response)
+		log.Printf("Failed to delete message: %v\n", err)
+		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
 
@@ -173,8 +261,10 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 
 	// Support SSE reconnection: browser sends Last-Event-ID with the stream entry ID
 	// from the last event it received. On fresh connect, start from "now".
+	// A malformed value would make every XREAD fail, turning the loop below into
+	// a busy retry against Redis, so anything that is not a stream ID is ignored.
 	lastID := r.Header.Get("Last-Event-ID")
-	if lastID == "" {
+	if !streamIDRegex.MatchString(lastID) {
 		lastID = "$"
 	}
 
@@ -188,11 +278,15 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	flusher.Flush()
 
-	go increaseCounterSSE(slug)
+	// Increment synchronously: the deferred decrement runs as soon as the loop
+	// notices a dead client, which can happen before a spawned goroutine is even
+	// scheduled, leaving the counter one below where it started.
+	increaseCounterSSE(slug)
 	defer decreaseCounterSSE(slug)
 
 	clientCtx := r.Context()
 	lastHeartbeat := time.Now()
+	failures := 0
 	const blockDuration = 5 * time.Second
 	const heartbeatInterval = 25 * time.Second
 
@@ -222,12 +316,20 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err != nil {
-			// redis.Nil = block timeout with no messages; other errors: brief pause then retry
+			// redis.Nil = block timeout with no messages; other errors: brief pause
+			// then retry, but a stream that keeps failing must not be retried
+			// forever at 2 Hz.
 			if err != redis.Nil {
+				failures++
+				if failures > maxStreamReadFailures {
+					log.Printf("SSE stream %s: giving up after %d failed reads: %v\n", streamKey, failures, err)
+					return
+				}
 				time.Sleep(500 * time.Millisecond)
 			}
 			continue
 		}
+		failures = 0
 
 		for _, stream := range streams {
 			for _, msg := range stream.Messages {
