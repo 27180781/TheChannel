@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom, Observable } from 'rxjs';
-import { Channel } from '../models/channel.model';
+import { Channel, ChannelFeatureFlags } from '../models/channel.model';
 import { ResponseResult } from '../models/response-result.model';
 import { SlugService } from './slug.service';
 
@@ -45,15 +45,38 @@ export class ChatService {
   private eventSource!: EventSource;
   private emojis: string[] = [];
   public channelInfo?: Channel;
+  private channelInfoRequest?: Promise<void>;
 
   constructor(private http: HttpClient, private slugService: SlugService) { }
 
   private get slug() { return this.slugService.slug; }
 
-  async updateChannelInfo() {
-    this.channelInfo = await firstValueFrom(this.http.get<Channel>(`/api/channel/${this.slug}/info`));
-    return;
+  updateChannelInfo(): Promise<void> {
+    // Deduplicated: several components need the channel info (and the feature
+    // flags it carries) on the same first paint.
+    this.channelInfoRequest ??= firstValueFrom(this.http.get<Channel>(`/api/channel/${this.slug}/info`))
+      .then(info => { this.channelInfo = info; })
+      .finally(() => { this.channelInfoRequest = undefined; });
+    return this.channelInfoRequest;
   }
+
+  // Resolves once the feature flags are known, without issuing a second request
+  // when the header already has one in flight.
+  ensureChannelInfo(): Promise<void> {
+    return this.channelInfo ? Promise.resolve() : this.updateChannelInfo();
+  }
+
+  // A missing features object means an older backend or a response cached before
+  // the flags existed — treat it as "everything enabled" so the UI is never
+  // stripped by an answer that simply does not mention the feature.
+  isFeatureEnabled(feature: keyof ChannelFeatureFlags): boolean {
+    return this.channelInfo?.features?.[feature] !== false;
+  }
+
+  get reactionsEnabled(): boolean { return this.isFeatureEnabled('reactions'); }
+  get fileUploadsEnabled(): boolean { return this.isFeatureEnabled('fileUploads'); }
+  get reportsEnabled(): boolean { return this.isFeatureEnabled('reports'); }
+  get scheduledMessagesEnabled(): boolean { return this.isFeatureEnabled('scheduledMessages'); }
 
   editChannelInfo(name: string, description: string, logoUrl: string): Observable<ResponseResult> {
     return this.http.post<ResponseResult>(`/api/channel/${this.slug}/admin/edit-channel-info`, { name, description, logoUrl });
@@ -73,8 +96,14 @@ export class ChatService {
     return firstValueFrom(this.http.post<ResponseResult>(`/api/channel/${this.slug}/reactions/set-reactions`, { messageId, emoji: react }));
   }
 
+  clearCache() {
+    this.emojis = [];
+    this.channelInfo = undefined;
+    this.channelInfoRequest = undefined;
+  }
+
   async getEmojisList(reload: boolean = false): Promise<string[]> {
-    if (this.emojis && !reload) return Promise.resolve(this.emojis);
+    if (this.emojis.length && !reload) return this.emojis;
     this.emojis = await firstValueFrom(this.http.get<string[]>(`/api/channel/${this.slug}/emojis/list`));
     return this.emojis;
   }

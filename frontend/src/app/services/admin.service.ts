@@ -31,8 +31,6 @@ export class AdminService {
 
   private schedulingMessages: ChatMessage[] | null = null;
 
-  enterSendsMessage: boolean = false;
-
   constructor(
     private http: HttpClient,
     private slugService: SlugService,
@@ -60,20 +58,17 @@ export class AdminService {
     return firstValueFrom(this.http.get<Statistics>(`/api/channel/${this.slug}/admin/statistics`));
   }
 
-  resetPeakStatistics(): Promise<ResponseResult> {
-    return firstValueFrom(this.http.post<ResponseResult>('/api/super-admin/statistics/reset', {}));
-  }
-
   addMessage(message: ChatMessage): Observable<ChatMessage> {
     return this.http.post<ChatMessage>(`/api/channel/${this.slug}/admin/new`, message);
   }
 
-  editMessage(message: ChatMessage): Observable<ChatMessage> {
-    return this.http.post<ChatMessage>(`/api/channel/${this.slug}/admin/edit-message`, message);
+  // Both endpoints answer with the {success} envelope, not the message itself.
+  editMessage(message: ChatMessage): Observable<ResponseResult> {
+    return this.http.post<ResponseResult>(`/api/channel/${this.slug}/admin/edit-message`, message);
   }
 
-  deleteMessage(id: number | undefined): Observable<ChatMessage> {
-    return this.http.get<ChatMessage>(`/api/channel/${this.slug}/admin/delete-message/${id}`);
+  deleteMessage(id: number | undefined): Observable<ResponseResult> {
+    return this.http.get<ResponseResult>(`/api/channel/${this.slug}/admin/delete-message/${id}`);
   }
 
   uploadFile(formData: FormData) {
@@ -116,21 +111,30 @@ export class AdminService {
     return firstValueFrom(this.http.post<ResponseResult>(`/api/channel/${this.slug}/admin/reports/set`, report));
   }
 
+  private fetchScheduledMessages(): Promise<ChatMessage[]> {
+    return firstValueFrom(this.http.get<ChatMessage[]>(`/api/channel/${this.slug}/admin/scheduled-messages/get`));
+  }
+
   async getScheduledMessages(reload?: boolean): Promise<ChatMessage[]> {
     if (this.schedulingMessages && !reload) {
       return this.schedulingMessages;
     }
 
     try {
-      this.schedulingMessages = await firstValueFrom(this.http.get<ChatMessage[]>(`/api/channel/${this.slug}/admin/scheduled-messages/get`));
+      this.schedulingMessages = await this.fetchScheduledMessages();
       return this.schedulingMessages;
     } catch {
       return this.schedulingMessages || [];
     }
   }
 
-  setScheduledMessage(message: ChatMessage): Promise<ResponseResult> {
-    this.schedulingMessages?.unshift(message);
+  async setScheduledMessage(message: ChatMessage): Promise<ResponseResult> {
+    // The update endpoint replaces the whole list, so the cache must be loaded
+    // first — otherwise an empty/null cache posts an empty body (400) or wipes
+    // the messages already scheduled. A failed load rejects instead of saving.
+    const list = this.schedulingMessages ?? await this.fetchScheduledMessages();
+    this.schedulingMessages = list;
+    list.unshift(message);
     return this.updateSchedulingMessages();
   }
 
@@ -147,6 +151,6 @@ export class AdminService {
   }
 
   private updateSchedulingMessages(): Promise<ResponseResult> {
-    return firstValueFrom(this.http.post<ResponseResult>(`/api/channel/${this.slug}/admin/scheduled-messages/update`, this.schedulingMessages));
+    return firstValueFrom(this.http.post<ResponseResult>(`/api/channel/${this.slug}/admin/scheduled-messages/update`, this.schedulingMessages ?? []));
   }
 }
