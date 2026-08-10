@@ -4,10 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/mail"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi"
 	"github.com/redis/go-redis/v9"
+)
+
+const (
+	// channelRequestTTL bounds how long a pending request (and its index entry)
+	// survives, since anyone can create them.
+	channelRequestTTL = 30 * 24 * time.Hour
+	// maxChannelRequestsListed caps the admin queue read, which does one GET per
+	// entry.
+	maxChannelRequestsListed = 500
 )
 
 type RequestStatus string
@@ -35,7 +46,8 @@ func dbSaveChannelRequest(ctx context.Context, req *ChannelRequest) error {
 	if err != nil {
 		return err
 	}
-	if err := rdb.Set(ctx, "channel_request:"+req.ID, data, 0).Err(); err != nil {
+	// TTL so an unbounded public endpoint cannot accumulate records forever.
+	if err := rdb.Set(ctx, "channel_request:"+req.ID, data, channelRequestTTL).Err(); err != nil {
 		return err
 	}
 	return rdb.ZAdd(ctx, "channel_requests:list", redis.Z{
@@ -57,7 +69,12 @@ func dbGetChannelRequest(ctx context.Context, id string) (*ChannelRequest, error
 }
 
 func dbListChannelRequests(ctx context.Context) ([]*ChannelRequest, error) {
-	ids, err := rdb.ZRevRange(ctx, "channel_requests:list", 0, -1).Result()
+	// Drop index entries whose bodies have already expired, then read a bounded
+	// page: the index is fed by an unauthenticated endpoint.
+	cutoff := strconv.FormatInt(time.Now().Add(-channelRequestTTL).Unix(), 10)
+	rdb.ZRemRangeByScore(ctx, "channel_requests:list", "-inf", cutoff)
+
+	ids, err := rdb.ZRevRange(ctx, "channel_requests:list", 0, maxChannelRequestsListed-1).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -77,6 +94,16 @@ func submitChannelRequest(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	// Unauthenticated endpoint: cap the body, throttle per IP and validate every
+	// field before it becomes a persistent record in the super admin's queue.
+	if !channelRequestLimiter(r).Allow() {
+		http.Error(w, "too many requests — please try again later", http.StatusTooManyRequests)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	defer r.Body.Close()
+
 	var body struct {
 		Name        string `json:"name"`
 		Email       string `json:"email"`
@@ -89,6 +116,18 @@ func submitChannelRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Name == "" || body.Email == "" || body.DesiredSlug == "" {
 		http.Error(w, "name, email, and desiredSlug are required", http.StatusBadRequest)
+		return
+	}
+	if len(body.Name) > 100 || len(body.Email) > 254 || len(body.Description) > 2000 {
+		http.Error(w, "field too long", http.StatusBadRequest)
+		return
+	}
+	if !slugRegex.MatchString(body.DesiredSlug) {
+		http.Error(w, "invalid slug", http.StatusBadRequest)
+		return
+	}
+	if _, err := mail.ParseAddress(body.Email); err != nil {
+		http.Error(w, "invalid email", http.StatusBadRequest)
 		return
 	}
 

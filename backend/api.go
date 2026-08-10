@@ -45,7 +45,17 @@ func addNewPost(w http.ResponseWriter, r *http.Request) {
 	}
 	message.Type = "md" //body.Type
 	message.Author = body.Author
-	message.Timestamp = body.Timestamp
+	// The timestamp is the sort score. A missing one decodes to the zero time
+	// and buries the post at the bottom of every listing; a far-future one pins
+	// it to the top forever. Backdated imports stay legitimate.
+	if body.Timestamp.IsZero() {
+		message.Timestamp = time.Now()
+	} else if body.Timestamp.After(time.Now().Add(time.Hour)) {
+		http.Error(w, "timestamp out of range", http.StatusBadRequest)
+		return
+	} else {
+		message.Timestamp = body.Timestamp
+	}
 	message.Text = body.Text
 	message.Views = 0
 	message.IsAds = body.IsAds

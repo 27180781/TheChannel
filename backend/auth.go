@@ -113,6 +113,16 @@ func login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The email address is the sole authorization principal (ADMIN_USERS,
+	// ownerEmail, channel roles), so an unproven one must not be accepted.
+	// Google always emits email_verified alongside email for the scopes we
+	// request, so an absent claim is treated as unverified.
+	if verified, verr := dyno.GetBoolean(payload.Claims["email_verified"]); verr != nil || !verified {
+		go saveLoginFailedLog("unverified email", errors.New("email_verified claim is false or absent"))
+		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		return
+	}
+
 	email, _ := dyno.GetString(payload.Claims["email"])
 	go registeringEmail("", email)
 
@@ -134,6 +144,15 @@ func login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	session, _ := store.Get(r, cookieName)
+	// Rotate the session identifier before writing the authenticated principal,
+	// otherwise an attacker-planted cookie would be upgraded to the victim's
+	// session (fixation). redistore mints a fresh ID only when ID is empty.
+	if session.ID != "" {
+		session.Options.MaxAge = -1
+		_ = session.Save(r, w)       // drops session_<oldID> from Redis
+		w.Header().Del("Set-Cookie") // discard the expiry cookie; the real one is set below
+		session.ID = ""
+	}
 	session.Values["user"] = userSession
 	session.Options.MaxAge = 60 * 60 * 24 * 30 // 30 days
 	if err := session.Save(r, w); err != nil {
@@ -184,6 +203,13 @@ func getUserInfo(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
+	}
+
+	// Register the viewer against the channel they entered. This is the only
+	// per-channel writer of registered_emails, which backs the channel user
+	// count. Returns "" on the global mount, which stays unaffected.
+	if slug := channelSlugFromCtx(r); slug != "" {
+		go registeringEmail(slug, userInfo.Email)
 	}
 
 	// Authorization resolves roles live (see sessionUser); the copy stored in

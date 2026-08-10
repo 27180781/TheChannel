@@ -80,6 +80,20 @@ func channelSlugFromCtx(r *http.Request) string {
 	return ch.Slug
 }
 
+// requireFeature rejects a request when the channel's operator-controlled
+// toggle for that feature is off. Only applied to toggles both channel
+// creation paths default to true, so it cannot silently disable a live tenant.
+func requireFeature(pick func(*ChannelFeatures) bool, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ch := channelFromCtx(r)
+		if ch == nil || !pick(&ch.Features) {
+			http.Error(w, "Feature disabled for this channel", http.StatusForbidden)
+			return
+		}
+		next(w, r)
+	}
+}
+
 // channelIfRequireAuth middleware
 func channelIfRequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
