@@ -26,6 +26,7 @@ import { AdminService } from '../../services/admin.service';
 import { ChatService } from '../../services/chat.service';
 import { MagnetAdsService } from '../../services/magnet-ads.service';
 import { ChannelRequestService } from '../../services/channel-request.service';
+import { NotificationsService } from '../../services/notifications.service';
 import { Subscription } from 'rxjs';
 
 @Component({
@@ -72,6 +73,7 @@ export class ChannelComponent implements OnInit, OnDestroy {
     private chatService: ChatService,
     private magnetAds: MagnetAdsService,
     private channelRequestService: ChannelRequestService,
+    private notificationsService: NotificationsService,
     private toastr: NbToastrService,
   ) { }
 
@@ -125,8 +127,9 @@ export class ChannelComponent implements OnInit, OnDestroy {
     }
 
     this.slugService.slug = slug;
-    this.chatService.channelInfo = undefined;
+    this.chatService.clearCache();
     this.adminService.clearCache();
+    this.notificationsService.reset();
     // Drop any in-progress edit/compose state from the previous channel, otherwise
     // the replayed BehaviorSubject value makes the input form post the old message
     // id into the new channel.
@@ -169,9 +172,11 @@ export class ChannelComponent implements OnInit, OnDestroy {
     }
   }
 
+  // A role on some other channel must not open the composer here — gate on the
+  // role the user holds on the channel currently being viewed.
   hasAnyRole(user: User | undefined): boolean {
-    if (!user?.channelRoles) return false;
-    return Object.keys(user.channelRoles).length > 0;
+    const role = user?.channelRoles?.[this.slugService.slug];
+    return role === 'owner' || role === 'moderator' || role === 'writer';
   }
 
   onInputHeightChanged() {
