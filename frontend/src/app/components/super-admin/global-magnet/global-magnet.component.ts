@@ -31,7 +31,7 @@ export class GlobalMagnetComponent implements OnInit {
   config: GlobalMagnetConfig = {
     enabled: false,
     snippet: '',
-    mode: 'per_messages',
+    mode: 'by_messages',
     perMessages: 10,
     minTimeSeconds: 60,
     perSeconds: 300,
@@ -44,9 +44,11 @@ export class GlobalMagnetComponent implements OnInit {
   saving = false;
   newLockedChannel = '';
 
+  // These are the values every consumer understands (MagnetAdsService and the
+  // per-channel form): anything else silently falls back to message spacing.
   modeOptions = [
-    { value: 'per_messages', label: 'לפי מספר הודעות' },
-    { value: 'per_seconds', label: 'לפי זמן (שניות)' },
+    { value: 'by_messages', label: 'לפי מספר הודעות' },
+    { value: 'by_time', label: 'לפי זמן (שניות)' },
   ];
 
   constructor(
@@ -56,8 +58,18 @@ export class GlobalMagnetComponent implements OnInit {
 
   ngOnInit(): void {
     this.superAdminService.getMagnetConfig()
-      .then(cfg => this.config = { ...cfg, lockedChannels: [...(cfg.lockedChannels || [])] })
+      .then(cfg => this.config = {
+        ...cfg,
+        mode: this.normalizeMode(cfg.mode),
+        lockedChannels: [...(cfg.lockedChannels || [])],
+      })
       .catch(() => this.toastr.danger('', 'שגיאה בטעינת הגדרות מגנט'));
+  }
+
+  // Values saved by an earlier version of this form (per_messages/per_seconds)
+  // are migrated on load, so the next save stores the value clients read.
+  private normalizeMode(mode: string | undefined): string {
+    return mode === 'by_time' || mode === 'per_seconds' ? 'by_time' : 'by_messages';
   }
 
   addLockedChannel() {
