@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -26,6 +27,32 @@ func getUploadLimiter(key string) *rate.Limiter {
 	}
 	l := rate.NewLimiter(rate.Every(2*time.Second), 10)
 	uploadLimiters.Store(key, l)
+	return l
+}
+
+// channelRequestLimiters throttles the public channel-request endpoint per
+// client IP — 3 submissions/min, burst of 3.
+var (
+	channelRequestLimiters sync.Map
+	channelRequestMu       sync.Mutex
+)
+
+func channelRequestLimiter(r *http.Request) *rate.Limiter {
+	key, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		key = r.RemoteAddr
+	}
+
+	if v, ok := channelRequestLimiters.Load(key); ok {
+		return v.(*rate.Limiter)
+	}
+	channelRequestMu.Lock()
+	defer channelRequestMu.Unlock()
+	if v, ok := channelRequestLimiters.Load(key); ok {
+		return v.(*rate.Limiter)
+	}
+	l := rate.NewLimiter(rate.Every(20*time.Second), 3)
+	channelRequestLimiters.Store(key, l)
 	return l
 }
 

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/icza/dyno"
@@ -66,8 +67,26 @@ type Setting struct {
 	Value any    `json:"value"`
 }
 
-// settingConfig is the global config (FCM/VAPID/global notifications)
-var settingConfig *SettingConfig
+// settingConfig is the global config (FCM/VAPID/global notifications). It is
+// replaced wholesale by an HTTP handler, so every access goes through the
+// accessors below; readers must take one snapshot per function rather than
+// dereferencing the global repeatedly, or a swap mid-read splices two configs.
+var (
+	settingMu     sync.RWMutex
+	settingConfig *SettingConfig
+)
+
+func getGlobalConfig() *SettingConfig {
+	settingMu.RLock()
+	defer settingMu.RUnlock()
+	return settingConfig
+}
+
+func setGlobalConfigCache(c *SettingConfig) {
+	settingMu.Lock()
+	settingConfig = c
+	settingMu.Unlock()
+}
 
 type Settings []Setting
 
@@ -80,7 +99,7 @@ func init() {
 		panic("Failed to load settings from database: " + err.Error())
 	}
 
-	settingConfig = s.ToConfig()
+	setGlobalConfigCache(s.ToConfig())
 }
 
 func (s *Settings) ToConfig() *SettingConfig {
@@ -264,7 +283,9 @@ func (s *Setting) GetInt() int64 {
 func getChannelConfig(ctx context.Context, slug string) *SettingConfig {
 	s, err := dbGetSettings(ctx, slug)
 	if err != nil {
-		return &SettingConfig{FcmJson: &FcmJsonConfing{}}
+		// Route the failure through the same defaulting logic, or MaxFileSize
+		// lands at 0 and MaxBytesReader rejects every upload as "too large".
+		return (&Settings{}).ToConfig()
 	}
 	return s.ToConfig()
 }
@@ -340,7 +361,7 @@ func setGlobalSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	settingConfig = newSettings.ToConfig()
+	setGlobalConfigCache(newSettings.ToConfig())
 
 	res := Response{
 		Success: true,

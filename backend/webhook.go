@@ -3,12 +3,23 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"log"
 	"net/http"
 	"time"
 )
+
+// webhookClient is shared across deliveries: a per-message http.Transport never
+// expires its idle connections and is never collected, so sockets and their
+// readLoop goroutines accumulate on busy channels. Certificate verification is
+// left at the default (on) — the payload carries the channel's verify token.
+var webhookClient = &http.Client{
+	Timeout: 10 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConnsPerHost: 4,
+		IdleConnTimeout:     30 * time.Second,
+	},
+}
 
 type WebhookPayload struct {
 	Action      string    `json:"action"`
@@ -52,15 +63,7 @@ func SendWebhook(ctx context.Context, slug string, action string, message *Messa
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "TheChannel-Webhook")
 
-	// Warning! Default is not secure
-	client := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-			},
-		},
-	}
-	resp, err := client.Do(req)
+	resp, err := webhookClient.Do(req)
 	if err != nil {
 		log.Printf("Error sending webhook: %v\n", err)
 		return
