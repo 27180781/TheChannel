@@ -252,7 +252,6 @@ func getUser(ctx context.Context, claims map[string]any) (*User, error) {
 		if user.PublicName == "" {
 			user.PublicName = name
 		}
-		privilegesUsers.Store(email, user)
 		// Refresh only the profile fields, atomically. Writing the whole in-memory
 		// User back would race with (and undo) a concurrent role edit, and the
 		// roles are owned by the admin paths, not by a login.
@@ -268,6 +267,15 @@ func getUser(ctx context.Context, claims map[string]any) (*User, error) {
 			return users
 		}); err != nil {
 			return nil, err
+		}
+		// Update the live map the same way: merge profile fields onto whatever
+		// entry is CURRENT, never store the pre-refresh snapshot wholesale — a
+		// role rebuild landing between the Load above and here would otherwise be
+		// overwritten with pre-revocation roles (or a deleted entry resurrected).
+		if cur, ok := privilegesUsers.Load(email); ok {
+			c := cur.(User)
+			c.ID, c.Username, c.Email, c.PublicName = user.ID, user.Username, user.Email, user.PublicName
+			privilegesUsers.Store(email, c)
 		}
 	} else {
 		user = User{

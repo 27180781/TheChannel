@@ -93,8 +93,10 @@ func setGlobalAdsConfig(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(Response{Success: true})
 }
 
-// syncAdsLockFlags updates AdsLockedByAdmin on all channels based on the new global config.
-func syncAdsLockFlags(globalAds *GlobalAdsConfig) {
+// syncLockFlags propagates a global lock config (LockAll + LockedChannels) into
+// the per-channel feature flag selected by get. Shared by the ads and magnet
+// syncs so a robustness fix applied to one can never leave the other drifting.
+func syncLockFlags(lockAll bool, lockedChannels []string, get func(*ChannelFeatures) *bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -104,12 +106,19 @@ func syncAdsLockFlags(globalAds *GlobalAdsConfig) {
 	}
 
 	for _, ch := range channels {
-		shouldLock := globalAds.LockAll || slices.Contains(globalAds.LockedChannels, ch.Slug)
-		if ch.Features.AdsLockedByAdmin != shouldLock {
-			ch.Features.AdsLockedByAdmin = shouldLock
+		shouldLock := lockAll || slices.Contains(lockedChannels, ch.Slug)
+		flag := get(&ch.Features)
+		if *flag != shouldLock {
+			*flag = shouldLock
 			dbSetChannelFeatures(ctx, ch.Slug, &ch.Features)
 		}
 	}
+}
+
+// syncAdsLockFlags updates AdsLockedByAdmin on all channels based on the new global config.
+func syncAdsLockFlags(globalAds *GlobalAdsConfig) {
+	syncLockFlags(globalAds.LockAll, globalAds.LockedChannels,
+		func(f *ChannelFeatures) *bool { return &f.AdsLockedByAdmin })
 }
 
 type MagnetAdsSettings struct {
@@ -222,21 +231,8 @@ func setGlobalMagnetConfig(w http.ResponseWriter, r *http.Request) {
 // syncMagnetLockFlags updates MagnetLockedByAdmin on all channels based on the new global config.
 // Called in a goroutine after saving global magnet config.
 func syncMagnetLockFlags(globalMagnet *GlobalMagnetConfig) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	channels, err := dbListChannels(ctx)
-	if err != nil {
-		return
-	}
-
-	for _, ch := range channels {
-		shouldLock := globalMagnet.LockAll || slices.Contains(globalMagnet.LockedChannels, ch.Slug)
-		if ch.Features.MagnetLockedByAdmin != shouldLock {
-			ch.Features.MagnetLockedByAdmin = shouldLock
-			dbSetChannelFeatures(ctx, ch.Slug, &ch.Features)
-		}
-	}
+	syncLockFlags(globalMagnet.LockAll, globalMagnet.LockedChannels,
+		func(f *ChannelFeatures) *bool { return &f.MagnetLockedByAdmin })
 }
 
 const magnetStatsURL = "https://rucltqmtefvlrjhbedqu.supabase.co/functions/v1/publisher-stats"

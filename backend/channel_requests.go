@@ -219,18 +219,7 @@ func approveChannelRequest(w http.ResponseWriter, r *http.Request) {
 		Name:       req.Name,
 		OwnerEmail: req.Email,
 		CreatedAt:  time.Now(),
-		Features: ChannelFeatures{
-			Reactions:         true,
-			FileUploads:       true,
-			Reports:           true,
-			ScheduledMessages: true,
-			// Permission to use the feature, not a request to use it: each one
-			// still needs the owner to configure it in channel settings. Left
-			// false these would be unusable and undiagnosable for a new tenant.
-			Ads:           true,
-			Notifications: true,
-			Webhook:       true,
-		},
+		Features:   defaultChannelFeatures(),
 	}
 
 	if err := dbCreateChannel(ctx, channel); err != nil {

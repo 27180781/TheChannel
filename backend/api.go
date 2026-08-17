@@ -34,10 +34,19 @@ func addNewPost(w http.ResponseWriter, r *http.Request) {
 	var err error
 	defer r.Body.Close()
 
+	// The decoded text is stored verbatim and broadcast to every SSE client, so
+	// an unbounded body must not reach it (same cap style as submitChannelRequest).
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
 	body := Message{}
 	if err = json.NewDecoder(r.Body).Decode(&body); err != nil {
 		log.Printf("Failed to decode message: %v\n", err)
 		http.Error(w, "error", http.StatusBadRequest)
+		return
+	}
+
+	if len(body.Text) > 100_000 {
+		http.Error(w, "text too long", http.StatusBadRequest)
 		return
 	}
 
