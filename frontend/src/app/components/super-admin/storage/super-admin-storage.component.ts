@@ -1,4 +1,4 @@
-import { Component, Input, OnInit, OnChanges } from '@angular/core';
+import { Component, Input, OnChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import {
@@ -65,7 +65,7 @@ interface ChannelStorageConfig {
     </nb-card>
   `
 })
-export class SuperAdminStorageComponent implements OnInit, OnChanges {
+export class SuperAdminStorageComponent implements OnChanges {
   @Input() slug!: string;
 
   config?: ChannelStorageConfig;
@@ -75,7 +75,7 @@ export class SuperAdminStorageComponent implements OnInit, OnChanges {
     private toastr: NbToastrService
   ) {}
 
-  ngOnInit() { this.load(); }
+  // ngOnChanges fires for the initial slug binding too, so no ngOnInit needed.
   ngOnChanges() { this.load(); }
 
   async load() {

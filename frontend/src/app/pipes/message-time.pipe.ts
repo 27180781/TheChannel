@@ -2,8 +2,6 @@ import { Pipe, PipeTransform } from '@angular/core';
 import moment from 'moment';
 import 'moment/locale/he'
 
-moment.defineLocale('he', {});
-
 @Pipe({
   name: 'messageTime'
 })

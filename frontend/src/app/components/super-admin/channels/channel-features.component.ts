@@ -13,7 +13,6 @@ import { SuperAdminService, ChannelFeatures } from '../../../services/super-admi
 interface FeatureConfig {
   key: keyof ChannelFeatures;
   label: string;
-  adminOnly?: boolean;
 }
 
 @Component({
@@ -60,8 +59,9 @@ export class ChannelFeaturesComponent implements OnInit {
     { key: 'countViews', label: 'ספירת צפיות' },
     { key: 'scheduledMessages', label: 'הודעות מתוזמנות' },
     { key: 'webhook', label: 'Webhook' },
-    { key: 'magnetLockedByAdmin', label: 'מגנט נעול ע"י מנהל-על', adminOnly: true },
-    { key: 'adsLockedByAdmin', label: 'פרסומות iframe נעולות ע"י מנהל-על', adminOnly: true },
+    // magnetLockedByAdmin / adsLockedByAdmin are managed by the global
+    // ads/magnet locked-channel lists — the single source of truth. The values
+    // loaded from the channel are passed back through save() untouched.
   ];
 
   constructor(

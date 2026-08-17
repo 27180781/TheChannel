@@ -6,6 +6,7 @@ import {
   NbToastrService, NbToggleModule, NbAccordionModule,
 } from '@nebular/theme';
 import { SuperAdminService, Setting } from '../../../services/super-admin.service';
+import { toBool } from '../../admin/settings/settings.schema';
 
 // FCM JSON key map for autofill
 const FCM_JSON_KEY_MAP: Record<string, string> = {
@@ -65,20 +66,11 @@ export class GlobalSettingsComponent implements OnInit {
     };
     for (const s of settings) {
       if (s.key === 'on_notification') {
-        this.values[s.key] = this.toBool(s.value);
+        this.values[s.key] = toBool(s.value);
       } else if (s.key in this.values) {
         this.values[s.key] = s.value ?? '';
       }
     }
-  }
-
-  private toBool(v: any): boolean {
-    if (typeof v === 'boolean') return v;
-    if (typeof v === 'string') {
-      const s = v.toLowerCase().trim();
-      return s === '1' || s === 'true' || s === 'yes' || s === 'on';
-    }
-    return false;
   }
 
   private buildSettingsArray(): Setting[] {

@@ -8,21 +8,11 @@
     <div class="d-flex flex-column gap-3">
       @for (config of featureConfigs; track config.key) {
         <div class="d-flex align-items-center gap-2">
-          @if (config.adminOnly) {
-            <nb-toggle
-              [checked]="features[config.key]"
-              (checkedChange)="features[config.key] = $event"
-              [disabled]="false">
-              <span>{{ config.label }}</span>
-            </nb-toggle>
-            <span class="badge bg-warning text-dark">מנהל-על</span>
-          } @else {
-            <nb-toggle
-              [checked]="features[config.key]"
-              (checkedChange)="features[config.key] = $event">
-              <span>{{ config.label }}</span>
-            </nb-toggle>
-          }
+          <nb-toggle
+            [checked]="features[config.key]"
+            (checkedChange)="features[config.key] = $event">
+            <span>{{ config.label }}</span>
+          </nb-toggle>
         </div>
       }
     </div>

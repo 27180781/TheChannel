@@ -9,8 +9,8 @@ export interface ChannelFeatureFlags {
 }
 
 export interface Channel {
-  id?: number;
-  slug?: string;
+  // The backend serialises the channel slug into the "id" field (as a string).
+  id?: string;
   name?: string;
   description?: string;
   created_at?: string;
