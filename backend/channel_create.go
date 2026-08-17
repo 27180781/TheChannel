@@ -124,11 +124,9 @@ func createChannelSelfService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !channelCreateLimiter(s.Email).Allow() {
-		http.Error(w, "too many requests — please try again later", http.StatusTooManyRequests)
-		return
-	}
-
+	// The creation throttle is spent further down, immediately before the channel
+	// is written. At three per hour, charging quota for a rejected slug meant
+	// three typos locked the account out for twenty minutes having created nothing.
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 	defer r.Body.Close()
 
@@ -175,6 +173,12 @@ func createChannelSelfService(w http.ResponseWriter, r *http.Request) {
 	}
 	if owned >= maxChannelsPerOwner {
 		http.Error(w, "channel limit reached for this account", http.StatusForbidden)
+		return
+	}
+
+	// Validation is done and nothing has been persisted yet, so this is the first
+	// point where the request actually costs a channel.
+	if !allowOrRetryAfter(w, channelCreateLimiter(s.Email), "too many requests — please try again later") {
 		return
 	}
 
@@ -243,8 +247,10 @@ func checkSlugAvailable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !slugCheckLimiter(s.Email).Allow() {
-		http.Error(w, "too many requests — please try again later", http.StatusTooManyRequests)
+	// Stays at the top: this endpoint's whole cost IS the lookup, so there is no
+	// later point to move it to. Retry-After lets the form back off precisely
+	// instead of leaving the live check silently stuck.
+	if !allowOrRetryAfter(w, slugCheckLimiter(s.Email), "too many requests — please try again later") {
 		return
 	}
 

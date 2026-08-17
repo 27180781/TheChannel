@@ -95,13 +95,11 @@ func submitChannelRequest(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Unauthenticated endpoint: cap the body, throttle per IP and validate every
-	// field before it becomes a persistent record in the super admin's queue.
-	if !channelRequestLimiter(r).Allow() {
-		http.Error(w, "too many requests — please try again later", http.StatusTooManyRequests)
-		return
-	}
-
+	// Unauthenticated endpoint: cap the body and validate every field before it
+	// becomes a persistent record in the super admin's queue. The per-IP throttle
+	// sits further down, immediately before the write — what is being rationed is
+	// persisted records, and charging quota for a rejected field meant a user
+	// correcting a typo could lock themselves out without saving anything.
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 	defer r.Body.Close()
 
@@ -129,6 +127,12 @@ func submitChannelRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := mail.ParseAddress(body.Email); err != nil {
 		http.Error(w, "invalid email", http.StatusBadRequest)
+		return
+	}
+
+	// Everything above is validation that persists nothing, so the throttle is
+	// spent here — on an request that is actually about to be stored.
+	if !allowOrRetryAfter(w, channelRequestLimiter(r), "too many requests — please try again later") {
 		return
 	}
 

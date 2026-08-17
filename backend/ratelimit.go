@@ -1,9 +1,11 @@
 package main
 
 import (
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,6 +26,29 @@ type limiterEntry struct {
 // 60s*3), so a swept-and-recreated limiter starting with a full burst changes
 // nothing a legitimate client would notice.
 const limiterIdleTTL = 10 * time.Minute
+
+// allowOrRetryAfter takes one token if one is free right now. When the bucket is
+// empty it answers 429 with a Retry-After saying exactly how long to wait, and
+// — crucially — consumes nothing, so a refused request costs the caller no quota.
+//
+// Callers must place this immediately before the work being rationed, not at the
+// top of the handler: spending a token on a request that then fails validation
+// makes a user pay full quota for a typo, which on the hourly creation limiter
+// meant three mistakes locked the account out for twenty minutes.
+func allowOrRetryAfter(w http.ResponseWriter, l *rate.Limiter, msg string) bool {
+	res := l.Reserve()
+	if !res.OK() {
+		http.Error(w, msg, http.StatusTooManyRequests)
+		return false
+	}
+	if d := res.Delay(); d > 0 {
+		res.Cancel()
+		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(d.Seconds()))))
+		http.Error(w, msg, http.StatusTooManyRequests)
+		return false
+	}
+	return true
+}
 
 func init() {
 	go func() {
