@@ -4,10 +4,12 @@ import {
   NbAlertModule,
   NbButtonModule,
   NbCardModule,
+  NbDialogService,
   NbFormFieldModule,
   NbIconModule,
   NbInputModule,
 } from '@nebular/theme';
+import { GuideComponent } from '../admin/guide/guide.component';
 import { Subject, Subscription, of } from 'rxjs';
 import { catchError, debounceTime, distinctUntilChanged, switchMap } from 'rxjs/operators';
 import {
@@ -102,7 +104,18 @@ export class CreateChannelFormComponent implements OnInit, OnDestroy {
   private slugSub?: Subscription;
   private copyResetTimer?: ReturnType<typeof setTimeout>;
 
-  constructor(private channelService: ChannelService) {}
+  constructor(
+    private channelService: ChannelService,
+    private dialogService: NbDialogService,
+  ) {}
+
+  /** The same guide the admin panel shows, opened here as a dialog. */
+  openGuide(): void {
+    this.dialogService.open(GuideComponent, {
+      closeOnBackdropClick: true,
+      context: { dialogMode: true },
+    });
+  }
 
   /** The link handed to readers — never hardcode the domain. */
   get channelUrl(): string {
@@ -140,8 +153,9 @@ export class CreateChannelFormComponent implements OnInit, OnDestroy {
   onNameChange(): void {
     if (this.slugTouched) return;
     const suggestion = slugifyChannelName(this.name);
-    // A Hebrew name slugifies to nothing — leave whatever the user has rather
-    // than wiping a slug they may already be happy with.
+    // Hebrew is transliterated, so this is only empty for a name with nothing
+    // slugifiable in it at all — leave whatever the user has rather than wiping
+    // a slug they may already be happy with.
     if (!suggestion) return;
     this.slug = suggestion;
     this.queueSlugCheck();

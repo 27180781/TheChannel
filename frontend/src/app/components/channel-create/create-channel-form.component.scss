@@ -164,6 +164,22 @@
     gap: 0.5rem;
   }
 
+  .created__guide {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    margin-top: 0.6rem;
+  }
+
+  .created__guide-note {
+    margin: 0.4rem 0 0;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    text-align: center;
+    color: var(--text-hint-color, #8f9bb3);
+  }
+
   .create-form {
     display: flex;
     flex-direction: column;

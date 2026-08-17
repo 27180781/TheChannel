@@ -51,6 +51,15 @@
           }
           כניסה לערוץ
         </button>
+
+        <button nbButton status="basic" size="medium" fullWidth type="button"
+                class="created__guide" (click)="openGuide()">
+          <nb-icon icon="book-open-outline"></nb-icon>
+          מדריך למנהל הערוץ
+        </button>
+        <p class="created__guide-note">
+          כל מה שצריך כדי להפעיל את הערוץ — גם מתוך פאנל הניהול, בטאב "מדריך למנהל הערוץ".
+        </p>
       </div>
     } @else {
       @if (formError) {
