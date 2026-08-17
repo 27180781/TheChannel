@@ -1,4 +1,4 @@
-import { Component, ElementRef, OnDestroy, OnInit, Renderer2, RendererStyleFlags2, ViewChild } from '@angular/core';
+import { AfterViewChecked, Component, ElementRef, OnDestroy, OnInit, Renderer2, RendererStyleFlags2, ViewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { AdvertisingComponent } from "./advertising/advertising.component";
 
@@ -54,7 +54,7 @@ import { Subscription } from 'rxjs';
   templateUrl: './channel.component.html',
   styleUrl: './channel.component.scss'
 })
-export class ChannelComponent implements OnInit, OnDestroy {
+export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
 
   @ViewChild('inputForm', { static: false })
   set inputForm(element: ElementRef) {
@@ -102,7 +102,15 @@ export class ChannelComponent implements OnInit, OnDestroy {
     { icon: 'paper-plane-outline', title: 'מתחילים לשדר', text: 'מפרסמים הודעה ראשונה ומזמינים קוראים.' },
   ];
 
+  ngAfterViewChecked(): void {
+    // The header only exists once slugReady flips, and its height changes when
+    // the channel name loads and wraps, so this is re-read rather than measured
+    // once. setStyle with an unchanged value is a no-op, so there is no loop.
+    this.updateChromeHeight();
+  }
+
   ngOnInit(): void {
+    window.addEventListener('resize', this.updateChromeHeight);
     this.paramSub = this.route.paramMap.subscribe(params => {
       const slug = params.get('slug');
       this.initChannel(slug);
@@ -110,6 +118,7 @@ export class ChannelComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    window.removeEventListener('resize', this.updateChromeHeight);
     this.paramSub?.unsubscribe();
   }
 
@@ -227,4 +236,26 @@ export class ChannelComponent implements OnInit, OnDestroy {
     let h = inputForm?.clientHeight;
     this.renderer.setStyle(this.el.nativeElement, '--input-height', `${h}px`, RendererStyleFlags2.DashCase);
   }
+
+  /**
+   * Publishes the rendered height of the fixed header as `--chrome-height`, so
+   * the attribution strip can pin itself just below it.
+   *
+   * The height comes from a Nebular theme token, but `nb-theme(header-height)`
+   * only resolves inside `nb-install-component()` — used outside it the
+   * declaration is silently dropped, which is exactly how the strip ended up
+   * pinned with `top: auto`. Measuring the element is both correct and immune
+   * to a theme change altering the token.
+   *
+   * Runs after the view exists, and again on resize because the header wraps to
+   * a taller layout on a narrow screen.
+   */
+  private updateChromeHeight = () => {
+    const header = this.el.nativeElement.querySelector('nb-layout-header');
+    // Guard the zero: during teardown, or before the header paints, writing 0
+    // would pin the strip under the header until the next resize.
+    const h = header?.getBoundingClientRect().height;
+    if (!h) return;
+    this.renderer.setStyle(this.el.nativeElement, '--chrome-height', `${Math.round(h)}px`, RendererStyleFlags2.DashCase);
+  };
 }

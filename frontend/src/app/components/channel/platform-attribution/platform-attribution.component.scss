@@ -3,26 +3,13 @@
 :host {
   display: block;
   width: 100%;
-
-  // Why the bottom of the column and not the top:
-  // channel.component.scss lifts the whole column area with
-  // `.columns { bottom: var(--input-height) }` so the sticky composer never
-  // covers the end of the feed. That same lift drags the TOP of the column up
-  // under the fixed header, which is where this strip used to sit — invisible
-  // for anyone with a composer, and scrolled far off screen on a long feed.
-  //
-  // Sticking it to the bottom of the column keeps it on screen the whole time
-  // and consumes the existing geometry instead of changing it: the lift has
-  // already reserved exactly the composer's height at the bottom, so `bottom:
-  // 0` lands the strip in that reserved gap, directly above the composer. With
-  // no composer the lift is 0 and the strip rests on the bottom of the
-  // viewport. The fixed header, the `--input-height` measurement, the sticky
-  // composer and the ad column are all untouched.
-  position: sticky;
-  bottom: 0;
-  // Above the feed it overlays, below the composer (z-index 99) and the fixed
-  // header, so it can never cover either of them.
-  z-index: 10;
+  // The strip is pinned to the top of the chat column (the geometry lives in
+  // channel.component.scss, which has the header-height theme token). Being
+  // pinned means the feed scrolls underneath it, so the host needs its own
+  // opaque background — without one the messages passing behind would read
+  // through the padding around the pill.
+  background: var(--background-basic-color-1, #fff);
+  padding-top: 0.5rem;
 }
 
 .attribution {
