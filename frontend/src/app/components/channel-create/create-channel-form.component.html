@@ -1,22 +1,56 @@
 <nb-card class="create-card">
   <nb-card-header class="create-card__header">
-    <span class="create-card__title">{{ title }}</span>
-    @if (subtitle) {
+    <span class="create-card__title">{{ createdSlug ? 'הערוץ שלך באוויר' : title }}</span>
+    @if (createdSlug) {
+      <span class="create-card__subtitle">ארבעה דברים שכדאי לעשות עכשיו</span>
+    } @else if (subtitle) {
       <span class="create-card__subtitle">{{ subtitle }}</span>
     }
   </nb-card-header>
 
   <nb-card-body>
-    @if (submitted) {
-      <div class="create-card__done">
-        <nb-icon icon="checkmark-circle-2-outline" class="create-card__done-icon"></nb-icon>
-        @if (variant === 'instant') {
-          <p class="create-card__done-title">הערוץ נפתח!</p>
-          <p class="create-card__done-text">מעבירים אותך לערוץ החדש…</p>
-        } @else {
-          <p class="create-card__done-title">הבקשה נשלחה בהצלחה</p>
-          <p class="create-card__done-text">נחזור אליך במייל לאחר בדיקת הבקשה.</p>
+    @if (createdSlug) {
+      <div class="created">
+        <div class="created__head">
+          <nb-icon icon="checkmark-circle-2-outline" class="created__icon"></nb-icon>
+          <p class="created__title">הערוץ נפתח בהצלחה!</p>
+          <p class="created__text">הערוץ שלך מוכן. זו הכתובת שלו:</p>
+        </div>
+
+        <div class="created__url">
+          <span class="created__url-value" dir="ltr">{{ channelUrl }}</span>
+          <button nbButton status="primary" size="small" type="button"
+                  class="created__copy" (click)="copyUrl()">
+            <nb-icon [icon]="copied ? 'checkmark-outline' : 'copy-outline'"></nb-icon>
+            {{ copied ? 'הועתק!' : 'העתקה' }}
+          </button>
+        </div>
+
+        @if (copyFailed) {
+          <p class="created__copy-note">ההעתקה האוטומטית נחסמה בדפדפן — אפשר לסמן את הכתובת ולהעתיק ידנית.</p>
         }
+
+        <ol class="created__steps">
+          @for (step of nextSteps; track step.title) {
+            <li class="created__step">
+              <nb-icon [icon]="step.icon" class="created__step-icon"></nb-icon>
+              <div>
+                <span class="created__step-title">{{ step.title }}</span>
+                <span class="created__step-text">{{ step.text }}</span>
+              </div>
+            </li>
+          }
+        </ol>
+
+        <button nbButton status="primary" size="large" fullWidth type="button"
+                class="created__enter" [disabled]="entering" (click)="enterChannel()">
+          @if (entering) {
+            <nb-icon icon="loader-outline" class="create-form__spin"></nb-icon>
+          } @else {
+            <nb-icon icon="log-in-outline"></nb-icon>
+          }
+          כניסה לערוץ
+        </button>
       </div>
     } @else {
       @if (formError) {
@@ -24,21 +58,6 @@
       }
 
       <form class="create-form" (ngSubmit)="submit()" novalidate>
-        @if (variant === 'request') {
-          <div class="create-form__row">
-            <div class="create-form__field">
-              <label class="create-form__label" for="cc-req-name">שם מלא</label>
-              <input nbInput fullWidth id="cc-req-name" name="reqName" type="text"
-                     [(ngModel)]="reqName" placeholder="ישראל ישראלי" autocomplete="name">
-            </div>
-            <div class="create-form__field">
-              <label class="create-form__label" for="cc-req-email">כתובת אימייל</label>
-              <input nbInput fullWidth id="cc-req-email" name="reqEmail" type="email"
-                     [(ngModel)]="reqEmail" placeholder="your@email.com" autocomplete="email" dir="ltr">
-            </div>
-          </div>
-        }
-
         <div class="create-form__field">
           <label class="create-form__label" for="cc-name">שם הערוץ</label>
           <input nbInput fullWidth id="cc-name" name="name" type="text"
@@ -92,16 +111,12 @@
           @if (submitting) {
             <nb-icon icon="loader-outline" class="create-form__spin"></nb-icon>
           } @else {
-            <nb-icon [icon]="variant === 'instant' ? 'flash-outline' : 'paper-plane-outline'"></nb-icon>
+            <nb-icon icon="flash-outline"></nb-icon>
           }
-          {{ variant === 'instant' ? 'פתח את הערוץ עכשיו' : 'שלח בקשה' }}
+          פתח את הערוץ עכשיו
         </button>
 
-        @if (variant === 'instant') {
-          <p class="create-form__foot">הערוץ נפתח מיד — אפשר לשנות שם, לוגו והגדרות בכל רגע.</p>
-        } @else {
-          <p class="create-form__foot">בקשות נבדקות ידנית. רוצה ערוץ מיד? התחבר ופתח אותו בלחיצה.</p>
-        }
+        <p class="create-form__foot">הערוץ נפתח מיד — אפשר לשנות שם, לוגו והגדרות בכל רגע.</p>
       </form>
     }
   </nb-card-body>

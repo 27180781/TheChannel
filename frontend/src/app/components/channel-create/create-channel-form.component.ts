@@ -1,4 +1,4 @@
-import { Component, EventEmitter, Input, OnDestroy, OnInit, Output } from '@angular/core';
+import { Component, EventEmitter, OnDestroy, OnInit, Input, Output } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import {
   NbAlertModule,
@@ -16,19 +16,18 @@ import {
   SlugAvailability,
   slugifyChannelName,
 } from '../../services/channel.service';
-import { ChannelRequestService } from '../../services/channel-request.service';
 
 type SlugState = 'empty' | 'checking' | 'available' | 'unavailable';
 
 /**
- * The channel-opening card, shared by both hosts of the flow:
- *  - `instant`  — a signed-in user with no channel; POSTs /api/channels/create
- *                 and the owner is taken from the session.
- *  - `request`  — the signed-out fallback on the landing page; still POSTs the
- *                 old /api/channel-request so people who prefer not to sign in
- *                 keep a path in.
- * Both share the slug derivation, the live availability check and the URL
- * preview, which is the whole reason this is one component and not two forms.
+ * The channel-opening card: a signed-in user with no channel POSTs
+ * /api/channels/create and the owner is taken from the session — the only way
+ * a channel is opened.
+ *
+ * Once the channel exists the card switches to its `created` state: the full
+ * channel URL with a copy button, a short first-run guide, and the button that
+ * finally enters the channel. Entering is deliberately a user action rather
+ * than an automatic redirect, so there is a moment to copy the link.
  */
 @Component({
   selector: 'app-create-channel-form',
@@ -46,41 +45,69 @@ type SlugState = 'empty' | 'checking' | 'available' | 'unavailable';
   styleUrl: './create-channel-form.component.scss',
 })
 export class CreateChannelFormComponent implements OnInit, OnDestroy {
-  /** `instant` creates the channel now; `request` files a request for review. */
-  @Input() variant: 'instant' | 'request' = 'instant';
   @Input() title = 'פתיחת ערוץ';
   @Input() subtitle = '';
 
-  /** Emitted with the new slug once the channel actually exists. */
+  /**
+   * Emitted with the new slug when the user asks to enter the channel — the
+   * host refreshes the cached user (the new owner role) and navigates.
+   */
   @Output() created = new EventEmitter<string>();
 
   name = '';
   slug = '';
   description = '';
 
-  // `request` variant only — the anonymous applicant's contact details.
-  reqName = '';
-  reqEmail = '';
-
   slugState: SlugState = 'empty';
   slugMessage = '';
   submitting = false;
-  submitted = false;
   formError = '';
+
+  /** Set once the channel exists; switches the card to the success screen. */
+  createdSlug = '';
+  copied = false;
+  copyFailed = false;
+  entering = false;
 
   /** Host shown in the URL preview, e.g. `example.com/channel/my-slug`. */
   readonly host = window.location.host;
+
+  readonly nextSteps = [
+    {
+      icon: 'share-outline',
+      title: 'שיתוף הקישור',
+      text: 'זה מה ששולחים לאנשים כדי שיצטרפו לערוץ.',
+    },
+    {
+      icon: 'paper-plane-outline',
+      title: 'פרסום הודעה',
+      text: 'תיבת הכתיבה נמצאת בתחתית מסך הערוץ.',
+    },
+    {
+      icon: 'people-outline',
+      title: 'הוספת כותבים ומנהלים',
+      text: 'דרך פאנל הניהול, במסך ההרשאות.',
+    },
+    {
+      icon: 'brush-outline',
+      title: 'עיצוב הערוץ',
+      text: 'שם, תיאור ולוגו — גם הם בפאנל הניהול.',
+    },
+  ];
 
   // True once the user edits the slug by hand: from then on the name no longer
   // overwrites it.
   private slugTouched = false;
   private readonly slugChecks$ = new Subject<string>();
   private slugSub?: Subscription;
+  private copyResetTimer?: ReturnType<typeof setTimeout>;
 
-  constructor(
-    private channelService: ChannelService,
-    private channelRequestService: ChannelRequestService,
-  ) {}
+  constructor(private channelService: ChannelService) {}
+
+  /** The link handed to readers — never hardcode the domain. */
+  get channelUrl(): string {
+    return `${window.location.origin}/channel/${this.createdSlug}`;
+  }
 
   ngOnInit(): void {
     this.slugSub = this.slugChecks$.pipe(
@@ -107,6 +134,7 @@ export class CreateChannelFormComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     this.slugSub?.unsubscribe();
     this.slugChecks$.complete();
+    if (this.copyResetTimer) clearTimeout(this.copyResetTimer);
   }
 
   onNameChange(): void {
@@ -132,11 +160,7 @@ export class CreateChannelFormComponent implements OnInit, OnDestroy {
 
   get canSubmit(): boolean {
     if (this.submitting || !this.name.trim() || !this.slugValid) return false;
-    if (this.slugState === 'unavailable') return false;
-    if (this.variant === 'request') {
-      return !!this.reqName.trim() && !!this.reqEmail.trim() && !!this.description.trim();
-    }
-    return true;
+    return this.slugState !== 'unavailable';
   }
 
   async submit(): Promise<void> {
@@ -150,29 +174,40 @@ export class CreateChannelFormComponent implements OnInit, OnDestroy {
     this.formError = '';
     this.submitting = true;
     try {
-      if (this.variant === 'request') {
-        // /api/channel-request has no field for the channel's display name, so
-        // fold it into the description rather than silently dropping what the
-        // applicant typed — the reviewer needs it to name the channel.
-        await this.channelRequestService.submitRequest(
-          this.reqName.trim(),
-          this.reqEmail.trim(),
-          this.slug,
-          `שם הערוץ המבוקש: ${this.name.trim()}\n\n${this.description.trim()}`,
-        );
-        this.submitted = true;
-      } else {
-        const channel = await this.channelService.createChannel(
-          this.slug, this.name.trim(), this.description.trim(),
-        );
-        this.submitted = true;
-        this.created.emit(channel.slug);
-      }
+      const channel = await this.channelService.createChannel(
+        this.slug, this.name.trim(), this.description.trim(),
+      );
+      this.createdSlug = channel.slug;
     } catch (err: any) {
       this.handleError(err);
     } finally {
       this.submitting = false;
     }
+  }
+
+  async copyUrl(): Promise<void> {
+    this.copyFailed = false;
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+      await navigator.clipboard.writeText(this.channelUrl);
+      this.copied = true;
+    } catch {
+      // Insecure context or a browser that refuses the API — the URL is right
+      // there and selectable, so just say so instead of failing silently.
+      this.copyFailed = true;
+      this.copied = false;
+    }
+    if (this.copyResetTimer) clearTimeout(this.copyResetTimer);
+    this.copyResetTimer = setTimeout(() => {
+      this.copied = false;
+      this.copyFailed = false;
+    }, 2500);
+  }
+
+  enterChannel(): void {
+    if (!this.createdSlug) return;
+    this.entering = true;
+    this.created.emit(this.createdSlug);
   }
 
   private handleError(err: any): void {
@@ -216,14 +251,6 @@ export class CreateChannelFormComponent implements OnInit, OnDestroy {
     if (!this.slugValid) {
       this.slugState = 'unavailable';
       this.slugMessage = 'כתובת לא תקינה — 3 עד 50 תווים, אותיות אנגליות קטנות, ספרות ומקפים';
-      return;
-    }
-    if (this.variant === 'request') {
-      // /api/channels/slug-available sits behind checkLogin, so a signed-out
-      // applicant would only collect 401s. The format check is all we can
-      // honestly offer them here.
-      this.slugState = 'empty';
-      this.slugMessage = 'הפורמט תקין — הזמינות תיבדק בעת אישור הבקשה';
       return;
     }
     this.slugState = 'checking';
