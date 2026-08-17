@@ -1,7 +1,17 @@
 import { Token, Tokens, TokensList } from "marked";
 import { MarkdownModuleConfig, MARKED_EXTENSIONS, MARKED_OPTIONS, MarkedRenderer } from "ngx-markdown";
 
-const matchCustomEmbedRegEx = /^\[(video|audio|image|quote)-embedded#]\((.*?)\)/;
+/**
+ * Embed token: `[image-embedded#](url)`, optionally carrying the media's pixel
+ * size as `[image-embedded#800x600](url)`.
+ *
+ * The size group is optional so every message written before the backend
+ * started recording dimensions still tokenizes exactly as it did — it simply
+ * renders without an aspect ratio, as it always has. The size lives in the
+ * token rather than in the URL so the `src` stays byte-identical to the path
+ * the server handed out.
+ */
+const matchCustomEmbedRegEx = /^\[(video|audio|image|quote)-embedded#(\d+x\d+)?]\((.*?)\)/;
 
 //https://regexr.com/3dj5t
 const matchYoutubeRegEx = /^((?:https?:)?\/\/)?((?:www|m)\.)?((?:youtube\.com|youtu.be))(\/(?:[\w\-]+\?v=|embed\/|v\/)?)(?<id>[\w\-]+)(\S+)?$/;
@@ -15,15 +25,31 @@ const matchYoutubeRegEx = /^((?:https?:)?\/\/)?((?:www|m)\.)?((?:youtube\.com|yo
  * `decoding="async"` keeps the decode off the main thread, so a picture
  * arriving mid-scroll cannot stall the list.
  *
- * No width/height pair is emitted for uploaded images on purpose: the backend
- * stores only URL, filename and MIME type per file (backend/files.go
- * FileResponse/FileMetadata), so the real pixel size is unknown at render
- * time. Guessing one would letterbox or distort the picture, which is worse
- * than the reflow. Images are already boxed to max-width 300px, so the shift
- * is vertical only; emitting exact dimensions needs the upload path to record
- * them first.
+ * Lazy loading alone makes the feed grow as pictures arrive, which shoves the
+ * reader's position around. `sizeAttrs` below prevents that wherever the size
+ * is known.
  */
 const LAZY_IMG_ATTRS = ' loading="lazy" decoding="async"';
+
+/**
+ * Renders a `WxH` size token as width/height attributes. Bootstrap's
+ * `.img-fluid` is `max-width: 100%; height: auto`, so the browser uses the
+ * pair purely as an aspect ratio: the picture still fits the 300px box, but
+ * the box reserves the right height before the bytes land and nothing below it
+ * jumps when they do.
+ *
+ * An absent or malformed size yields no attributes at all — every message
+ * predating dimension recording, and any upload whose header could not be
+ * parsed, keeps exactly the old behaviour rather than getting a guessed ratio
+ * that would letterbox or distort it.
+ */
+function sizeAttrs(size: string | undefined): string {
+  const m = /^(\d+)x(\d+)$/.exec(size ?? '');
+  if (!m) return '';
+  const w = Number(m[1]), h = Number(m[2]);
+  if (!w || !h) return '';
+  return ` width="${w}" height="${h}"`;
+}
 
 const customEmbedExtension = {
   extensions: [{
@@ -36,7 +62,7 @@ const customEmbedExtension = {
       if (match) {
         switch (match[1]) {
           case 'quote':
-            const s = match[2].split(/@(.*)/);
+            const s = match[3].split(/@(.*)/);
             return {
               type: 'custom_embed',
               raw: match[0],
@@ -47,7 +73,7 @@ const customEmbedExtension = {
             return {
               type: 'custom_embed',
               raw: match[0],
-              meta: { type: match[1], url: match[2] },
+              meta: { type: match[1], url: match[3], size: match[2] },
             };
         }
 
@@ -65,16 +91,21 @@ const customEmbedExtension = {
       return undefined;
     },
     renderer: (token: Tokens.Generic) => {
-      const { type, url, id } = token['meta'];
+      const { type, url, id, size } = token['meta'];
       switch (type) {
         case 'video':
           // metadata, not auto: enough for the poster frame and duration
           // without pulling the whole file for a message nobody scrolled to.
-          return `<div style="max-width: 300px; height: auto;"><video controls preload="metadata" style="width: 100%; height: auto;"><source src="${url}" type="video/mp4"></video></div>`;
+          // The size token is not emitted for video, so this is inert today;
+          // it costs nothing and lets a recorded size reserve the player box
+          // if the upload path ever measures video too.
+          return `<div style="max-width: 300px; height: auto;"><video controls preload="metadata" style="width: 100%; height: auto;"${sizeAttrs(size)}><source src="${url}" type="video/mp4"></video></div>`;
         case 'audio':
           return `<div><audio src="${url}" controls preload="metadata"></audio></div>`;
         case 'image':
-          return `<div style="max-width: 300px; height: auto;"><img src="${url}"${LAZY_IMG_ATTRS} class="img-fluid" width="300"></div>`;
+          // The real size when the upload path recorded it, so the box
+          // reserves the right height; the old flat width="300" otherwise.
+          return `<div style="max-width: 300px; height: auto;"><img src="${url}"${LAZY_IMG_ATTRS} class="img-fluid"${sizeAttrs(size) || ' width="300"'}></div>`;
         case 'youtube':
           return `<div style="position: relative; max-width: 300px; height: auto;"><img youtubeid="${id}" src="https://ytimg.googleusercontent.com/vi/${id}/hqdefault.jpg"${LAZY_IMG_ATTRS} class="img-fluid" width="300" height="225"><i
           class="bi bi-youtube" youtubeid="${id}" style="position: absolute; place-self: anchor-center; color: red; font-size: 70px;"></i></div>`;

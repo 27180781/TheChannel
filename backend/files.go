@@ -88,6 +88,12 @@ type FileResponse struct {
 	URL      string `json:"url"`
 	Filename string `json:"filename"`
 	FileType string `json:"filetype"`
+	// Pixel dimensions, present only for images whose header could be read.
+	// The client turns them into an aspect ratio so a lazily-loaded picture
+	// reserves its space before it arrives; omitted, it simply falls back to
+	// the old reflow-on-load behaviour.
+	Width  int `json:"width,omitempty"`
+	Height int `json:"height,omitempty"`
 }
 
 type FileMetadata struct {
@@ -98,6 +104,10 @@ type FileMetadata struct {
 	Delete      bool   `json:"delete"`
 	Size        int64  `json:"size"`        // bytes
 	ChannelSlug string `json:"channelSlug"` // which channel owns this file
+	// Zero for non-images and for images whose header could not be read.
+	// Recorded at upload time; historical records simply have neither.
+	Width  int `json:"width,omitempty"`
+	Height int `json:"height,omitempty"`
 }
 
 // allowLegacyUnscopedFiles re-opens the pre-migration corpus (records with no
@@ -322,6 +332,13 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 		tinyCancel()
 	}
 
+	// After compression, not before: TinyPNG returns a re-encoded file, so the
+	// dimensions recorded must be the ones the browser will actually receive.
+	var imgWidth, imgHeight int
+	if t.MIME.Type == "image" {
+		imgWidth, imgHeight = imageDimensions(fileBytes, t.MIME.Value)
+	}
+
 	fileSize := int64(len(fileBytes))
 	hashBytes := sha256.Sum256(fileBytes)
 	fileHash := hex.EncodeToString(hashBytes[:])
@@ -402,6 +419,8 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 		Delete:      false,
 		Size:        fileSize,
 		ChannelSlug: slug,
+		Width:       imgWidth,
+		Height:      imgHeight,
 	}
 	if err := dbSaveFileMetadata(ctx, meta); err != nil {
 		log.Printf("uploadFile: %s: saving metadata for file %s failed: %v\n", slug, id, err)
@@ -419,6 +438,8 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 		URL:      fileUrl,
 		Filename: handler.Filename,
 		FileType: t.MIME.Type,
+		Width:    imgWidth,
+		Height:   imgHeight,
 	})
 }
 

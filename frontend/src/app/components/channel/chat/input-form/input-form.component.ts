@@ -149,7 +149,14 @@ export class InputFormComponent implements OnInit, OnDestroy {
 
             if (!uploadedFile) return;
             if (uploadedFile?.filetype === 'image') {
-              embedded = `[image-embedded#](${uploadedFile.url})`; //`![${uploadedFile.filename}](${uploadedFile.url})`;
+              // The size, when the server could read it, rides in the token so
+              // the renderer can reserve the picture's box before it loads.
+              // Omitted when unknown, which is what every older message looks
+              // like and renders exactly as it always did.
+              const size = uploadedFile.width && uploadedFile.height
+                ? `${uploadedFile.width}x${uploadedFile.height}`
+                : '';
+              embedded = `[image-embedded#${size}](${uploadedFile.url})`;
 
             } else if (uploadedFile?.filetype === 'video') {
               embedded = `[video-embedded#](${uploadedFile.url})`;

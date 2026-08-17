@@ -28,6 +28,13 @@ export interface ChatFile {
   url: string;
   filename: string;
   filetype: string;
+  /**
+   * Pixel size, sent by the upload endpoint only for images whose header it
+   * could read. Absent for every other upload, and for anything uploaded
+   * before the backend started recording it.
+   */
+  width?: number;
+  height?: number;
 }
 
 export interface Attachment {
