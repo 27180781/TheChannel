@@ -134,6 +134,8 @@ export class ChannelHeaderComponent implements OnInit, OnDestroy {
 
   ngOnDestroy() {
     this.menuSub?.unsubscribe();
+    // ViewerJS appends its container to document.body — destroy it with the header.
+    this.v?.destroy();
   }
 
   async logout() {
@@ -154,7 +156,7 @@ export class ChannelHeaderComponent implements OnInit, OnDestroy {
     }
   }
 
-  private v!: Viewer;
+  private v?: Viewer;
 
   viewLargeImage(event: MouseEvent) {
     const target = event.target as HTMLImageElement;
@@ -166,6 +168,9 @@ export class ChannelHeaderComponent implements OnInit, OnDestroy {
           navbar: false,
           title: false
         });
+      } else {
+        // The logo src may have changed since the viewer cached it.
+        this.v.update();
       }
       this.v.show();
     }

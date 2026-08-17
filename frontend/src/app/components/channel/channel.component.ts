@@ -142,6 +142,8 @@ export class ChannelComponent implements OnInit, OnDestroy {
     });
     this._authService.loadUserInfo().then(res => {
       this.userInfo = res;
+      // Count this signed-in viewer as a channel participant (fire-and-forget).
+      this._authService.registerChannelVisit(slug);
     }).catch(() => {
       // Anonymous visitor on a public channel — read-only view.
       this.userInfo = undefined;
@@ -157,8 +159,11 @@ export class ChannelComponent implements OnInit, OnDestroy {
     try {
       await this.channelRequestService.submitRequest(this.reqName, this.reqEmail, this.reqSlug, this.reqDescription);
       this.reqSubmitted = true;
-    } catch {
-      this.toastr.danger('', 'שגיאה בשליחת הבקשה, נסה שוב');
+    } catch (err: any) {
+      // The backend answers failures as plain text (rate limit, invalid slug,
+      // invalid email) — surface it instead of a generic message.
+      const detail = typeof err?.error === 'string' && err.error ? err.error : (err?.error?.message || '');
+      this.toastr.danger(detail, 'שגיאה בשליחת הבקשה, נסה שוב');
     } finally {
       this.reqSubmitting = false;
     }
@@ -175,6 +180,7 @@ export class ChannelComponent implements OnInit, OnDestroy {
   // A role on some other channel must not open the composer here — gate on the
   // role the user holds on the channel currently being viewed.
   hasAnyRole(user: User | undefined): boolean {
+    if (user?.globalRole === 'super_admin') return true;
     const role = user?.channelRoles?.[this.slugService.slug];
     return role === 'owner' || role === 'moderator' || role === 'writer';
   }
