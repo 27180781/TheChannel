@@ -125,13 +125,35 @@ export class ChannelComponent implements OnInit, OnDestroy {
     await Promise.resolve();
 
     if (!slug) {
-      const user = await this._authService.loadUserInfo();
-      const roles = user?.channelRoles;
+      // Every branch below must end in a rendered state. An unguarded await
+      // here used to throw for a visitor without a session, leaving
+      // slugReady=false and noChannel=false — a template that renders nothing
+      // at all, i.e. a blank white page.
+      let user: User | undefined;
+      try {
+        user = (await this._authService.loadUserInfo()) ?? undefined;
+      } catch {
+        user = undefined;
+      }
+
+      if (!user) {
+        // No session: there is no "my channels" list to show, so send the
+        // visitor to the login page instead of rendering an empty shell.
+        try {
+          localStorage.setItem('returnUrl', '/channel');
+        } catch {
+          // Storage unavailable — the login page just falls back to /channel.
+        }
+        this.router.navigate(['/login']);
+        return;
+      }
+
+      const roles = user.channelRoles;
       const firstSlug = roles ? Object.keys(roles)[0] : '';
       if (firstSlug) {
         this.router.navigate(['/channel', firstSlug], { replaceUrl: true });
       } else {
-        this.userInfo = user ?? undefined;
+        this.userInfo = user;
         this.noChannel = true;
       }
       return;

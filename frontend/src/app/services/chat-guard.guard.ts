@@ -3,6 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { CanActivateFn, Router } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { AuthService } from './auth.service';
+import { User } from '../models/user.model';
 
 /**
  * The backend never exposes a channel's `require_auth` flag as data: when the
@@ -25,22 +26,38 @@ export const AuthGuard: CanActivateFn = async (route, state) => {
   const authService = inject(AuthService);
   const http = inject(HttpClient);
 
+  let userInfo: User | null | undefined;
   try {
-    let userInfo = await authService.loadUserInfo();
-    if (userInfo) return true;
+    userInfo = await authService.loadUserInfo();
   } catch (err: any) {
-    if (err.status === 401) {
-      // Anonymous visitor: only send them to the login page when the channel
-      // actually requires auth. Public channels stay open.
-      const slug = route.paramMap.get('slug');
-      if (slug && !(await channelRequiresAuth(http, slug))) return true;
-
-      localStorage.setItem('returnUrl', state.url);
-      router.navigate(['/login']);
-      return false;
-    }
-    return true;
+    // Only "not authenticated" is an answer about the session. Anything else
+    // (server error, network blip, a proxy answering with HTML) says nothing
+    // about who the visitor is, so let the route render and surface its own
+    // error instead of bouncing the visitor through a login they don't need.
+    if (err?.status !== 401) return true;
+    userInfo = undefined;
   }
 
-  return false;
+  if (userInfo) return true;
+
+  // No session — either /api/user-info answered 401, or it resolved with an
+  // empty body (204, a body-stripping proxy, an offline interstitial), which
+  // leaves loadUserInfo() returning null. Both mean "anonymous", and both are
+  // handled the same way below.
+  //
+  // A public channel stays open to anonymous visitors.
+  const slug = route.paramMap.get('slug');
+  if (slug && !(await channelRequiresAuth(http, slug))) return true;
+
+  // Redirect via a UrlTree rather than `router.navigate(...) + false`.
+  // Returning false cancels the navigation outright: the router then has no
+  // active route to render and the visitor is left staring at a blank white
+  // page with nothing in the console — which is exactly the bug this replaces.
+  try {
+    localStorage.setItem('returnUrl', state.url);
+  } catch {
+    // Storage can be unavailable (privacy mode, blocked cookies). Losing the
+    // return URL is survivable; failing the guard is not.
+  }
+  return router.createUrlTree(['/login']);
 };
