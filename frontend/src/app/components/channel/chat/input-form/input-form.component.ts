@@ -422,7 +422,9 @@ export class InputFormComponent implements OnInit, OnDestroy {
         date: this.schedulingMessage,
       }
     }).onClose.subscribe((date: Date | undefined) => {
-      this.schedulingMessage = date;
+      // ביטול / backdrop-click close with undefined — keep the existing
+      // scheduling state instead of silently converting the message to a live one.
+      if (date !== undefined) this.schedulingMessage = date;
     });
   }
 }

@@ -74,6 +74,8 @@ export class ChatComponent implements OnInit, OnDestroy {
   private lastHeartbeat: number = Date.now();
   private subLastHeartbeat?: Subscription;
   private schedulingSub?: Subscription;
+  private fragmentSub?: Subscription;
+  private fragmentTimer: any;
   lastReadMessageId: number = 0;
 
   constructor(
@@ -148,8 +150,8 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
 
   ngAfterViewInit(): void {
-    setTimeout(() => {
-      this.router.fragment.subscribe(fragment => {
+    this.fragmentTimer = setTimeout(() => {
+      this.fragmentSub = this.router.fragment.subscribe(fragment => {
         if (fragment) {
           const messageId = Number(fragment);
           if (!Number.isInteger(messageId)) return;
@@ -164,7 +166,7 @@ export class ChatComponent implements OnInit, OnDestroy {
       this.loadScheduledMessages();
     });
 
-    this.chatService.getEmojisList(true);
+    this.chatService.getEmojisList(true).catch(() => null);
 
     this.magnetAds.loadSettings()
       .catch(() => null)
@@ -183,7 +185,9 @@ export class ChatComponent implements OnInit, OnDestroy {
     });
 
     this.loadMessages().then(() => {
-      const lastReadMsg = Number(localStorage.getItem('lastReadMessage'));
+      // Namespaced per channel — message ids are per-channel sequences, so a
+      // shared key would carry channel A's position into channel B.
+      const lastReadMsg = Number(localStorage.getItem(`lastReadMessage:${this.slugService.slug}`));
       const lastMsgId = this.messages[0]?.id;
       if (!lastMsgId) { this.isVisible = true; return; }
 
@@ -208,7 +212,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
 
   async setLastReadMessage(id: string) {
-    localStorage.setItem('lastReadMessage', id);
+    localStorage.setItem(`lastReadMessage:${this.slugService.slug}`, id);
   }
 
   private initializeMessageListener() {
@@ -239,7 +243,8 @@ export class ChatComponent implements OnInit, OnDestroy {
           if (this.messages.some(m => m.id === message.message.id)) break; // dedup after reconnect
           this.zone.run(() => {
             this.messages.unshift(message.message);
-            this.thereNewMessages = !this.isAtBottom() && !(message.message.author === this.userInfo?.username);
+            this.rebuildItems();
+            this.thereNewMessages = !this.isAtBottom() && message.message.authorId !== this.userInfo?.id;
             this.setLastReadMessage(message.message.id!.toString());
             if (this.hasWriteRole() && this.scheduledMessages && message.message.author === "Scheduled") {
               this.loadScheduledMessages(true);
@@ -259,6 +264,7 @@ export class ChatComponent implements OnInit, OnDestroy {
           };
           this.zone.run(() => {
             this.messages = this.messages.filter(m => m.id !== message.message.id);
+            this.rebuildItems();
           });
           break;
         case 'edit-message':
@@ -289,6 +295,8 @@ export class ChatComponent implements OnInit, OnDestroy {
     this.chatService.sseClose();
     this.subLastHeartbeat?.unsubscribe();
     this.schedulingSub?.unsubscribe();
+    clearTimeout(this.fragmentTimer);
+    this.fragmentSub?.unsubscribe();
   }
 
   private rebuildItems() {
