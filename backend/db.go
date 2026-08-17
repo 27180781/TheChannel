@@ -1275,7 +1275,7 @@ func dbSetGlobalAdsConfig(ctx context.Context, cfg *GlobalAdsConfig) error {
 	return rdb.Set(ctx, "global:ads:config", data, 0).Err()
 }
 
-// ─── Storage Quota & Usage ──────────────────────────────────────────────────
+// ─── Storage Quota & Usage ────────────────────────────────────────────────────
 
 const defaultStorageQuotaBytes = int64(5 * 1024 * 1024 * 1024) // 5 GB
 
