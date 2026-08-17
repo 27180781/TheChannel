@@ -18,8 +18,8 @@ import {
   SETTINGS_SCHEMA,
   SettingsCategorySchema,
   SettingFieldSchema,
-  FCM_JSON_KEY_MAP,
   getAllKnownKeys,
+  toBool,
 } from './settings.schema';
 
 interface RegexRule {
@@ -56,8 +56,6 @@ export class SettingsComponent implements OnInit {
   extraSettings: ExtraSetting[] = [];
 
   setInProgress: boolean = false;
-  fcmJsonPaste: string = '';
-  fcmJsonError: string = '';
 
   constructor(
     private adminService: AdminService,
@@ -101,7 +99,7 @@ export class SettingsComponent implements OnInit {
       if (known.has(s.key)) {
         const field = this.findField(s.key);
         if (field?.type === 'boolean') {
-          this.values[s.key] = this.toBool(s.value);
+          this.values[s.key] = toBool(s.value);
         } else {
           this.values[s.key] = s.value === undefined || s.value === null ? '' : String(s.value);
         }
@@ -120,16 +118,6 @@ export class SettingsComponent implements OnInit {
       if (f) return f;
     }
     return undefined;
-  }
-
-  private toBool(v: any): boolean {
-    if (typeof v === 'boolean') return v;
-    if (typeof v === 'number') return v !== 0;
-    if (typeof v === 'string') {
-      const s = v.toLowerCase().trim();
-      return s === '1' || s === 'true' || s === 'yes' || s === 'on';
-    }
-    return false;
   }
 
   isFieldVisible(field: SettingFieldSchema): boolean {
@@ -151,34 +139,6 @@ export class SettingsComponent implements OnInit {
 
   removeExtraSetting(i: number) {
     this.extraSettings.splice(i, 1);
-  }
-
-  applyFcmJsonPaste() {
-    this.fcmJsonError = '';
-    if (!this.fcmJsonPaste.trim()) return;
-    let parsed: any;
-    try {
-      parsed = JSON.parse(this.fcmJsonPaste);
-    } catch (e) {
-      this.fcmJsonError = 'JSON לא תקין';
-      return;
-    }
-
-    let count = 0;
-    for (const [jsonKey, settingKey] of Object.entries(FCM_JSON_KEY_MAP)) {
-      if (parsed[jsonKey] !== undefined) {
-        this.values[settingKey] = String(parsed[jsonKey]);
-        count++;
-      }
-    }
-
-    if (count === 0) {
-      this.fcmJsonError = 'לא נמצאו שדות מוכרים בקובץ ה-JSON';
-      return;
-    }
-
-    this.fcmJsonPaste = '';
-    this.tostService.success('', `${count} שדות מולאו אוטומטית מה-JSON`);
   }
 
   private buildSettingsArray(): Setting[] {

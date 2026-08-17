@@ -121,19 +121,17 @@ export const SETTINGS_SCHEMA: SettingsCategorySchema[] = [
   },
 ];
 
-export const FCM_JSON_KEY_MAP: Record<string, string> = {
-  type: 'fcm_json_type',
-  project_id: 'fcm_json_project_id',
-  private_key_id: 'fcm_json_private_key_id',
-  private_key: 'fcm_json_private_key',
-  client_email: 'fcm_json_client_email',
-  client_id: 'fcm_json_client_id',
-  auth_uri: 'fcm_json_auth_uri',
-  token_uri: 'fcm_json_token_uri',
-  auth_provider_x509_cert_url: 'fcm_json_auth_provider_x509_cert_url',
-  client_x509_cert_url: 'fcm_json_client_x509_cert_url',
-  universe_domain: 'fcm_json_universe_domain',
-};
+// The single boolean parser for stored setting values — the backend accepts
+// booleans, numbers and strings, so every reader must handle all three.
+export function toBool(v: any): boolean {
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'number') return v !== 0;
+  if (typeof v === 'string') {
+    const s = v.toLowerCase().trim();
+    return s === '1' || s === 'true' || s === 'yes' || s === 'on';
+  }
+  return false;
+}
 
 // Keys that used to be stored on the channel but are no longer part of the form.
 // They are still recognised so they are not shown as raw "extra settings", and
@@ -141,6 +139,13 @@ export const FCM_JSON_KEY_MAP: Record<string, string> = {
 export const LEGACY_SETTING_KEYS = [
   // Moved to a per-user localStorage preference — the server never read it.
   'enter_sends_message',
+  // Saved by an old owner UI but consumed by nothing on the backend.
+  'magnet_api_key',
+  // Managed by the super-admin channel-features screen, not channel settings.
+  'require_auth',
+  'require_auth_for_view_files',
+  'count_views',
+  'contact_us',
 ];
 
 export function getAllKnownKeys(): Set<string> {

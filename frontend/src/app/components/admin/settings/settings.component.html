@@ -14,30 +14,6 @@
           <p class="category-description">{{ cat.description }}</p>
         }
 
-        @if (cat.id === 'fcm_json') {
-          <div class="fcm-json-paste">
-            <label class="field-label">הדבקת קובץ JSON של חשבון שירות (Service Account)</label>
-            <p class="field-description">
-              ניתן להעתיק את כל תוכן קובץ ה-JSON שהורד מ-Firebase ולהדביק כאן - השדות שלמטה ימולאו אוטומטית.
-            </p>
-            <textarea
-              nbInput
-              fullWidth
-              rows="4"
-              [(ngModel)]="fcmJsonPaste"
-              placeholder='{ "type": "service_account", ... }'>
-            </textarea>
-            @if (fcmJsonError) {
-              <div class="error-text">{{ fcmJsonError }}</div>
-            }
-            <button nbButton size="small" status="primary" class="mt-2" (click)="applyFcmJsonPaste()">
-              <nb-icon icon="flash-outline"></nb-icon>
-              מילוי אוטומטי מה-JSON
-            </button>
-          </div>
-          <hr />
-        }
-
         @for (field of cat.fields; track field.key) {
           @if (isFieldVisible(field)) {
             <div class="setting-field" [class.is-toggle]="field.type === 'boolean'">
