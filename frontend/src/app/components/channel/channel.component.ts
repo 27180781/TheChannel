@@ -25,8 +25,9 @@ import { SlugService } from '../../services/slug.service';
 import { AdminService } from '../../services/admin.service';
 import { ChatService } from '../../services/chat.service';
 import { MagnetAdsService } from '../../services/magnet-ads.service';
-import { ChannelRequestService } from '../../services/channel-request.service';
+import { ChannelStatusService } from '../../services/channel-status.service';
 import { NotificationsService } from '../../services/notifications.service';
+import { CreateChannelFormComponent } from '../channel-create/create-channel-form.component';
 import { Subscription } from 'rxjs';
 
 @Component({
@@ -45,7 +46,8 @@ import { Subscription } from 'rxjs';
     NbMenuModule,
     NbSidebarModule,
     NbListModule,
-    ChatComponent
+    ChatComponent,
+    CreateChannelFormComponent
   ],
   templateUrl: './channel.component.html',
   styleUrl: './channel.component.scss'
@@ -72,7 +74,7 @@ export class ChannelComponent implements OnInit, OnDestroy {
     private adminService: AdminService,
     private chatService: ChatService,
     private magnetAds: MagnetAdsService,
-    private channelRequestService: ChannelRequestService,
+    private channelStatus: ChannelStatusService,
     private notificationsService: NotificationsService,
     private toastr: NbToastrService,
   ) { }
@@ -83,13 +85,20 @@ export class ChannelComponent implements OnInit, OnDestroy {
   noChannel = false;
   private paramSub?: Subscription;
 
-  // Channel request form state
-  reqName = '';
-  reqEmail = '';
-  reqSlug = '';
-  reqDescription = '';
-  reqSubmitting = false;
-  reqSubmitted = false;
+  /**
+   * Slug of the channel an operator switched off, raised centrally by
+   * channelDisabledInterceptor from the 403 {"error":"channel_disabled"} that
+   * every /api/channel/{slug}/* call answers. Null while the channel is fine.
+   */
+  get channelDisabled(): string | null {
+    return this.channelStatus.disabledSlug();
+  }
+
+  readonly onboardingSteps = [
+    { icon: 'edit-2-outline', title: 'בוחרים שם וכתובת', text: 'הכתובת נבדקת מול השרת בזמן אמת.' },
+    { icon: 'flash-outline', title: 'פותחים בלחיצה', text: 'הערוץ נוצר מיד ואתם הבעלים שלו.' },
+    { icon: 'paper-plane-outline', title: 'מתחילים לשדר', text: 'מפרסמים הודעה ראשונה ומזמינים קוראים.' },
+  ];
 
   ngOnInit(): void {
     this.paramSub = this.route.paramMap.subscribe(params => {
@@ -105,6 +114,8 @@ export class ChannelComponent implements OnInit, OnDestroy {
   private async initChannel(slug: string | null): Promise<void> {
     this.slugReady = false;
     this.noChannel = false;
+    // A flag raised for the previous channel must not follow us to the next one.
+    this.channelStatus.reset();
     // Yield to Angular's change detection so the @if (slugReady) block
     // actually destroys ChatComponent before we reinitialise with the new slug.
     // Without this, false→true in the same synchronous frame is collapsed and
@@ -119,8 +130,6 @@ export class ChannelComponent implements OnInit, OnDestroy {
         this.router.navigate(['/channel', firstSlug], { replaceUrl: true });
       } else {
         this.userInfo = user ?? undefined;
-        this.reqName = user?.publicName || '';
-        this.reqEmail = user?.email || '';
         this.noChannel = true;
       }
       return;
@@ -150,23 +159,23 @@ export class ChannelComponent implements OnInit, OnDestroy {
     });
   }
 
-  async submitChannelRequest(): Promise<void> {
-    if (!this.reqName || !this.reqEmail || !this.reqSlug || !this.reqDescription) {
-      this.toastr.warning('', 'יש למלא את כל השדות');
-      return;
-    }
-    this.reqSubmitting = true;
+  /**
+   * The channel now exists and the session owns it. `loadUserInfo` memoises the
+   * cached User, so a plain re-read would hand back an object without the new
+   * owner role and the composer would stay hidden — force the refresh first.
+   */
+  async onChannelCreated(slug: string): Promise<void> {
     try {
-      await this.channelRequestService.submitRequest(this.reqName, this.reqEmail, this.reqSlug, this.reqDescription);
-      this.reqSubmitted = true;
-    } catch (err: any) {
-      // The backend answers failures as plain text (rate limit, invalid slug,
-      // invalid email) — surface it instead of a generic message.
-      const detail = typeof err?.error === 'string' && err.error ? err.error : (err?.error?.message || '');
-      this.toastr.danger(detail, 'שגיאה בשליחת הבקשה, נסה שוב');
-    } finally {
-      this.reqSubmitting = false;
+      this.userInfo = await this._authService.reloadUserInfo();
+    } catch {
+      // The channel exists either way; the channel view refetches user-info.
     }
+    this.router.navigate(['/channel', slug]);
+  }
+
+  backToMyChannels(): void {
+    this.channelStatus.reset();
+    this.router.navigate(['/channel']);
   }
 
   async logout(): Promise<void> {

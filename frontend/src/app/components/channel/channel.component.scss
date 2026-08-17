@@ -1,16 +1,185 @@
 @use '../../../themes' as *;
 @use "sass:meta";
 
-.no-channel-container {
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  padding: 2rem 1rem;
-}
+// Colours resolve through the active Nebular theme (nb-install-component emits
+// the CSS custom properties), so the onboarding and disabled states follow
+// light/dark instead of pinning hex values.
+@include nb-install-component() {
+  .plain-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+  }
 
-.request-card {
-  width: 100%;
-  max-width: 520px;
+  .plain-header__brand {
+    font-weight: 700;
+    font-size: 1.1rem;
+    color: nb-theme(text-basic-color);
+  }
+
+  /* ---------- disabled channel ---------- */
+
+  .state-container {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: clamp(1.5rem, 6vw, 4rem) 1rem;
+  }
+
+  .state-card {
+    width: 100%;
+    max-width: 480px;
+    margin: 0;
+  }
+
+  .state-card__body {
+    text-align: center;
+    padding: 2.5rem 1.5rem;
+  }
+
+  .state-card__icon {
+    font-size: 3.25rem;
+    width: 3.25rem;
+    height: 3.25rem;
+    color: nb-theme(color-danger-500);
+  }
+
+  .state-card__title {
+    margin: 1rem 0 0.5rem;
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: nb-theme(text-basic-color);
+  }
+
+  .state-card__text {
+    margin: 0 0 0.35rem;
+    line-height: 1.7;
+    color: nb-theme(text-hint-color);
+  }
+
+  .state-card__slug {
+    padding: 0.1rem 0.4rem;
+    border-radius: 0.3rem;
+    background: nb-theme(background-basic-color-2);
+    color: nb-theme(text-basic-color);
+  }
+
+  .state-card__hint {
+    margin: 0 0 1.5rem;
+    font-size: 0.85rem;
+    color: nb-theme(text-hint-color);
+  }
+
+  .state-card__actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+
+  /* ---------- no channel yet: onboarding ---------- */
+
+  .onboarding {
+    width: 100%;
+    max-width: 680px;
+    margin: 0 auto;
+    padding: clamp(1.25rem, 5vw, 2.5rem) 1rem 3rem;
+  }
+
+  .onboarding__hero {
+    text-align: center;
+    margin-bottom: 1.75rem;
+  }
+
+  .onboarding__badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.8rem;
+    margin-bottom: 0.9rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    background: nb-theme(color-primary-100);
+    color: nb-theme(color-primary-600);
+  }
+
+  .onboarding__badge nb-icon {
+    font-size: 0.95rem;
+    width: 0.95rem;
+    height: 0.95rem;
+  }
+
+  .onboarding__title {
+    margin: 0 0 0.6rem;
+    font-size: clamp(1.5rem, 5vw, 2.1rem);
+    font-weight: 800;
+    line-height: 1.25;
+    color: nb-theme(text-basic-color);
+  }
+
+  .onboarding__lead {
+    margin: 0 auto;
+    max-width: 520px;
+    line-height: 1.7;
+    color: nb-theme(text-hint-color);
+  }
+
+  .onboarding__steps {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .onboarding__step {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 1rem 0.9rem;
+    border-radius: nb-theme(border-radius);
+    background: nb-theme(background-basic-color-2);
+    border: 1px solid nb-theme(border-basic-color-3);
+  }
+
+  .onboarding__step-num {
+    position: absolute;
+    top: 0.5rem;
+    inset-inline-end: 0.6rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: nb-theme(text-disabled-color);
+  }
+
+  .onboarding__step-icon {
+    flex: 0 0 auto;
+    font-size: 1.3rem;
+    width: 1.3rem;
+    height: 1.3rem;
+    color: nb-theme(color-primary-500);
+  }
+
+  .onboarding__step-title {
+    margin: 0 0 0.15rem;
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: nb-theme(text-basic-color);
+  }
+
+  .onboarding__step-text {
+    margin: 0;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    color: nb-theme(text-hint-color);
+  }
+
+  @media (max-width: 767px) {
+    .onboarding__steps {
+      grid-template-columns: 1fr;
+    }
+  }
 }
 
 nb-layout-column.chat-column {
