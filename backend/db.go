@@ -84,12 +84,14 @@ func init() {
 // Streams allow multiple backend instances to serve SSE without missing events.
 // The stream is capped at ~1000 entries to avoid unbounded growth.
 func publishEvent(ctx context.Context, slug string, data []byte) {
-	rdb.XAdd(ctx, &redis.XAddArgs{
+	if err := rdb.XAdd(ctx, &redis.XAddArgs{
 		Stream: fmt.Sprintf("channel:%s:events", slug),
 		MaxLen: 1000,
 		Approx: true,
 		Values: map[string]interface{}{"data": string(data)},
-	})
+	}).Err(); err != nil {
+		log.Printf("publishEvent: XAdd to channel:%s:events failed: %v\n", slug, err)
+	}
 }
 
 // touchLastModified bumps a per-channel nano-timestamp used for HTTP ETags.
@@ -156,6 +158,20 @@ func setMessage(ctx context.Context, slug string, m *Message, isUpdate bool) err
 }
 
 func setReaction(ctx context.Context, slug string, messageId int, emoji string, userId string) error {
+	// The message must exist and be live before anything is written: HSet below
+	// would otherwise mint an orphan reactions key with no TTL for any ID a
+	// client invents, and soft-deleted messages must not keep collecting votes.
+	fields, err := dbGetMessageFields(ctx, slug, strconv.Itoa(messageId))
+	if err != nil {
+		if err == redis.Nil {
+			return fmt.Errorf("message %d does not exist", messageId)
+		}
+		return err
+	}
+	if fields["deleted"] == "1" {
+		return fmt.Errorf("message %d is deleted", messageId)
+	}
+
 	kay := fmt.Sprintf("channel:%s:message:%d:reactions", slug, messageId)
 	userId = fmt.Sprintf("%v", userId)
 
@@ -492,22 +508,10 @@ func dbGetEmojisList(ctx context.Context, slug string) ([]string, error) {
 
 	var emojisList []string
 	if err := json.Unmarshal([]byte(emojisJSON), &emojisList); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal emojis: %v", err)
+	eturn nil, fmt.Errorf("failed to unmarshal emojis: %v", err)
 	}
 
 	return emojisList, nil
-}
-
-func dbSetUsersList(ctx context.Context, usersList []User) error {
-	jsonUsersList, err := json.Marshal(usersList)
-	if err != nil {
-		return err
-	}
-	if err := rdb.Set(ctx, "users:list", jsonUsersList, 0).Err(); err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func dbGetUsersList(ctx context.Context) ([]User, error) {
@@ -756,6 +760,18 @@ func dbSetReports(ctx context.Context, slug string, report *Report) error {
 	openKey := fmt.Sprintf("channel:%s:reports:open", slug)
 	closedKey := fmt.Sprintf("channel:%s:reports:closed", slug)
 
+	// The report must already exist: HSET below would otherwise fabricate a
+	// phantom hash and index it under open/closed while reports:list (which only
+	// dbReportMessage writes) never learns about it — a permanent desync.
+	// messageId is always written by dbReportMessage's full-struct HSet.
+	exists, err := rdb.HExists(ctx, reportKey, "messageId").Result()
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return redis.Nil
+	}
+
 	switch report.Closed {
 	case true:
 		if err := rdb.ZRem(ctx, openKey, reportKey).Err(); err != nil {
@@ -780,11 +796,24 @@ func dbSetReports(ctx context.Context, slug string, report *Report) error {
 	return nil
 }
 
+// peakSSEMaxWrite persists a peak only when it exceeds the stored one, so a
+// replica with a small local count can never overwrite a larger recorded peak,
+// and clearing the key (resetStatistics) is a complete cross-replica reset.
+var peakSSEMaxWrite = redis.NewScript(`
+	local cur = tonumber(redis.call('HGET', KEYS[1], 'value') or '0')
+	if tonumber(ARGV[1]) > cur then
+		redis.call('HSET', KEYS[1], 'value', ARGV[1], 'timestamp', ARGV[2])
+		return 1
+	end
+	return 0
+`)
+
 func dbSavePeakSSEConnections(slug string, peak *PeakSSEConnections) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	key := fmt.Sprintf("channel:%s:peak_sse_connections", slug)
-	rdb.HSet(ctx, key, "value", peak.Value, "timestamp", peak.Timestamp.Unix())
+	peakSSEMaxWrite.Run(ctx, rdb, []string{key},
+		strconv.FormatInt(peak.Value, 10), strconv.FormatInt(peak.Timestamp.Unix(), 10))
 }
 
 func dbGetPeakSSEConnections(ctx context.Context, slug string) (*PeakSSEConnections, error) {
@@ -992,14 +1021,22 @@ func dbGetChannel(ctx context.Context, slug string) (*ChannelData, error) {
 		channel.CreatedAt = t
 	}
 
-	// Load features
+	// Load features. A failed read must surface rather than silently serving a
+	// zero-valued ChannelFeatures: RequireAuth/RequireAuthFiles defaulting to
+	// false on a transient error would fail open on an auth toggle. Only a
+	// genuinely absent key (redis.Nil) keeps the zero value.
 	featuresKey := fmt.Sprintf("channel:%s:features", slug)
 	featuresJSON, err := rdb.Get(ctx, featuresKey).Result()
-	if err == nil {
-		var features ChannelFeatures
-		if err := json.Unmarshal([]byte(featuresJSON), &features); err == nil {
-			channel.Features = features
+	if err != nil {
+		if err != redis.Nil {
+			return nil, fmt.Errorf("load features for %s: %w", slug, err)
 		}
+	} else {
+		var features ChannelFeatures
+		if err := json.Unmarshal([]byte(featuresJSON), &features); err != nil {
+			return nil, fmt.Errorf("unmarshal features for %s: %w", slug, err)
+		}
+		channel.Features = features
 	}
 
 	return channel, nil
@@ -1037,22 +1074,26 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 		reactionKeys = append(reactionKeys, fmt.Sprintf("channel:%s:message:%s:reactions", p, id))
 	}
 
-	// Step 1b: release every uploaded file. Drop the tracking set first so the
-	// per-file cleanup below does not re-scan it once for each file, then reuse
-	// the normal delete path (deleteFileByID) so hash refcounts are decremented
-	// and the R2/disk blob is removed once the last reference is gone.
-	fileMembers, _ := rdb.ZRange(ctx, fmt.Sprintf("channel:%s:files", p), 0, -1).Result()
-	rdb.Del(ctx, fmt.Sprintf("channel:%s:files", p))
+	// Step 1b: release every uploaded file through the normal delete path so
+	// hash refcounts are decremented and the R2/disk blob is removed once the
+	// last reference is gone. The tracking set is NOT deleted up front: it is
+	// the only record of which blobs still need cleanup, so destroying it before
+	// the loop finishes would orphan every remaining blob permanently if the
+	// context expires or the process dies mid-delete. The per-file index removal
+	// is skipped instead (removeFromIndex=false) to keep the loop O(N); the set
+	// itself is dropped with the fixed keys below once the loop completes.
+	fileMembers, _ := rdb.ZRange(ctx, channelFilesKey(p), 0, -1).Result()
 	fileKeys := make([]string, 0, len(fileMembers))
 	for _, m := range fileMembers {
-		// member format: "fileID:size"
-		i := strings.LastIndex(m, ":")
-		if i <= 0 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		fileID, _, ok := decodeFileMember(m)
+		if !ok {
 			continue
 		}
-		fileID := m[:i]
 		if len(fileID) >= 4 {
-			deleteFileByID(ctx, p, fileID)
+			deleteFileByID(ctx, p, fileID, false)
 		}
 		fileKeys = append(fileKeys, "file:"+fileID)
 	}
@@ -1090,6 +1131,7 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 		fmt.Sprintf("channel:%s:storage:quota_bytes", p),
 		fmt.Sprintf("channel:%s:storage:auto_cleanup", p),
 		fmt.Sprintf("channel:%s:files", p),
+		fmt.Sprintf("channel:%s:sse_connections", p),
 		fmt.Sprintf("channel:%s:events", p),
 		fmt.Sprintf("channel:%s:last_modified", p),
 	}
@@ -1116,14 +1158,17 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 
 	// Step 3: revoke every per-channel role for this slug, otherwise recreating
 	// the same slug would immediately hand the old grantees their access back.
+	// A failure here must surface to the caller — returning success while stale
+	// roles survive is the exact regression this step exists to prevent.
 	if err := dbUpdateUsersList(ctx, func(users []User) []User {
 		for i := range users {
 			delete(users[i].ChannelRoles, slug) // delete on a nil map is a no-op
 		}
 		return users
 	}); err != nil {
-		log.Printf("dbDeleteChannel: clear roles for %s: %v\n", slug, err)
-	} else if err := initializePrivilegeUsers(); err != nil {
+		return fmt.Errorf("clear roles for %s: %w", slug, err)
+	}
+	if err := initializePrivilegeUsers(); err != nil {
 		log.Printf("initializePrivilegeUsers after dbDeleteChannel: %v\n", err)
 	}
 
@@ -1300,26 +1345,43 @@ func dbDecrChannelStorageUsed(ctx context.Context, slug string, bytes int64) err
 	return rdb.DecrBy(ctx, "channel:"+slug+":storage:used_bytes", bytes).Err()
 }
 
+// channelFilesKey is the sorted set tracking a channel's uploaded files.
+func channelFilesKey(slug string) string { return "channel:" + slug + ":files" }
+
+// encodeFileMember encodes a tracking-set member as "fileID:size".
+func encodeFileMember(id string, size int64) string { return fmt.Sprintf("%s:%d", id, size) }
+
+// decodeFileMember is the single inverse of encodeFileMember; every reader of
+// the tracking set must go through it rather than re-implementing the parse.
+func decodeFileMember(m string) (id string, size int64, ok bool) {
+	i := strings.LastIndex(m, ":")
+	if i <= 0 {
+		return "", 0, false
+	}
+	size, err := strconv.ParseInt(m[i+1:], 10, 64)
+	if err != nil {
+		return "", 0, false
+	}
+	return m[:i], size, true
+}
+
 // dbAddChannelFile registers a file in the channel's file tracking sorted set.
 func dbAddChannelFile(ctx context.Context, slug, fileID string, uploadedAt int64, size int64) error {
-	// member encodes fileID and size separated by ":"
-	member := fmt.Sprintf("%s:%d", fileID, size)
-	return rdb.ZAdd(ctx, "channel:"+slug+":files", redis.Z{
+	return rdb.ZAdd(ctx, channelFilesKey(slug), redis.Z{
 		Score:  float64(uploadedAt),
-		Member: member,
+		Member: encodeFileMember(fileID, size),
 	}).Err()
 }
 
 // dbRemoveChannelFile removes a file from the channel's tracking set.
 func dbRemoveChannelFile(ctx context.Context, slug, fileID string) error {
-	// We need to find and remove the member that starts with fileID
-	members, err := rdb.ZRange(ctx, "channel:"+slug+":files", 0, -1).Result()
+	members, err := rdb.ZRange(ctx, channelFilesKey(slug), 0, -1).Result()
 	if err != nil {
 		return err
 	}
 	for _, m := range members {
-		if len(m) >= len(fileID) && m[:len(fileID)] == fileID {
-			return rdb.ZRem(ctx, "channel:"+slug+":files", m).Err()
+		if id, _, ok := decodeFileMember(m); ok && id == fileID {
+			return rdb.ZRem(ctx, channelFilesKey(slug), m).Err()
 		}
 	}
 	return nil
@@ -1330,7 +1392,7 @@ func dbGetOldestChannelFiles(ctx context.Context, slug string, limit int64) ([]s
 	ID   string
 	Size int64
 }, error) {
-	members, err := rdb.ZRange(ctx, "channel:"+slug+":files", 0, limit-1).Result()
+	members, err := rdb.ZRange(ctx, channelFilesKey(slug), 0, limit-1).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -1339,18 +1401,11 @@ func dbGetOldestChannelFiles(ctx context.Context, slug string, limit int64) ([]s
 		Size int64
 	}, 0, len(members))
 	for _, m := range members {
-		// format: "fileID:size"
-		for i := len(m) - 1; i >= 0; i-- {
-			if m[i] == ':' {
-				fileID := m[:i]
-				var size int64
-				fmt.Sscanf(m[i+1:], "%d", &size)
-				result = append(result, struct {
-					ID   string
-					Size int64
-				}{fileID, size})
-				break
-			}
+		if fileID, size, ok := decodeFileMember(m); ok {
+			result = append(result, struct {
+				ID   string
+				Size int64
+			}{fileID, size})
 		}
 	}
 	return result, nil
