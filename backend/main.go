@@ -70,6 +70,10 @@ func main() {
 	r.Group(func(r chi.Router) {
 		r.Use(checkLogin)
 		r.Get("/api/user-info", getUserInfo)
+		// Self-service channel creation: the owner is taken from the session,
+		// never from the body, so nobody can claim a slug for someone else.
+		r.Post("/api/channels/create", createChannelSelfService)
+		r.Get("/api/channels/slug-available", checkSlugAvailable)
 	})
 
 	// Super admin routes

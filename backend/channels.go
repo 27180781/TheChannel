@@ -26,6 +26,11 @@ type ChannelFeatures struct {
 	Webhook             bool `json:"webhook"`
 	MagnetLockedByAdmin bool `json:"magnetLockedByAdmin"` // set by super admin, owner cannot change
 	AdsLockedByAdmin    bool `json:"adsLockedByAdmin"`    // set by super admin, owner cannot change
+	// Disabled is the super admin's kill switch for a whole tenant: set, every
+	// route under /api/channel/{slug} is refused, owner included. Stored
+	// features blobs written before this field existed simply unmarshal it to
+	// false, so no channel is disabled by the upgrade.
+	Disabled bool `json:"disabled"`
 }
 
 type ChannelData struct {
@@ -77,6 +82,17 @@ func channelMiddleware(next http.Handler) http.Handler {
 			} else {
 				http.Error(w, "error", http.StatusInternalServerError)
 			}
+			return
+		}
+
+		// A disabled channel is refused here, before anything channel-scoped
+		// runs, so the block covers reads, writes and the owner's own admin
+		// routes alike. Super-admin routes live outside this router group, so a
+		// disabled channel can still be re-enabled.
+		if channel.Features.Disabled {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]string{"error": "channel_disabled"})
 			return
 		}
 
