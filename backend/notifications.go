@@ -205,13 +205,19 @@ func pushFcmMessage(slug string, m *Message) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	// Operator-level kill switch, independent of the owner's on_notification.
-	if ch, err := dbGetChannel(ctx, slug); err == nil && !ch.Features.Notifications {
+	channelCfg := getChannelConfig(ctx, slug)
+	if !channelCfg.OnNotification {
 		return
 	}
 
-	channelCfg := getChannelConfig(ctx, slug)
-	if !channelCfg.OnNotification {
+	// Operator-level kill switch, independent of the owner's on_notification.
+	// The channel read is reused below for the notification title, so the hash
+	// is fetched exactly once per push.
+	ch, chErr := dbGetChannel(ctx, slug)
+	if chErr == nil && !ch.Features.Notifications {
+		// The owner HAS push configured; going silent here without a trace makes
+		// the kill switch undiagnosable.
+		log.Printf("push suppressed for %s: notifications feature disabled by operator\n", slug)
 		return
 	}
 
@@ -226,27 +232,10 @@ func pushFcmMessage(slug string, m *Message) {
 		return
 	}
 
-	channelName, err := getChannelDetails(ctx, slug)
-	if err != nil {
-		log.Println("Failed to get channel details:", err)
-		return
-	}
-
-	fcmSet := &FcmJsonConfing{
-		Type:                    cfg.FcmJson.Type,
-		ProjectId:               cfg.FcmJson.ProjectId,
-		PrivateKeyId:            cfg.FcmJson.PrivateKeyId,
-		PrivateKey:              cfg.FcmJson.PrivateKey,
-		ClientEmail:             cfg.FcmJson.ClientEmail,
-		ClientId:                cfg.FcmJson.ClientId,
-		AuthUri:                 cfg.FcmJson.AuthUri,
-		TokenUri:                cfg.FcmJson.TokenUri,
-		AuthProviderX509CertUrl: cfg.FcmJson.AuthProviderX509CertUrl,
-		ClientX509CertUrl:       cfg.FcmJson.ClientX509CertUrl,
-		UniverseDomain:          cfg.FcmJson.UniverseDomain,
-	}
-
-	fcmSetJson, err := json.Marshal(fcmSet)
+	// cfg.FcmJson is already the complete credential snapshot (ToConfig always
+	// allocates it); marshalling it directly means a field added to the struct
+	// can never be silently dropped by a stale hand-written copy.
+	fcmSetJson, err := json.Marshal(cfg.FcmJson)
 	if err != nil {
 		log.Println("Failed to marshal FCM credentials:", err)
 		return
@@ -258,11 +247,16 @@ func pushFcmMessage(slug string, m *Message) {
 		return
 	}
 
+	// Preserve the empty-title behaviour when the channel read failed.
+	title := ""
+	if chErr == nil {
+		title = ch.Name
+	}
 	data := map[string]string{
 		// project_domain is global, so it must be joined with the channel slug
 		// or every channel's notification opens the same page.
 		"url":   strings.TrimRight(cfg.ProjectDomain, "/") + "/channel/" + slug,
-		"title": channelName["name"],
+		"title": title,
 		"body":  m.Text,
 	}
 

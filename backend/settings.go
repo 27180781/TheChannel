@@ -27,40 +27,35 @@ type ReplaceRegex struct {
 }
 
 type SettingConfig struct {
-	AdSrc                   string
-	AdWidth                 int64
-	RequireAuth             bool
-	RequireAuthForViewFiles bool
-	RegexReplace            []*ReplaceRegex
-	WebhookURL              string
-	VerifyToken             string
-	ApiSecretKey            string
-	RootStaticFolder        string
-	CountViews              bool
-	OnNotification          bool
-	VAPID                   string
-	FcmApiKey               string
-	FcmAuthDomain           string
-	FcmProjectId            string
-	FcmStorageBucket        string
-	FcmMessagingSenderId    string
-	FcmAppId                string
-	FcmMeasurementId        string
-	ProjectDomain           string
-	FcmJson                 *FcmJsonConfing
-	MaxFileSize             int64
-	CustomTitle             string
-	ContactUs               string
-	MagnetEnabled           bool
-	MagnetSnippet           string
-	MagnetMode              string
-	MagnetPerMessages       int64
-	MagnetMinTimeSeconds    int64
-	MagnetPerSeconds        int64
-	MagnetMinMessagesSince  int64
-	MagnetApiKey            string
-	AnalyticsHead           string
-	TinyPngApiKey           string
+	AdSrc                  string
+	AdWidth                int64
+	RegexReplace           []*ReplaceRegex
+	WebhookURL             string
+	VerifyToken            string
+	ApiSecretKey           string
+	RootStaticFolder       string
+	OnNotification         bool
+	VAPID                  string
+	FcmApiKey              string
+	FcmAuthDomain          string
+	FcmProjectId           string
+	FcmStorageBucket       string
+	FcmMessagingSenderId   string
+	FcmAppId               string
+	FcmMeasurementId       string
+	ProjectDomain          string
+	FcmJson                *FcmJsonConfing
+	MaxFileSize            int64
+	CustomTitle            string
+	MagnetEnabled          bool
+	MagnetSnippet          string
+	MagnetMode             string
+	MagnetPerMessages      int64
+	MagnetMinTimeSeconds   int64
+	MagnetPerSeconds       int64
+	MagnetMinMessagesSince int64
+	AnalyticsHead          string
+	TinyPngApiKey          string
 }
 
 type Setting struct {
@@ -123,12 +118,6 @@ func (s *Settings) ToConfig() *SettingConfig {
 		case "ad-iframe-width":
 			config.AdWidth = setting.GetInt()
 
-		case "require_auth":
-			config.RequireAuth = setting.GetBool()
-
-		case "require_auth_for_view_files":
-			config.RequireAuthForViewFiles = setting.GetBool()
-
 		case "webhook_url":
 			config.WebhookURL = setting.GetString()
 
@@ -137,9 +126,6 @@ func (s *Settings) ToConfig() *SettingConfig {
 
 		case "api_secret_key":
 			config.ApiSecretKey = setting.GetString()
-
-		case "count_views":
-			config.CountViews = setting.GetBool()
 
 		case "regex-replace":
 			// The rule is encoded as "<pattern>#<replacement>" and the UI splits
@@ -232,9 +218,6 @@ func (s *Settings) ToConfig() *SettingConfig {
 		case "fcm_json_universe_domain":
 			config.FcmJson.UniverseDomain = setting.GetString()
 
-		case "contact_us":
-			config.ContactUs = setting.GetString()
-
 		case "magnet_enabled":
 			config.MagnetEnabled = setting.GetBool()
 
@@ -255,9 +238,6 @@ func (s *Settings) ToConfig() *SettingConfig {
 
 		case "magnet_min_messages_since":
 			config.MagnetMinMessagesSince = setting.GetInt()
-
-		case "magnet_api_key":
-			config.MagnetApiKey = setting.GetString()
 
 		case "analytics_head":
 			config.AnalyticsHead = setting.GetString()

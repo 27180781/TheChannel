@@ -187,7 +187,27 @@ func setPrivilegeUsers(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	log.Println("Setting privileges for users:", req.List)
 
-	if err := dbSetUsersList(ctx, req.List); err != nil {
+	// Upsert-by-email inside the guarded transaction rather than a wholesale
+	// replace: the submitted list is a client-side snapshot, and blindly SETting
+	// it would silently revert any role granted concurrently through the other
+	// (WATCH-guarded) writers. Users absent from the submission are left alone;
+	// a future deletion feature needs an explicit deleted-emails field, not
+	// inference from absence.
+	if err := dbUpdateUsersList(ctx, func(current []User) []User {
+		byEmail := make(map[string]int, len(current))
+		for i, u := range current {
+			byEmail[u.Email] = i
+		}
+		for _, nu := range req.List {
+			if i, ok := byEmail[nu.Email]; ok {
+				current[i] = nu
+			} else {
+				byEmail[nu.Email] = len(current)
+				current = append(current, nu)
+			}
+		}
+		return current
+	}); err != nil {
 		http.Error(w, "Failed to set users list", http.StatusInternalServerError)
 		return
 	}

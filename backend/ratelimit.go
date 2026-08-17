@@ -3,11 +3,66 @@ package main
 import (
 	"net"
 	"net/http"
+	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/time/rate"
 )
+
+// limiterEntry pairs a limiter with its last use so idle entries can be swept:
+// both maps below otherwise grow monotonically for the process lifetime (one
+// entry per client IP on an unauthenticated endpoint is attacker-controlled
+// once RealIP is in play).
+type limiterEntry struct {
+	l        *rate.Limiter
+	lastSeen atomic.Int64
+}
+
+// limiterIdleTTL is well past both refill windows (20s*3 and 2s*10), so a
+// swept-and-recreated limiter starting with a full burst changes nothing a
+// legitimate client would notice.
+const limiterIdleTTL = 10 * time.Minute
+
+func init() {
+	go func() {
+		ticker := time.NewTicker(limiterIdleTTL)
+		defer ticker.Stop()
+		for range ticker.C {
+			cutoff := time.Now().Add(-limiterIdleTTL).Unix()
+			sweep := func(m *sync.Map) {
+				m.Range(func(key, value any) bool {
+					if e, ok := value.(*limiterEntry); ok && e.lastSeen.Load() < cutoff {
+						m.Delete(key)
+					}
+					return true
+				})
+			}
+			sweep(&uploadLimiters)
+			sweep(&channelRequestLimiters)
+		}
+	}()
+}
+
+func getLimiter(m *sync.Map, mu *sync.Mutex, key string, newLimiter func() *rate.Limiter) *rate.Limiter {
+	if v, ok := m.Load(key); ok {
+		e := v.(*limiterEntry)
+		e.lastSeen.Store(time.Now().Unix())
+		return e.l
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if v, ok := m.Load(key); ok {
+		e := v.(*limiterEntry)
+		e.lastSeen.Store(time.Now().Unix())
+		return e.l
+	}
+	e := &limiterEntry{l: newLimiter()}
+	e.lastSeen.Store(time.Now().Unix())
+	m.Store(key, e)
+	return e.l
+}
 
 // uploadLimiters stores per-user-per-channel rate limiters for file uploads.
 // Key: "userEmail:channelSlug" — 30 uploads/min (one every 2s), burst of 10.
@@ -17,17 +72,9 @@ var (
 )
 
 func getUploadLimiter(key string) *rate.Limiter {
-	if v, ok := uploadLimiters.Load(key); ok {
-		return v.(*rate.Limiter)
-	}
-	uploadLimiterMu.Lock()
-	defer uploadLimiterMu.Unlock()
-	if v, ok := uploadLimiters.Load(key); ok {
-		return v.(*rate.Limiter)
-	}
-	l := rate.NewLimiter(rate.Every(2*time.Second), 10)
-	uploadLimiters.Store(key, l)
-	return l
+	return getLimiter(&uploadLimiters, &uploadLimiterMu, key, func() *rate.Limiter {
+		return rate.NewLimiter(rate.Every(2*time.Second), 10)
+	})
 }
 
 // channelRequestLimiters throttles the public channel-request endpoint per
@@ -42,18 +89,17 @@ func channelRequestLimiter(r *http.Request) *rate.Limiter {
 	if err != nil {
 		key = r.RemoteAddr
 	}
+	// An IPv6 client can trivially hop across its routed /64, minting unlimited
+	// distinct addresses; key the whole prefix as one client.
+	if addr, perr := netip.ParseAddr(key); perr == nil && addr.Is6() && !addr.Is4In6() {
+		if p, perr := addr.Prefix(64); perr == nil {
+			key = p.Masked().String()
+		}
+	}
 
-	if v, ok := channelRequestLimiters.Load(key); ok {
-		return v.(*rate.Limiter)
-	}
-	channelRequestMu.Lock()
-	defer channelRequestMu.Unlock()
-	if v, ok := channelRequestLimiters.Load(key); ok {
-		return v.(*rate.Limiter)
-	}
-	l := rate.NewLimiter(rate.Every(20*time.Second), 3)
-	channelRequestLimiters.Store(key, l)
-	return l
+	return getLimiter(&channelRequestLimiters, &channelRequestMu, key, func() *rate.Limiter {
+		return rate.NewLimiter(rate.Every(20*time.Second), 3)
+	})
 }
 
 func uploadRateLimit(next http.HandlerFunc) http.HandlerFunc {

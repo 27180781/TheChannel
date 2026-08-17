@@ -7,6 +7,8 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 type Report struct {
@@ -127,6 +129,10 @@ func setReports(w http.ResponseWriter, r *http.Request) {
 	report.UpdatedAt = time.Now()
 
 	if err := dbSetReports(ctx, slug, &report); err != nil {
+		if err == redis.Nil {
+			http.Error(w, "report not found", http.StatusNotFound)
+			return
+		}
 		http.Error(w, "Error saving reports", http.StatusInternalServerError)
 		return
 	}
