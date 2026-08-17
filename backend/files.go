@@ -166,6 +166,29 @@ func dbGetFileMetadata(ctx context.Context, id string) (*FileMetadata, error) {
 	}, nil
 }
 
+// localBlobPath returns the on-disk path of a blob and whether the hash is
+// well-formed enough to build one. Every caller slices hash[:2]/hash[2:4], so a
+// short or empty hash (malformed metadata, a YAML-era record with no hash at
+// all) would panic the handler; they go through here instead.
+func localBlobPath(hash string) (string, bool) {
+	if len(hash) < 4 {
+		return "", false
+	}
+	return filepath.Join(rootUploadPath, hash[:2], hash[2:4], hash), true
+}
+
+// localBlobExists reports whether the local copy of a blob is present.
+func localBlobExists(hash string) (string, bool) {
+	p, ok := localBlobPath(hash)
+	if !ok {
+		return "", false
+	}
+	if _, err := os.Stat(p); err != nil {
+		return "", false
+	}
+	return p, true
+}
+
 func serveFile(w http.ResponseWriter, r *http.Request) {
 	fileId := chi.URLParam(r, "fileid")
 	if len(fileId) < 4 {
@@ -191,8 +214,25 @@ func serveFile(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Disposition", `attachment; filename*=UTF-8''`+url.QueryEscape(meta.Filename))
 
-	if r2Enabled {
+	if r2Enabled && len(meta.Hash) >= 4 {
 		key := r2ObjectKey(meta.Hash)
+
+		// Flipping R2 on does not move the historical corpus with it: the
+		// local-to-R2 migration runs on the next boot and may not have reached
+		// this blob (or may have failed for it). Redirecting to a key that is
+		// not there yet would 404 every legacy image, so a miss falls back to
+		// the local copy, which the migration never deletes.
+		if !r2Exists(ctx, key) {
+			if filePath, ok := localBlobExists(meta.Hash); ok {
+				log.Printf("serveFile: %s/%s not in R2 (key %s), serving local copy\n", slug, fileId, key)
+				http.ServeFile(w, r, filePath)
+				return
+			}
+			log.Printf("serveFile: %s/%s missing in R2 (key %s) and on local disk\n", slug, fileId, key)
+			http.Error(w, "File not found", http.StatusNotFound)
+			return
+		}
+
 		if r2PublicURL != "" {
 			// Public bucket: redirect to CDN URL (fastest, no auth needed)
 			http.Redirect(w, r, r2PublicURL+"/"+key, http.StatusFound)
@@ -205,9 +245,11 @@ func serveFile(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, presignedURL, http.StatusFound)
 			return
 		}
+		log.Printf("serveFile: presign failed for %s/%s (key %s): %v\n", slug, fileId, key, err)
 		// Fallback: proxy through backend if presigning fails
 		body, contentType, err := r2Download(ctx, key)
 		if err != nil {
+			log.Printf("serveFile: R2 download failed for %s/%s (key %s): %v\n", slug, fileId, key, err)
 			http.Error(w, "File not found", http.StatusNotFound)
 			return
 		}
@@ -220,7 +262,12 @@ func serveFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Local storage fallback
-	filePath := filepath.Join(rootUploadPath, meta.Hash[:2], meta.Hash[2:4], meta.Hash)
+	filePath, ok := localBlobPath(meta.Hash)
+	if !ok {
+		log.Printf("serveFile: %s/%s has malformed hash %q\n", slug, fileId, meta.Hash)
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
 	http.ServeFile(w, r, filePath)
 }
 
@@ -249,9 +296,11 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 		// concurrently by every upload.
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
+			log.Printf("uploadFile: %s: rejected upload over the %d MB limit: %v\n", slug, maxMB, err)
 			http.Error(w, "File too large", http.StatusRequestEntityTooLarge)
 			return
 		}
+		log.Printf("uploadFile: %s: reading multipart form failed: %v\n", slug, err)
 		http.Error(w, "error", http.StatusBadRequest)
 		return
 	}
@@ -259,6 +308,7 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 
 	fileBytes, err := io.ReadAll(file)
 	if err != nil {
+		log.Printf("uploadFile: %s: reading uploaded body %q failed: %v\n", slug, handler.Filename, err)
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
@@ -278,12 +328,14 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 
 	// Quota check + auto-cleanup
 	if err := enforceStorageQuota(ctx, slug, fileSize); err != nil {
+		log.Printf("uploadFile: %s: quota check rejected %d bytes: %v\n", slug, fileSize, err)
 		http.Error(w, err.Error(), http.StatusInsufficientStorage)
 		return
 	}
 
 	id := generatedRandomID(20)
 	if id == "" {
+		log.Printf("uploadFile: %s: crypto/rand failed to generate a file id\n", slug)
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
@@ -304,23 +356,33 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 			err := r2Upload(upCtx, key, bytes.NewReader(fileBytes), contentType)
 			upCancel()
 			if err != nil {
+				// The SDK error is printed verbatim, not summarised: its code is
+				// the only thing that separates AccessDenied (a read-only or
+				// wrong-bucket API token), NoSuchBucket, InvalidAccessKeyId and
+				// SignatureDoesNotMatch — all of which surface here as the same
+				// opaque 500 for the operator.
+				log.Printf("uploadFile: %s: R2 upload of file %s failed (bucket %q, key %s, %d bytes, content-type %s): %v\n",
+					slug, id, r2Bucket, key, fileSize, contentType, err)
 				http.Error(w, "error uploading file", http.StatusInternalServerError)
 				return
 			}
 		}
 	} else {
 		if err := os.MkdirAll(rootUploadPath, os.ModePerm); err != nil {
+			log.Printf("uploadFile: %s: mkdir root upload path %s failed: %v\n", slug, rootUploadPath, err)
 			http.Error(w, "error", http.StatusInternalServerError)
 			return
 		}
 		hashSubDir := filepath.Join(rootUploadPath, fileHash[:2], fileHash[2:4])
 		if err := os.MkdirAll(hashSubDir, os.ModePerm); err != nil {
+			log.Printf("uploadFile: %s: mkdir %s for file %s failed: %v\n", slug, hashSubDir, id, err)
 			http.Error(w, "error", http.StatusInternalServerError)
 			return
 		}
 		destPath := filepath.Join(hashSubDir, fileHash)
 		if _, statErr := os.Stat(destPath); os.IsNotExist(statErr) {
 			if err := os.WriteFile(destPath, fileBytes, 0644); err != nil {
+				log.Printf("uploadFile: %s: writing %s for file %s (%d bytes) failed: %v\n", slug, destPath, id, fileSize, err)
 				http.Error(w, "error", http.StatusInternalServerError)
 				return
 			}
@@ -342,6 +404,7 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 		ChannelSlug: slug,
 	}
 	if err := dbSaveFileMetadata(ctx, meta); err != nil {
+		log.Printf("uploadFile: %s: saving metadata for file %s failed: %v\n", slug, id, err)
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
@@ -368,6 +431,10 @@ func enforceStorageQuota(ctx context.Context, slug string, newFileSize int64) er
 	// enforcement would let usage grow past quota unnoticed.
 	quota, err := dbGetEffectiveStorageQuota(ctx, slug)
 	if err != nil {
+		// The client only ever sees "storage configuration unavailable", which
+		// is indistinguishable from a genuine quota breach; the real cause (a
+		// failed Redis read) only exists here.
+		log.Printf("enforceStorageQuota: %s: reading effective quota failed: %v\n", slug, err)
 		return fmt.Errorf("storage configuration unavailable")
 	}
 	if quota == 0 {
@@ -376,6 +443,7 @@ func enforceStorageQuota(ctx context.Context, slug string, newFileSize int64) er
 
 	used, err := dbGetChannelStorageUsed(ctx, slug)
 	if err != nil {
+		log.Printf("enforceStorageQuota: %s: reading used bytes failed: %v\n", slug, err)
 		return fmt.Errorf("storage configuration unavailable")
 	}
 
@@ -385,6 +453,7 @@ func enforceStorageQuota(ctx context.Context, slug string, newFileSize int64) er
 
 	autoCleanup, err := dbGetChannelAutoCleanup(ctx, slug)
 	if err != nil {
+		log.Printf("enforceStorageQuota: %s: reading auto-cleanup flag failed: %v\n", slug, err)
 		return fmt.Errorf("storage configuration unavailable")
 	}
 	if !autoCleanup {
@@ -397,6 +466,7 @@ func enforceStorageQuota(ctx context.Context, slug string, newFileSize int64) er
 
 	files, err := dbGetOldestChannelFiles(ctx, slug, 200)
 	if err != nil {
+		log.Printf("enforceStorageQuota: %s: listing oldest files for auto-cleanup failed: %v\n", slug, err)
 		return fmt.Errorf("storage quota exceeded")
 	}
 
@@ -447,10 +517,15 @@ func deleteFileByID(ctx context.Context, slug, fileID string, removeFromIndex bo
 	// Decrement hash refs and delete from storage if no more references
 	refs, err := dbDecrFileHashRefs(ctx, meta.Hash)
 	if err == nil && refs <= 0 {
-		if r2Enabled {
-			r2Delete(ctx, r2ObjectKey(meta.Hash))
-		} else {
-			os.Remove(filepath.Join(rootUploadPath, meta.Hash[:2], meta.Hash[2:4], meta.Hash))
+		if r2Enabled && len(meta.Hash) >= 4 {
+			if err := r2Delete(ctx, r2ObjectKey(meta.Hash)); err != nil {
+				log.Printf("deleteFileByID: %s: R2 delete of %s (key %s) failed: %v\n", slug, fileID, r2ObjectKey(meta.Hash), err)
+			}
+		}
+		// The local copy is removed either way: with R2 on it is the migration's
+		// fallback copy of the same blob, and the last reference is gone.
+		if p, ok := localBlobPath(meta.Hash); ok {
+			os.Remove(p)
 		}
 		// Drop the counter itself; a fresh upload of the same hash starts at 1 again.
 		dbDelFileHashRefs(ctx, meta.Hash)
@@ -509,14 +584,27 @@ func getFavicon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if r2Enabled {
+	if r2Enabled && len(meta.Hash) >= 4 {
 		key := r2ObjectKey(meta.Hash)
+		// Same partial-migration fallback as serveFile: a logo whose blob has
+		// not been copied to R2 yet is still on local disk.
+		if !r2Exists(ctx, key) {
+			if filePath, ok := localBlobExists(meta.Hash); ok {
+				log.Printf("getFavicon: %s: logo %s not in R2 (key %s), serving local copy\n", slug, fileId, key)
+				http.ServeFile(w, r, filePath)
+				return
+			}
+			log.Printf("getFavicon: %s: logo %s missing in R2 (key %s) and on local disk\n", slug, fileId, key)
+			http.ServeFile(w, r, "assets/favicon.ico")
+			return
+		}
 		if r2PublicURL != "" {
 			http.Redirect(w, r, r2PublicURL+"/"+key, http.StatusFound)
 			return
 		}
 		body, _, err := r2Download(ctx, key)
 		if err != nil {
+			log.Printf("getFavicon: %s: R2 download of logo %s (key %s) failed: %v\n", slug, fileId, key, err)
 			http.ServeFile(w, r, "assets/favicon.ico")
 			return
 		}
@@ -525,7 +613,12 @@ func getFavicon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filePath := filepath.Join(rootUploadPath, meta.Hash[:2], meta.Hash[2:4], meta.Hash)
+	filePath, ok := localBlobPath(meta.Hash)
+	if !ok {
+		log.Printf("getFavicon: %s: logo %s has malformed hash %q\n", slug, fileId, meta.Hash)
+		http.ServeFile(w, r, "assets/favicon.ico")
+		return
+	}
 	http.ServeFile(w, r, filePath)
 }
 

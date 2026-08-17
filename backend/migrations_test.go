@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -213,5 +214,92 @@ func TestMigrationIsOneShotAndOnlyEverEnables(t *testing.T) {
 
 	if f := featuresOf(t, ctx, "mig-test-oneshot"); f.Webhook {
 		t.Error("an applied migration must not run again and resurrect a withdrawn flag")
+	}
+}
+
+// With R2 off there is nowhere to copy to, and marking the migration applied
+// would consume the one-shot before it could ever run. It must report the skip
+// sentinel (which runMigrations leaves unmarked) and touch nothing.
+func TestMigrationLocalFilesToR2SkippedWhenR2Off(t *testing.T) {
+	ctx := testCtx(t)
+
+	if r2Enabled {
+		t.Fatal("test environment unexpectedly has R2 enabled")
+	}
+
+	seedChannel(t, ctx, "mig-test-r2-off", Settings{})
+
+	err := migrateLocalFilesToR2(ctx)
+	if !errors.Is(err, errMigrationSkipped) {
+		t.Fatalf("expected errMigrationSkipped with R2 off, got %v", err)
+	}
+
+	// runMigrations must not mark it applied either, or it would never run once
+	// R2 is configured.
+	t.Cleanup(func() {
+		cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		rdb.SRem(cctx, migrationsAppliedKey,
+			channelFeaturesBackfillID,
+			channelFeaturesBackfillV2ID,
+			fileChannelSlugBackfillID,
+			fileSlugFromMessagesID,
+			localFilesToR2ID,
+		)
+	})
+	runMigrations(ctx)
+
+	applied, err := rdb.SIsMember(ctx, migrationsAppliedKey, localFilesToR2ID).Result()
+	if err != nil {
+		t.Fatalf("read applied set: %v", err)
+	}
+	if applied {
+		t.Error("local-files-to-R2 must not be marked applied while R2 is off")
+	}
+}
+
+// Index members and metadata hashes are both sliced [:2]/[2:4]; legacy/YAML-era
+// records can carry a short or empty hash, and those must be skipped rather than
+// panicking the boot. No blob exists locally for any of them, so the pass never
+// reaches an R2 call even with the flag forced on.
+func TestMigrationLocalFilesToR2ShortHashDoesNotPanic(t *testing.T) {
+	ctx := testCtx(t)
+
+	slug := "mig-test-r2-shorthash"
+	seedChannel(t, ctx, slug, Settings{})
+
+	records := []struct {
+		id   string
+		hash string
+	}{
+		{"ab", "0011223344556677"},                 // short index member
+		{"aabbccddeeff00112233", ""},               // no hash at all
+		{"aabbccddeeff00112234", "a"},              // 1-char hash
+		{"aabbccddeeff00112235", "abc"},            // 3-char hash
+		{"aabbccddeeff00112236", "00112233445566"}, // well-formed, no local blob
+	}
+	for _, rec := range records {
+		meta := &FileMetadata{ID: rec.id, Filename: "x.bin", Hash: rec.hash, ChannelSlug: slug, Size: 1}
+		if err := dbSaveFileMetadata(ctx, meta); err != nil {
+			t.Fatalf("save metadata %s: %v", rec.id, err)
+		}
+		if err := dbAddChannelFile(ctx, slug, rec.id, time.Now().Unix(), 1); err != nil {
+			t.Fatalf("index %s: %v", rec.id, err)
+		}
+		t.Cleanup(func() {
+			cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			rdb.Del(cctx, "file:"+rec.id)
+		})
+	}
+
+	// Force the flag on to get past the R2-off guard. Nothing here has a local
+	// blob, so no R2 client call is made.
+	prev := r2Enabled
+	r2Enabled = true
+	t.Cleanup(func() { r2Enabled = prev })
+
+	if err := migrateLocalFilesToR2(ctx); err != nil {
+		t.Fatalf("migration must survive malformed hashes, got %v", err)
 	}
 }

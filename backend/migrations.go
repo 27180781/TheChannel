@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"mime"
 	"os"
+	"path/filepath"
 	"regexp"
 	"time"
 
@@ -36,6 +39,17 @@ const fileSlugFromMessagesID = "2026-08-file-slug-from-messages"
 // toggles the creation paths default to true.
 const channelFeaturesBackfillV2ID = "2026-08-channel-features-backfill-v2"
 
+// localFilesToR2ID copies every blob that was written to local disk while R2 was
+// off into the bucket, so switching R2 on does not orphan the whole historical
+// corpus.
+const localFilesToR2ID = "2026-08-local-files-to-r2"
+
+// errMigrationSkipped tells runMigrations that a migration deliberately did no
+// work and must NOT be marked applied — the loop marks every nil return as
+// applied, so a plain nil would burn the one-shot on a boot where the migration
+// could not run yet (R2 not configured). It is logged as a skip, not a failure.
+var errMigrationSkipped = errors.New("preconditions not met, will retry on next start")
+
 // runMigrations applies any data migration that has not run yet.
 //
 // It is deliberately non-fatal: a migration that fails is simply left unmarked
@@ -56,6 +70,7 @@ func runMigrations(ctx context.Context) {
 		{fileChannelSlugBackfillID, backfillFileChannelSlugs},
 		{fileSlugFromMessagesID, backfillFileSlugsFromMessages},
 		{channelFeaturesBackfillV2ID, backfillChannelFeaturesV2},
+		{localFilesToR2ID, migrateLocalFilesToR2},
 	}
 
 	for _, m := range migrations {
@@ -70,6 +85,12 @@ func runMigrations(ctx context.Context) {
 
 		log.Printf("migrations: running %s", m.id)
 		if err := m.run(ctx); err != nil {
+			// A deliberate skip is not a failure, but it must leave the ID
+			// unmarked just the same so the migration still runs later.
+			if errors.Is(err, errMigrationSkipped) {
+				log.Printf("migrations: %s skipped this boot (not marked applied): %v", m.id, err)
+				continue
+			}
 			log.Printf("migrations: %s FAILED (will retry on next start): %v", m.id, err)
 			continue
 		}
@@ -370,6 +391,134 @@ func backfillFileSlugsFromMessages(ctx context.Context) error {
 
 	log.Printf("migrations: stamped channel ownership onto %d legacy file records referenced by messages/logos", stamped)
 	return nil
+}
+
+// migrateLocalFilesToR2 copies every blob still living under rootUploadPath into
+// the R2 bucket.
+//
+// Why this is needed: uploads taken while R2 was off were written to local disk
+// only, and serveFile with R2 on looks the blob up by its object key. Without
+// this pass every historical attachment and logo depends on the local fallback
+// forever — and on CapRover, where /app/files is the container's writable layer,
+// that fallback disappears on the next deploy.
+//
+// The corpus is enumerated from Redis (channel list -> per-channel file index ->
+// FileMetadata), not by walking the filesystem, so a blob nothing references is
+// not resurrected and each object gets its real content type. The local copy is
+// never deleted: it stays as the fallback serveFile uses until this pass, or a
+// later retry, has caught up.
+func migrateLocalFilesToR2(ctx context.Context) error {
+	if !r2Enabled {
+		log.Println("migrations: local-files-to-R2 skipped, R2 is not configured")
+		return errMigrationSkipped
+	}
+
+	channels, err := dbListChannels(ctx)
+	if err != nil {
+		return fmt.Errorf("list channels: %w", err)
+	}
+
+	var records, uploaded, alreadyPresent, missingLocally, malformed, failed int
+	// Blobs are content-addressed and deduplicated across channels, so the same
+	// hash can appear in many file indexes; handle each one once per run.
+	done := make(map[string]bool)
+
+	for _, ch := range channels {
+		members, err := rdb.ZRange(ctx, channelFilesKey(ch.Slug), 0, -1).Result()
+		if err != nil {
+			return fmt.Errorf("list files for %s: %w", ch.Slug, err)
+		}
+
+		for _, m := range members {
+			fileID, _, ok := decodeFileMember(m)
+			if !ok {
+				continue
+			}
+			// dbGetFileMetadata's YAML fallback slices id[:4]; a malformed short
+			// member must be skipped, not crash-loop the boot.
+			records++
+			if len(fileID) < 4 {
+				log.Printf("migrations: r2 copy: %s: malformed file index member %q, skipping", ch.Slug, m)
+				malformed++
+				continue
+			}
+
+			meta, err := dbGetFileMetadata(ctx, fileID)
+			if err != nil {
+				log.Printf("migrations: r2 copy: %s: no metadata for tracked file %s, skipping", ch.Slug, fileID)
+				continue
+			}
+			if meta.Delete {
+				continue
+			}
+
+			// The object key and the local path both slice hash[:2]/hash[2:4];
+			// an empty or short hash (YAML-era record with no hash field) would
+			// panic both.
+			if len(meta.Hash) < 4 {
+				log.Printf("migrations: r2 copy: %s: file %s has malformed hash %q, skipping", ch.Slug, fileID, meta.Hash)
+				malformed++
+				continue
+			}
+			if done[meta.Hash] {
+				continue
+			}
+			done[meta.Hash] = true
+
+			// Local existence is checked first: with no local copy there is
+			// nothing to copy either way, and it saves a HEAD per record.
+			localPath, ok := localBlobExists(meta.Hash)
+			if !ok {
+				log.Printf("migrations: r2 copy: %s: file %s has no local blob at %s, skipping", ch.Slug, fileID, filepath.Join(rootUploadPath, meta.Hash[:2], meta.Hash[2:4], meta.Hash))
+				missingLocally++
+				continue
+			}
+
+			key := r2ObjectKey(meta.Hash)
+			if r2Exists(ctx, key) {
+				alreadyPresent++
+				continue
+			}
+
+			if err := copyBlobToR2(ctx, localPath, key, meta); err != nil {
+				// One unreadable or rejected blob must not stop the rest of the
+				// corpus; the run still ends in an error so it is retried, and
+				// the objects already copied are skipped next time.
+				log.Printf("migrations: r2 copy: %s: uploading file %s (key %s) FAILED: %v", ch.Slug, fileID, key, err)
+				failed++
+				continue
+			}
+			uploaded++
+		}
+	}
+
+	log.Printf("migrations: local-files-to-R2: %d uploaded, %d already in R2, %d missing locally, %d malformed, %d failed, out of %d file records across %d channels",
+		uploaded, alreadyPresent, missingLocally, malformed, failed, records, len(channels))
+
+	if failed > 0 {
+		return fmt.Errorf("%d blob(s) could not be uploaded to R2", failed)
+	}
+	return nil
+}
+
+// copyBlobToR2 streams one local blob into the bucket. The content type matches
+// what serving the local file produces: http.ServeFile derives it from the file
+// name's extension, so the object gets the same one.
+func copyBlobToR2(ctx context.Context, localPath, key string, meta *FileMetadata) error {
+	f, err := os.Open(localPath)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", localPath, err)
+	}
+	defer f.Close()
+
+	contentType := mime.TypeByExtension(filepath.Ext(meta.Filename))
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	upCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	return r2Upload(upCtx, key, f, contentType)
 }
 
 // migrationContext is the budget for the whole migration step at boot.
