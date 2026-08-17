@@ -1,0 +1,161 @@
+@use '../../../themes' as *;
+
+:host {
+  display: block;
+  width: 100%;
+}
+
+// Everything colour-bearing goes through nb-install-component + nb-theme() so
+// the card follows whichever Nebular theme is active instead of pinning hex
+// values that would break in dark mode.
+@include nb-install-component() {
+  .create-card {
+    margin: 0;
+    border-radius: nb-theme(border-radius);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
+  }
+
+  .create-card__header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .create-card__title {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: nb-theme(text-basic-color);
+  }
+
+  .create-card__subtitle {
+    font-size: 0.85rem;
+    font-weight: 400;
+    color: nb-theme(text-hint-color);
+  }
+
+  .create-card__alert {
+    margin-bottom: 1rem;
+  }
+
+  .create-card__done {
+    text-align: center;
+    padding: 2rem 0;
+  }
+
+  .create-card__done-icon {
+    font-size: 3.25rem;
+    width: 3.25rem;
+    height: 3.25rem;
+    color: nb-theme(color-success-500);
+  }
+
+  .create-card__done-title {
+    margin: 1rem 0 0.25rem;
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: nb-theme(text-basic-color);
+  }
+
+  .create-card__done-text {
+    margin: 0;
+    color: nb-theme(text-hint-color);
+  }
+
+  .create-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+
+  .create-form__row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+  }
+
+  .create-form__field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    min-width: 0;
+  }
+
+  .create-form__label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: nb-theme(text-basic-color);
+  }
+
+  .create-form__hint {
+    font-size: 0.75rem;
+    color: nb-theme(text-hint-color);
+  }
+
+  .create-form__slug {
+    font-family: nb-theme(font-family-secondary);
+    letter-spacing: 0.01em;
+  }
+
+  .create-form__slug--ok {
+    border-color: nb-theme(color-success-500) !important;
+  }
+
+  .create-form__slug--bad {
+    border-color: nb-theme(color-danger-500) !important;
+  }
+
+  .slug-status--ok { color: nb-theme(color-success-500); }
+  .slug-status--bad { color: nb-theme(color-danger-500); }
+  .slug-status--idle { color: nb-theme(text-hint-color); }
+
+  .create-form__slugline {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.35rem;
+    font-size: 0.78rem;
+  }
+
+  .create-form__preview {
+    padding: 0.15rem 0.5rem;
+    border-radius: 0.35rem;
+    background: nb-theme(background-basic-color-2);
+    color: nb-theme(text-hint-color);
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+
+  .create-form__status--ok { color: nb-theme(color-success-500); font-weight: 600; }
+  .create-form__status--bad { color: nb-theme(color-danger-500); font-weight: 600; }
+  .create-form__status--idle { color: nb-theme(text-hint-color); }
+
+  .create-form__submit {
+    margin-top: 0.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+
+  .create-form__foot {
+    margin: 0;
+    text-align: center;
+    font-size: 0.78rem;
+    color: nb-theme(text-hint-color);
+  }
+
+  .create-form__spin {
+    animation: create-form-spin 0.9s linear infinite;
+  }
+
+  @media (max-width: 575px) {
+    .create-form__row {
+      grid-template-columns: 1fr;
+    }
+  }
+}
+
+@keyframes create-form-spin {
+  to { transform: rotate(360deg); }
+}
