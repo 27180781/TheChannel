@@ -8,6 +8,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"github.com/boj/redistore"
 	"github.com/go-chi/chi"
@@ -162,7 +163,7 @@ func main() {
 	})
 
 	if cfg := getGlobalConfig(); cfg != nil && cfg.RootStaticFolder != "" {
-		r.Handle("/assets/*", http.StripPrefix("/assets/", http.FileServer(http.Dir(cfg.RootStaticFolder))))
+		r.Handle("/assets/*", staticCacheHeaders(http.StripPrefix("/assets/", http.FileServer(http.Dir(cfg.RootStaticFolder)))))
 		r.NotFound(serveSpaFile)
 	}
 
@@ -203,6 +204,39 @@ func serveSpaFile(w http.ResponseWriter, r *http.Request) {
 		content = bytes.Replace(content, []byte("</head>"), []byte(cfg.AnalyticsHead+"</head>"), 1)
 	}
 
+	// index.html must never be cached without revalidation. Every deploy gives
+	// the bundles new content-hashed names, and this file is the only thing
+	// that says which names are current. Cached by a browser or an upstream
+	// proxy, it outlives the bundles it points at: the next visitor with a cold
+	// cache gets a stale document whose /assets/main-<hash>.js is gone, the
+	// script 404s, and app-root is left empty — a white page with no error the
+	// application could report, because the application never started.
+	//
+	// It is also rewritten per-deployment below (title, analytics), so a shared
+	// cache holding it would serve another operator's markup.
+	w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(content)
+}
+
+// hashedAssetRe matches the content-hashed filenames the frontend build emits
+// (main-EE7HE3OC.js, styles-ZXVD3ZCM.css, media/NotoColorEmoji-HW4CGOE5.ttf).
+// The hash changes whenever the contents do, so these are safe to cache
+// forever; anything else under /assets (favicon.ico and friends) is not.
+var hashedAssetRe = regexp.MustCompile(`-[A-Z0-9]{8}\.[a-zA-Z0-9]+$`)
+
+// staticCacheHeaders pairs the immutable bundles with the no-cache index.html
+// above: the hashed files are what make it safe for index.html to be
+// revalidated on every visit, since only the small document is ever refetched.
+func staticCacheHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if hashedAssetRe.MatchString(r.URL.Path) {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			// Un-hashed and therefore replaceable in place: revalidate rather
+			// than pin an old copy for a year.
+			w.Header().Set("Cache-Control", "public, max-age=300")
+		}
+		next.ServeHTTP(w, r)
+	})
 }
