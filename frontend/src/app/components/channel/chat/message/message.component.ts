@@ -92,9 +92,6 @@ export class MessageComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   ngOnInit() {
-    if (this.isSchedulingMessage && this.message) {
-      this.message.id = this.indexId;
-    }
     this.chatService.getEmojisList()
       .then(emojis => this.reacts = emojis)
       .catch(() => this.toastrService.danger('', 'שגיאה בהגדרת אימוגים'));
@@ -126,10 +123,16 @@ export class MessageComponent implements OnInit, AfterViewInit, OnDestroy {
   };
 
   ngAfterViewInit(): void {
-    setTimeout(() => {
+    // Decide the auth-overlay from resolved state instead of racing a fixed
+    // timer against the channel-info and user-info requests.
+    Promise.all([
+      this.chatService.ensureChannelInfo().catch(() => null),
+      this._authService.loadUserInfo().catch(() => null),
+    ]).then(() => {
+      if (!this.chatService.channelInfo?.require_auth_for_view_files || this._authService.userInfo) return;
       const media = this.mediaContainer?.nativeElement.querySelectorAll('img, video');
       media?.forEach((item: HTMLMediaElement) => {
-        if (this.chatService.channelInfo?.require_auth_for_view_files && !this._authService.userInfo) {
+        {
           const wrapper = document.createElement('div');
           wrapper.style.position = 'relative';
           wrapper.style.display = 'inline-block';
@@ -165,10 +168,24 @@ export class MessageComponent implements OnInit, AfterViewInit, OnDestroy {
           }
         }
       });
-    }, 1000);
+    });
+  }
+
+  // Mirrors backend canModifyMessage: moderators+ on anything, writers only on
+  // their own posts or system posts (authorId "" / "0").
+  canModify(message: ChatMessage): boolean {
+    if (this.canModerate) return true;
+    if (!this.canWrite) return false;
+    const a = message.authorId;
+    return a === '' || a === '0' || a === undefined || a === this._authService.userInfo?.id;
   }
 
   editMessage(message: ChatMessage) {
+    // Under track $index views are reused by position, so the displayed
+    // message's live array index — not a stamped id — is the correct key.
+    if (this.isSchedulingMessage && this.message) {
+      this.message.id = this.indexId;
+    }
     this._adminService.setEditMessage({ message, isScheduling: this.isSchedulingMessage });
   }
 
@@ -176,7 +193,8 @@ export class MessageComponent implements OnInit, AfterViewInit, OnDestroy {
     const confirm = window.confirm('האם אתה בטוח שברצונך למחוק את ההודעה?');
     if (confirm) {
       if (this.isSchedulingMessage) {
-        this._adminService.deleteScheduledMessage(message.id);
+        this._adminService.deleteScheduledMessage(this.indexId)
+          .catch(() => this.toastrService.danger('', 'שגיאה במחיקת ההודעה'));
         return;
       }
       this._adminService.deleteMessage(message.id).subscribe({

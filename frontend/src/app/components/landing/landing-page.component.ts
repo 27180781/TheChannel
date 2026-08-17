@@ -259,7 +259,11 @@ export class LandingPageComponent implements OnInit {
       );
       this.submitted = true;
     } catch (err: any) {
-      this.error = err?.error?.message || 'שגיאה בשליחת הבקשה. נסה שוב.';
+      // The backend answers failures as plain text (http.Error), which Angular
+      // exposes as a string in err.error — surface it when present.
+      this.error = typeof err?.error === 'string' && err.error
+        ? err.error
+        : (err?.error?.message || 'שגיאה בשליחת הבקשה. נסה שוב.');
     } finally {
       this.submitting = false;
     }

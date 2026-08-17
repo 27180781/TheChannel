@@ -22,13 +22,13 @@
           (click)="editMessage(message)" status="danger"></nb-icon>
       </div>
       }
-      @if (canWrite) {
+      @if (canModify(message)) {
       <button class="icon-button" nbButton ghost shape="round" size="small" (click)="editMessage(message)"
         title="ערוך הודעה">
         <nb-icon icon="edit"></nb-icon>
       </button>
       }
-      @if (canWrite && !message.deleted) {
+      @if (canModify(message) && !message.deleted) {
       <button class="icon-button" nbButton ghost shape="round" size="small" (click)="deleteMessage(message)"
         title="מחק הודעה">
         <nb-icon icon="trash-2"></nb-icon>
