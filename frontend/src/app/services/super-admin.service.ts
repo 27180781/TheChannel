@@ -19,6 +19,9 @@ export interface ChannelFeatures {
   webhook: boolean;
   magnetLockedByAdmin: boolean;
   adsLockedByAdmin: boolean;
+  // When on, every /api/channel/{slug}/* call answers 403 channel_disabled and
+  // the channel view shows the "הערוץ מושבת" page.
+  disabled: boolean;
 }
 
 export interface ChannelData {

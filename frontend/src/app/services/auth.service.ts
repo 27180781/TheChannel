@@ -67,6 +67,16 @@ export class AuthService {
     return this.userInfo;
   }
 
+  /**
+   * loadUserInfo() memoises `userInfo`, so after something changes the user's
+   * roles server-side (opening a channel makes them its owner) a plain re-read
+   * hands back the stale object. Drop the cache first and refetch.
+   */
+  async reloadUserInfo() {
+    this.userInfo = undefined;
+    return this.loadUserInfo();
+  }
+
   // Fire-and-forget visit registration: the channel-scoped user-info handler is
   // what writes the viewer into channel:<slug>:registered_emails, which feeds
   // the participant counter. Errors (e.g. anonymous visitor) are irrelevant.
