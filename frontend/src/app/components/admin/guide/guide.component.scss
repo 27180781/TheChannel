@@ -1,0 +1,150 @@
+:host {
+  display: block;
+  direction: rtl;
+}
+
+.guide-card {
+  margin-bottom: 0 !important;
+}
+
+.guide-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.guide-header__title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+
+  nb-icon {
+    font-size: 1.25rem;
+  }
+}
+
+.guide-body {
+  max-height: 75vh;
+  overflow-y: auto;
+}
+
+.guide-lead {
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--text-hint-color, #8f9bb3);
+}
+
+.guide-accordion {
+  display: block;
+
+  ::ng-deep nb-accordion-item-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+}
+
+.guide-section-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--text-basic-color);
+}
+
+.role-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  border-radius: 0.75rem;
+  padding: 0.1rem 0.5rem;
+  white-space: nowrap;
+  border: 1px solid transparent;
+
+  &--owner {
+    color: var(--color-primary-default, #3366ff);
+    border-color: var(--color-primary-default, #3366ff);
+  }
+
+  &--moderator {
+    color: var(--color-info-default, #0095ff);
+    border-color: var(--color-info-default, #0095ff);
+  }
+}
+
+.guide-text {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--text-basic-color);
+}
+
+.guide-subtitle {
+  margin: 1rem 0 0.4rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-basic-color);
+}
+
+.guide-list {
+  margin: 0 0 0.5rem;
+  padding-inline-start: 1.25rem;
+  font-size: 0.9rem;
+  line-height: 1.7;
+  color: var(--text-basic-color);
+
+  li {
+    margin-bottom: 0.3rem;
+  }
+
+  .guide-list {
+    margin-top: 0.3rem;
+  }
+
+  &--steps {
+    li {
+      margin-bottom: 0.5rem;
+    }
+  }
+}
+
+.guide-note {
+  margin: 0.75rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  color: var(--text-hint-color, #8f9bb3);
+}
+
+.guide-alert {
+  margin: 0.75rem 0 0;
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+code {
+  background: var(--background-basic-color-2, #f7f9fc);
+  color: var(--text-basic-color);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.85em;
+  direction: ltr;
+  display: inline-block;
+  unicode-bidi: embed;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 576px) {
+  .guide-body {
+    max-height: none;
+  }
+
+  .guide-section-title {
+    font-size: 0.88rem;
+  }
+
+  .guide-list {
+    padding-inline-start: 1rem;
+  }
+}

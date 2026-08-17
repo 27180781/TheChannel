@@ -11,6 +11,7 @@ import { ReportsComponent } from "./reports/reports.component";
 import { StatisticsComponent } from "./statistics/statistics.component";
 import { MagnetAdsComponent } from "./magnet-ads/magnet-ads.component";
 import { StorageComponent } from "./storage/storage.component";
+import { GuideComponent } from "./guide/guide.component";
 
 type MenuAccess = 'moderator' | 'owner';
 
@@ -28,7 +29,8 @@ type MenuAccess = 'moderator' | 'owner';
     ReportsComponent,
     StatisticsComponent,
     MagnetAdsComponent,
-    StorageComponent
+    StorageComponent,
+    GuideComponent
 ],
   templateUrl: './admin-panel.component.html',
   styleUrls: ['./admin-panel.component.scss']
@@ -47,6 +49,7 @@ export class AdminPanelComponent implements OnInit, OnDestroy {
   readonly statistics = "statistics";
   readonly magnetAds = "magnet-ads";
   readonly storage = "storage";
+  readonly guide = "guide";
 
   selectedMenuItem = this.info;
 
@@ -127,6 +130,16 @@ export class AdminPanelComponent implements OnInit, OnDestroy {
           }
         ],
       }
+    },
+    {
+      // Pure content with no endpoint behind it: anyone who can open the panel
+      // at all (moderator and above) should be able to read the manual, and the
+      // sections that need owner rights say so inside.
+      access: 'moderator',
+      item: {
+        title: 'מדריך למנהל הערוץ',
+        icon: 'book-open-outline',
+      }
     }
   ];
 
@@ -198,6 +211,9 @@ export class AdminPanelComponent implements OnInit, OnDestroy {
             break;
           case 'hard-drive-outline':
             this.selectedMenuItem = this.storage;
+            break;
+          case 'book-open-outline':
+            this.selectedMenuItem = this.guide;
             break;
         }
       });
