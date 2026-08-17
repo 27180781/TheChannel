@@ -103,10 +103,22 @@ func main() {
 		r.Get("/channels/{slug}/storage", getSuperAdminChannelStorage)
 		r.Put("/channels/{slug}/storage", setSuperAdminChannelStorage)
 		r.Post("/statistics/reset", resetStatistics)
+		r.Get("/support/tickets", adminListSupportTickets)
+		r.Post("/support/tickets/{id}/reply", adminReplySupportTicket)
+		r.Post("/support/tickets/{id}/status", adminSetSupportTicketStatus)
 		r.Get("/channel-requests", listChannelRequests)
 		r.Post("/channel-requests/{id}/approve", approveChannelRequest)
 		r.Post("/channel-requests/{id}/reject", rejectChannelRequest)
 	})
+
+	// Support tickets. Creation and the thread view are deliberately outside
+	// checkLogin: a visitor who cannot sign in (or has not yet) is exactly the
+	// person who most needs to reach the operator. An anonymous thread is
+	// guarded by the unguessable token minted at creation.
+	r.Post("/api/support/tickets", createSupportTicket)
+	r.Get("/api/support/tickets/{id}", getSupportTicket)
+	r.Post("/api/support/tickets/{id}/reply", replySupportTicket)
+	r.With(checkLogin).Get("/api/support/my-tickets", listMySupportTickets)
 
 	// Per-channel API import (with API key, no channel middleware needed - slug from URL)
 	r.Post("/api/channel/{slug}/import/post", addNewPost)

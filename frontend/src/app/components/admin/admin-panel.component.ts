@@ -11,6 +11,7 @@ import { ReportsComponent } from "./reports/reports.component";
 import { StatisticsComponent } from "./statistics/statistics.component";
 import { MagnetAdsComponent } from "./magnet-ads/magnet-ads.component";
 import { StorageComponent } from "./storage/storage.component";
+import { SupportBoxComponent } from '../support/support-box.component';
 import { GuideComponent } from "./guide/guide.component";
 
 type MenuAccess = 'moderator' | 'owner';
@@ -30,6 +31,7 @@ type MenuAccess = 'moderator' | 'owner';
     StatisticsComponent,
     MagnetAdsComponent,
     StorageComponent,
+    SupportBoxComponent,
     GuideComponent
 ],
   templateUrl: './admin-panel.component.html',
@@ -50,6 +52,7 @@ export class AdminPanelComponent implements OnInit, OnDestroy {
   readonly magnetAds = "magnet-ads";
   readonly storage = "storage";
   readonly guide = "guide";
+  readonly support = "support";
 
   selectedMenuItem = this.info;
 
@@ -140,6 +143,16 @@ export class AdminPanelComponent implements OnInit, OnDestroy {
         title: 'מדריך למנהל הערוץ',
         icon: 'book-open-outline',
       }
+    },
+    {
+      // The support endpoints have no role gate of their own — anyone at all
+      // may write to the operator — so this is only about who sees the tab.
+      // Moderator matches the rest of the panel.
+      access: 'moderator',
+      item: {
+        title: 'פנייה למערכת',
+        icon: 'email-outline',
+      }
     }
   ];
 
@@ -211,6 +224,9 @@ export class AdminPanelComponent implements OnInit, OnDestroy {
             break;
           case 'hard-drive-outline':
             this.selectedMenuItem = this.storage;
+            break;
+          case 'email-outline':
+            this.selectedMenuItem = this.support;
             break;
           case 'book-open-outline':
             this.selectedMenuItem = this.guide;

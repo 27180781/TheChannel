@@ -4,6 +4,7 @@ import {
   NbCardModule, NbButtonModule, NbIconModule, NbLayoutModule,
 } from '@nebular/theme';
 import { AuthService } from '../../services/auth.service';
+import { SupportBoxComponent } from '../support/support-box.component';
 
 interface LandingStep {
   icon: string;
@@ -26,6 +27,7 @@ interface LandingFeature {
     NbButtonModule,
     NbIconModule,
     NbLayoutModule,
+    SupportBoxComponent,
   ],
   styleUrl: './landing-page.component.scss',
   template: `
@@ -111,6 +113,19 @@ interface LandingFeature {
       </div>
     </section>
 
+    <!-- Reaching the operator must not require an account: someone who cannot
+         sign in, or is deciding whether to, is exactly who needs to ask. -->
+    <section class="section support" id="contact">
+      <div class="wrap wrap--narrow">
+        <h2 class="section__title">יצירת קשר</h2>
+        <app-support-box
+          [signedIn]="signedIn"
+          title="פנייה למערכת"
+          subtitle="שאלה לפני פתיחת ערוץ, תקלה או בקשה — כתבו לנו ונחזור אליכם.">
+        </app-support-box>
+      </div>
+    </section>
+
     <footer class="footer">
       <span>TheChannel &copy; 2024</span>
     </footer>
@@ -121,6 +136,9 @@ interface LandingFeature {
 })
 export class LandingPageComponent implements OnInit {
   isChecking = true;
+  /** Only decides which fields the contact form asks for; the server takes the
+   *  sender's identity from the session regardless of what is posted. */
+  signedIn = false;
 
   readonly steps: LandingStep[] = [
     { icon: 'person-add-outline', title: 'מתחברים', text: 'התחברות מהירה עם חשבון גוגל — כדי שהערוץ יירשם על שמכם.' },

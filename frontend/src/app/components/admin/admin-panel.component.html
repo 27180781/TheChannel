@@ -37,6 +37,13 @@
             @case (storage) {
             <app-channel-storage [slug]="channelSlug"></app-channel-storage>
             }
+            @case (support) {
+            <app-support-box
+              [channelSlug]="channelSlug"
+              [signedIn]="true"
+              subtitle="שאלה, תקלה או בקשה — הפנייה מגיעה להנהלת המערכת, והתשובה תופיע כאן.">
+            </app-support-box>
+            }
             @case (guide) {
             <app-guide></app-guide>
             }

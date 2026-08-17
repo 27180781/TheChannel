@@ -24,8 +24,9 @@ import { SuperAdminStatisticsComponent } from './statistics/super-admin-statisti
 import { SuperAdminStorageComponent } from './storage/super-admin-storage.component';
 import { GlobalStorageComponent } from './global-storage/global-storage.component';
 import { ChannelRequestsComponent } from './channel-requests/channel-requests.component';
+import { SupportInboxComponent } from './support/support-inbox.component';
 
-type ViewName = 'channels' | 'channel-features' | 'channel-users' | 'channel-storage' | 'ads' | 'magnet' | 'users' | 'settings' | 'statistics' | 'global-storage' | 'requests';
+type ViewName = 'channels' | 'channel-features' | 'channel-users' | 'channel-storage' | 'ads' | 'magnet' | 'users' | 'settings' | 'statistics' | 'global-storage' | 'requests' | 'support';
 
 @Component({
   selector: 'app-super-admin-panel',
@@ -48,6 +49,7 @@ type ViewName = 'channels' | 'channel-features' | 'channel-users' | 'channel-sto
     SuperAdminStorageComponent,
     GlobalStorageComponent,
     ChannelRequestsComponent,
+    SupportInboxComponent,
   ],
   templateUrl: './super-admin-panel.component.html',
   styleUrl: './super-admin-panel.component.scss',
@@ -70,9 +72,11 @@ export class SuperAdminPanelComponent implements OnInit, OnDestroy {
   readonly VIEW_STATISTICS: ViewName = 'statistics';
   readonly VIEW_GLOBAL_STORAGE: ViewName = 'global-storage';
   readonly VIEW_REQUESTS: ViewName = 'requests';
+  readonly VIEW_SUPPORT: ViewName = 'support';
 
   navigationMenu: NbMenuItem[] = [
     { title: 'בקשות לערוצים', icon: 'inbox-outline', selected: false },
+    { title: 'פניות למערכת', icon: 'email-outline', selected: false },
     { title: 'ערוצים', icon: 'list-outline', selected: true },
     { title: 'פרסומות iframe', icon: 'film-outline' },
     { title: 'פרסומות מגנט', icon: 'pricetags-outline' },
@@ -111,6 +115,10 @@ export class SuperAdminPanelComponent implements OnInit, OnDestroy {
         switch (event.item.icon) {
           case 'inbox-outline':
             this.selectedView = this.VIEW_REQUESTS;
+            this.selectedChannelSlug = '';
+            break;
+          case 'email-outline':
+            this.selectedView = this.VIEW_SUPPORT;
             this.selectedChannelSlug = '';
             break;
           case 'list-outline':

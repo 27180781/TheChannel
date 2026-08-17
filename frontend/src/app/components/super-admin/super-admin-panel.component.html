@@ -24,6 +24,9 @@
       @case (VIEW_REQUESTS) {
         <app-channel-requests></app-channel-requests>
       }
+      @case (VIEW_SUPPORT) {
+        <app-support-inbox></app-support-inbox>
+      }
       @case (VIEW_CHANNELS) {
         <app-channels-list
           (editFeatures)="onEditFeatures($event)"
