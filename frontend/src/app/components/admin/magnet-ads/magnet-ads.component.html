@@ -42,31 +42,6 @@
 
   <nb-card>
     <nb-card-header class="card-header">
-      <nb-icon icon="lock-outline"></nb-icon>
-      <span>מפתח API למגנט</span>
-    </nb-card-header>
-    <nb-card-body>
-      <div class="setting-block">
-        <label class="bold" for="api-key">מפתח API (publisher key)</label>
-        <p class="hint">
-          מפתח שניתן לכם ע"י מגנט. נדרש לצפייה בנתוני הקלקות ותגמולים. שמירת ההגדרות
-          תשמור גם את המפתח. המפתח לא נחשף לצד הלקוח - הקריאה למגנט מתבצעת מהשרת.
-        </p>
-        <input
-          nbInput
-          fullWidth
-          type="password"
-          autocomplete="new-password"
-          id="api-key"
-          dir="ltr"
-          [(ngModel)]="apiKey"
-          placeholder="d8059fc0-9bde-4270-89e4-6f485c617c41">
-      </div>
-    </nb-card-body>
-  </nb-card>
-
-  <nb-card>
-    <nb-card-header class="card-header">
       <nb-icon icon="clock-outline"></nb-icon>
       <span>תדירות הצגה</span>
     </nb-card-header>

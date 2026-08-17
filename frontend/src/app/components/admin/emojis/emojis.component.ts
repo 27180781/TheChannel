@@ -35,10 +35,12 @@ export class EmojisComponent implements OnInit {
   }
 
   setEmojis() {
-    // if (!this.emojis?.length) {
-    //   this.toastrService.warning('', 'אין אימוגים להגדיר');
-    //   return;
-    // }
+    // A failed load leaves emojis undefined; saving then would wipe the
+    // channel's stored list. An intentionally emptied list ([]) still saves.
+    if (!this.emojis) {
+      this.toastrService.warning('', 'רשימת האימוגים לא נטענה — לא ניתן לשמור');
+      return;
+    }
 
     this.adminService.setEmojis(this.emojis)
       .then(() => {

@@ -12,7 +12,7 @@ import { StatisticsComponent } from "./statistics/statistics.component";
 import { MagnetAdsComponent } from "./magnet-ads/magnet-ads.component";
 import { StorageComponent } from "./storage/storage.component";
 
-type MenuAccess = 'any' | 'moderator' | 'owner';
+type MenuAccess = 'moderator' | 'owner';
 
 @Component({
   selector: 'admin-dashboard',
@@ -154,7 +154,6 @@ export class AdminPanelComponent implements OnInit, OnDestroy {
   }
 
   private canAccess(access: MenuAccess): boolean {
-    if (access === 'any') return true;
     const user = this.authService.userInfo;
     if (user?.globalRole === 'super_admin') return true;
     const role = user?.channelRoles?.[this.slugService.slug];

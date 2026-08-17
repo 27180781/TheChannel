@@ -12,7 +12,9 @@ import {
 } from '@nebular/theme';
 import { AdminService } from '../../../services/admin.service';
 import { AuthService } from '../../../services/auth.service';
+import { SuperAdminService } from '../../../services/super-admin.service';
 import { Setting } from '../../../models/setting.model';
+import { toBool } from '../settings/settings.schema';
 
 type MagnetMode = 'by_messages' | 'by_time';
 
@@ -37,6 +39,8 @@ const MAGNET_KEYS = [
   'magnet_min_time_seconds',
   'magnet_per_seconds',
   'magnet_min_messages_since',
+  // Saved by an old UI but consumed by nothing — recognised so it is pruned
+  // from the payload on the next save instead of surviving as an "other" setting.
   'magnet_api_key',
 ] as const;
 
@@ -63,7 +67,6 @@ export class MagnetAdsComponent implements OnInit {
   minTimeSeconds = 0;
   perSeconds = 60;
   minMessagesSince = 0;
-  apiKey = '';
 
   otherSettings: Setting[] = [];
   inProgress = false;
@@ -76,6 +79,7 @@ export class MagnetAdsComponent implements OnInit {
   constructor(
     private adminService: AdminService,
     private authService: AuthService,
+    private superAdminService: SuperAdminService,
     private toast: NbToastrService,
   ) {}
 
@@ -101,7 +105,7 @@ export class MagnetAdsComponent implements OnInit {
       const v = s.value;
       switch (s.key) {
         case 'magnet_enabled':
-          this.enabled = this.toBool(v);
+          this.enabled = toBool(v);
           break;
         case 'magnet_snippet':
           this.snippet = v == null ? '' : String(v);
@@ -121,21 +125,8 @@ export class MagnetAdsComponent implements OnInit {
         case 'magnet_min_messages_since':
           this.minMessagesSince = this.toInt(v, 0);
           break;
-        case 'magnet_api_key':
-          this.apiKey = v == null ? '' : String(v);
-          break;
       }
     }
-  }
-
-  private toBool(v: any): boolean {
-    if (typeof v === 'boolean') return v;
-    if (typeof v === 'number') return v !== 0;
-    if (typeof v === 'string') {
-      const s = v.toLowerCase().trim();
-      return s === '1' || s === 'true' || s === 'yes' || s === 'on';
-    }
-    return false;
   }
 
   private toInt(v: any, fallback: number): number {
@@ -160,8 +151,6 @@ export class MagnetAdsComponent implements OnInit {
       if (this.minMessagesSince > 0) out.push({ key: 'magnet_min_messages_since', value: String(this.minMessagesSince) as any });
     }
 
-    if (this.apiKey?.trim()) out.push({ key: 'magnet_api_key', value: this.apiKey.trim() as any });
-
     this.adminService.setSettings(out)
       .then(() => this.toast.success('', 'הגדרות מגנט נשמרו בהצלחה'))
       .catch(() => this.toast.danger('', 'שגיאה בשמירת ההגדרות'))
@@ -173,29 +162,22 @@ export class MagnetAdsComponent implements OnInit {
     this.statsError = '';
 
     try {
-      const res = await fetch('/api/super-admin/magnet/stats', { credentials: 'include' });
-      const text = await res.text();
-      let data: any = null;
-      try { data = text ? JSON.parse(text) : null; } catch {}
-
-      if (!res.ok) {
-        if (res.status === 400) {
-          this.statsError = data?.message || 'מפתח API לא תקין או חסר. שמרו תחילה מפתח תקין ונסו שוב.';
-        } else if (res.status === 404) {
-          this.statsError = 'האתר לא נמצא במערכת מגנט או שאינו מאושר.';
-        } else if (res.status === 401 || res.status === 403) {
-          this.statsError = 'אין הרשאה לגשת לנתוני מגנט.';
-        } else {
-          this.statsError = data?.message || `שגיאה בקבלת נתונים (HTTP ${res.status})`;
-        }
-        this.stats = null;
-        return;
-      }
-
-      this.stats = data as MagnetStatsResponse;
+      this.stats = await this.superAdminService.getMagnetStats() as MagnetStatsResponse;
       this.statsLoadedAt = new Date();
-    } catch {
-      this.statsError = 'שגיאת רשת בקריאה לשרת מגנט';
+    } catch (err: any) {
+      const status = err?.status ?? 0;
+      const data = err?.error;
+      if (status === 400) {
+        this.statsError = data?.message || 'מפתח API לא תקין או חסר. שמרו תחילה מפתח תקין ונסו שוב.';
+      } else if (status === 404) {
+        this.statsError = 'האתר לא נמצא במערכת מגנט או שאינו מאושר.';
+      } else if (status === 401 || status === 403) {
+        this.statsError = 'אין הרשאה לגשת לנתוני מגנט.';
+      } else if (status === 0) {
+        this.statsError = 'שגיאת רשת בקריאה לשרת מגנט';
+      } else {
+        this.statsError = data?.message || `שגיאה בקבלת נתונים (HTTP ${status})`;
+      }
       this.stats = null;
     } finally {
       this.statsLoading = false;
