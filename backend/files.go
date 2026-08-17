@@ -138,7 +138,12 @@ func dbGetFileMetadata(ctx context.Context, id string) (*FileMetadata, error) {
 		return &meta, nil
 	}
 
-	// Fallback: read from YAML (legacy local files)
+	// Fallback: read from YAML (legacy local files). The slicing below panics on
+	// short ids, and callers feed this ids parsed out of Redis index members, so
+	// malformed data must be an error rather than a crash.
+	if len(id) < 4 {
+		return nil, fmt.Errorf("file not found")
+	}
 	metadataFilePath := filepath.Join(rootUploadPath, id[:2], id[2:4], id+".yaml")
 	yamlData, err := os.ReadFile(metadataFilePath)
 	if err != nil {
@@ -357,14 +362,21 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 // enforceStorageQuota checks quota and runs auto-cleanup if needed.
 // Returns error if quota is exceeded and auto-cleanup is disabled or insufficient.
 func enforceStorageQuota(ctx context.Context, slug string, newFileSize int64) error {
+	// All three config reads fail closed: dbGetEffectiveStorageQuota and
+	// dbGetChannelStorageUsed already map redis.Nil to defaults, so only real
+	// failures surface here — and a real failure silently disabling quota
+	// enforcement would let usage grow past quota unnoticed.
 	quota, err := dbGetEffectiveStorageQuota(ctx, slug)
-	if err != nil || quota == 0 {
+	if err != nil {
+		return fmt.Errorf("storage configuration unavailable")
+	}
+	if quota == 0 {
 		return nil
 	}
 
 	used, err := dbGetChannelStorageUsed(ctx, slug)
 	if err != nil {
-		return nil
+		return fmt.Errorf("storage configuration unavailable")
 	}
 
 	if used+newFileSize <= quota {
@@ -392,7 +404,7 @@ func enforceStorageQuota(ctx context.Context, slug string, newFileSize int64) er
 		if needToFree <= 0 {
 			break
 		}
-		deleteFileByID(ctx, slug, f.ID)
+		deleteFileByID(ctx, slug, f.ID, true)
 		needToFree -= f.Size
 	}
 
@@ -406,17 +418,31 @@ func enforceStorageQuota(ctx context.Context, slug string, newFileSize int64) er
 	return nil
 }
 
-// deleteFileByID marks a file as deleted, decrements storage counter, and removes from R2/disk if no more refs.
-func deleteFileByID(ctx context.Context, slug, fileID string) {
+// deleteFileByID marks a file as deleted, decrements storage counter, and removes
+// from R2/disk if no more refs. removeFromIndex controls whether the channel's
+// file tracking set is updated; dbDeleteChannel passes false because it drops
+// the whole set itself (and a per-file O(N) scan would make deletion O(N^2)).
+func deleteFileByID(ctx context.Context, slug, fileID string, removeFromIndex bool) {
 	meta, err := dbGetFileMetadata(ctx, fileID)
 	if err != nil || meta.Delete {
+		return
+	}
+
+	// Claim the deletion atomically: two concurrent callers (e.g. parallel
+	// near-quota uploads running auto-cleanup) would otherwise both pass the
+	// meta.Delete check and double-decrement used_bytes and the hash refcount,
+	// deleting a blob another channel still references.
+	claimed, err := rdb.SetNX(ctx, "file:"+fileID+":deleting", 1, time.Minute).Result()
+	if err != nil || !claimed {
 		return
 	}
 
 	meta.Delete = true
 	dbSaveFileMetadata(ctx, meta)
 	dbDecrChannelStorageUsed(ctx, slug, meta.Size)
-	dbRemoveChannelFile(ctx, slug, fileID)
+	if removeFromIndex {
+		dbRemoveChannelFile(ctx, slug, fileID)
+	}
 
 	// Decrement hash refs and delete from storage if no more references
 	refs, err := dbDecrFileHashRefs(ctx, meta.Hash)
