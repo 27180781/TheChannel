@@ -1,0 +1,487 @@
+<nb-card class="guide-card">
+  <nb-card-header class="guide-header">
+    <div class="guide-header__title">
+      <nb-icon icon="book-open-outline"></nb-icon>
+      <span>מדריך למנהל הערוץ</span>
+    </div>
+    @if (dialogMode) {
+      <button nbButton ghost size="small" type="button" title="סגור" (click)="close()">
+        <nb-icon icon="close-outline"></nb-icon>
+      </button>
+    }
+  </nb-card-header>
+
+  <nb-card-body class="guide-body">
+    <p class="guide-lead">
+      כל מה שצריך כדי להפעיל את הערוץ לבד. כל סעיף מסביר מה זה, איפה זה נמצא ומה עושים.
+      סעיפים המסומנים <span class="role-badge role-badge--owner">בעלים</span> נגישים רק לבעלי הערוץ;
+      סעיפים המסומנים <span class="role-badge role-badge--moderator">מנהל</span> נגישים גם למנהלים.
+    </p>
+
+    <nb-accordion multi class="guide-accordion">
+
+      <!-- ========== מתחילים כאן ========== -->
+      <nb-accordion-item [expanded]="true">
+        <nb-accordion-item-header>
+          <nb-icon icon="flash-outline"></nb-icon>
+          <span class="guide-section-title">מתחילים כאן — חמשת הצעדים הראשונים</span>
+        </nb-accordion-item-header>
+        <nb-accordion-item-body>
+          <ol class="guide-list guide-list--steps">
+            <li>
+              <strong>שיתוף הקישור לערוץ.</strong>
+              זו הדרך היחידה שקוראים מגיעים לערוץ. הכתובת בנויה כך:
+              <code dir="ltr">{{ channelUrlExample }}</code>
+            </li>
+            <li>
+              <strong>מילוי פרטי הערוץ.</strong>
+              בפאנל הניהול, בטאב <em>פרטי ערוץ</em>: לוגו, כותרת ותיאור.
+            </li>
+            <li>
+              <strong>פרסום ההודעה הראשונה.</strong>
+              תיבת הכתיבה נמצאת בתחתית מסך הערוץ עצמו, לא בפאנל הניהול.
+            </li>
+            <li>
+              <strong>הוספת כותבים ומנהלים.</strong>
+              בטאב <em>הרשאות</em> — הוספה לפי כתובת מייל.
+            </li>
+            <li>
+              <strong>מעבר על ההגדרות.</strong>
+              בטאב <em>הגדרות</em>: גודל קובץ מרבי, התראות דחיפה, פרסומות ועוד.
+            </li>
+          </ol>
+          <p class="guide-note">
+            פאנל הניהול נפתח ממסך הערוץ: לוחצים על תמונת המשתמש בפינה העליונה ובוחרים
+            <em>ניהול ערוץ</em>. הוא נפתח כחלון מעל הערוץ.
+          </p>
+        </nb-accordion-item-body>
+      </nb-accordion-item>
+
+      <!-- ========== הכתובת של הערוץ ========== -->
+      <nb-accordion-item>
+        <nb-accordion-item-header>
+          <nb-icon icon="share-outline"></nb-icon>
+          <span class="guide-section-title">הכתובת של הערוץ ואיך מצטרפים אליו</span>
+        </nb-accordion-item-header>
+        <nb-accordion-item-body>
+          <ul class="guide-list">
+            <li>
+              כתובת הערוץ היא <code dir="ltr">&lt;כתובת האתר&gt;/channel/&lt;slug&gt;</code>,
+              למשל <code dir="ltr">{{ channelUrlExample }}</code>.
+            </li>
+            <li>ה-slug נקבע בעת פתיחת הערוץ ואינו משתנה מתוך פאנל הניהול. השם והתיאור — כן.</li>
+            <li>אין רשימת מנויים ואין אישור הצטרפות: מי שמקבל את הקישור נכנס לערוץ.</li>
+            <li>
+              בכותרת הערוץ מוצג מונה <em>משתתפים</em>, וליד כל הודעה מוצג מונה צפיות
+              (כאשר ספירת הצפיות מאופשרת לערוץ).
+            </li>
+            <li>
+              להעברת הודעה בודדת: כפתור <em>העתק קישור להודעה</em> שליד ההודעה מייצר קישור ישיר
+              בצורה <code dir="ltr">/channel/&lt;slug&gt;#&lt;id&gt;</code>.
+            </li>
+          </ul>
+        </nb-accordion-item-body>
+      </nb-accordion-item>
+
+      <!-- ========== פרסום הודעה ========== -->
+      <nb-accordion-item>
+        <nb-accordion-item-header>
+          <nb-icon icon="edit-2-outline"></nb-icon>
+          <span class="guide-section-title">פרסום הודעה — תיבת הכתיבה</span>
+        </nb-accordion-item-header>
+        <nb-accordion-item-body>
+          <p class="guide-text">
+            תיבת הכתיבה נמצאת בתחתית מסך הערוץ ומוצגת למי שיש לו הרשאת כתיבה ומעלה.
+            הטקסט נכתב ב-Markdown ומוצג מעוצב לאחר הפרסום.
+          </p>
+
+          <h4 class="guide-subtitle">כפתורי סרגל הכלים (משמאל לימין בתיבה)</h4>
+          <ul class="guide-list">
+            <li><strong>מנעול — "הגדרה הודעה כפרסום":</strong> מסמן את ההודעה כתוכן פרסומי.</li>
+            <li><strong>הדגשה / נטוי / קו תחתון:</strong> עוטפים את הטקסט המסומן בתגיות Markdown
+              (<code dir="ltr">**טקסט**</code>, <code dir="ltr">*טקסט*</code>, <code dir="ltr">&lt;u&gt;טקסט&lt;/u&gt;</code>).</li>
+            <li><strong>הוסף בלוק קוד:</strong> עוטף בשלושה גרשיים אחוריים.</li>
+            <li><strong>צרף קובץ:</strong> פותח בוחר קבצים. הקובץ עולה מיד, וקישור אליו נוסף לטקסט
+              ההודעה. תמונה, וידאו ואודיו מוטמעים ומוצגים בתוך ההודעה; כל שאר הקבצים מופיעים כקישור
+              להורדה. הכפתור מוצג רק כאשר העלאת קבצים מאופשרת לערוץ.</li>
+            <li><strong>עזרה ל-Markdown:</strong> נפתח מדריך התחביר באתר חיצוני בלשונית חדשה.</li>
+          </ul>
+
+          <h4 class="guide-subtitle">שני המתגים שבצד</h4>
+          <ul class="guide-list">
+            <li><strong>תצוגה מקדימה:</strong> מחליף את תיבת הכתיבה בתצוגה של ההודעה כפי שתיראה.
+              יש לכבות אותו כדי להמשיך לכתוב.</li>
+            <li><strong>Enter שולח:</strong> כשהוא דלוק, Enter מפרסם ו-Ctrl+Enter (או Shift+Enter)
+              יורד שורה. <em>זו העדפה אישית שנשמרת בדפדפן שלך בלבד</em> — לא הגדרת ערוץ, ולא משפיעה
+              על כותבים אחרים.</li>
+          </ul>
+
+          <h4 class="guide-subtitle">עוד דברים שכדאי לדעת</h4>
+          <ul class="guide-list">
+            <li><strong>הדבקת תמונה:</strong> ניתן להדביק תמונה מהלוח ישירות לתיבה (Ctrl+V) והיא
+              תעלה ותוטמע כאילו צורפה.</li>
+            <li><strong>תזמון הודעה:</strong> כפתור השעון פותח בחירת תאריך ושעה. ההודעה תפורסם
+              בזמן שנבחר. הכפתור מוצג רק כאשר הודעות מתוזמנות מאופשרות לערוץ.</li>
+            <li>אורך הודעה מוגבל ל-2048 תווים בתיבת הכתיבה.</li>
+            <li>לא ניתן לפרסם הודעה ריקה, ולא ניתן לשלוח בזמן שקובץ עדיין בהעלאה.</li>
+          </ul>
+        </nb-accordion-item-body>
+      </nb-accordion-item>
+
+      <!-- ========== ניהול הודעות ========== -->
+      <nb-accordion-item>
+        <nb-accordion-item-header>
+          <nb-icon icon="message-square-outline"></nb-icon>
+          <span class="guide-section-title">ניהול הודעות שכבר פורסמו</span>
+        </nb-accordion-item-header>
+        <nb-accordion-item-body>
+          <p class="guide-text">הכפתורים מופיעים בשורת הכותרת של כל הודעה בערוץ:</p>
+          <ul class="guide-list">
+            <li><strong>ערוך הודעה:</strong> טוען את ההודעה לתיבת הכתיבה. אחרי השמירה מסומן ליד
+              ההודעה שהיא נערכה ומתי.</li>
+            <li><strong>מחק הודעה:</strong> ההודעה מוסתרת מהקוראים. למי שרשאי לערוך היא עדיין
+              נראית בשקיפות עם סימן אזהרה — לחיצה עליו טוענת אותה לעריכה, ואישור העריכה
+              <em>מפרסם אותה מחדש</em>. כך משחזרים הודעה שנמחקה בטעות.</li>
+            <li><strong>צטט הודעה:</strong> מוסיף את הטקסט שלה לתיבת הכתיבה כבסיס להודעה חדשה.</li>
+            <li><strong>דווח על ההודעה:</strong> מוצג לכל משתמש מחובר; הדיווח מגיע לטאב
+              <em>דיווחים</em> בפאנל.</li>
+            <li><strong>העתק קישור להודעה:</strong> מעתיק ללוח קישור ישיר להודעה.</li>
+            <li><strong>תגובות אימוג'י:</strong> ריחוף מעל ההודעה פותח את בורר האימוג'ים; לחיצה
+              על אימוג'י קיים מוסיפה או מסירה את התגובה שלך.</li>
+          </ul>
+          <nb-alert status="info" class="guide-alert">
+            שם הכותב של ההודעה מוצג רק למנהלים ומעלה. לקוראים הרגילים כל ההודעות מוצגות בשם הערוץ.
+          </nb-alert>
+        </nb-accordion-item-body>
+      </nb-accordion-item>
+
+      <!-- ========== הרשאות ========== -->
+      <nb-accordion-item>
+        <nb-accordion-item-header>
+          <nb-icon icon="shield-outline"></nb-icon>
+          <span class="guide-section-title">הרשאות — מי מורשה לעשות מה</span>
+          <span class="role-badge role-badge--owner">בעלים</span>
+        </nb-accordion-item-header>
+        <nb-accordion-item-body>
+          <p class="guide-text">
+            טאב <em>הרשאות</em> בפאנל הניהול. לוחצים <em>הוסף מורשה</em>, מזינים כתובת מייל,
+            בוחרים תפקיד (<em>מנהל</em> או <em>כותב</em>) ולוחצים <em>הוסף משתמש</em>.
+            בסיום יש ללחוץ <em>שמור</em>. שינוי תפקיד קיים או מחיקת משתמש נעשים באותה רשימה.
+          </p>
+
+          <h4 class="guide-subtitle">סולם התפקידים</h4>
+          <ul class="guide-list">
+            <li><strong>מנהל-על</strong> — תפקיד מערכתי כלל-אתרי, לא משויך לערוץ ולא ניתן להענקה מכאן.</li>
+            <li><strong>בעלים</strong> — נקבע בפתיחת הערוץ. גישה לכל הטאבים בפאנל. לא ניתן להסירו
+              מהרשימה ולא לשנות את תפקידו כאן.</li>
+            <li><strong>מנהל</strong> — פרטי ערוץ, סטטיסטיקות, אימוג'ים ודיווחים; וכן עריכה ומחיקה
+              של <em>כל</em> ההודעות בערוץ.</li>
+            <li><strong>כותב</strong> — יכול לפרסם, אבל לא רואה את פאנל הניהול כלל.</li>
+          </ul>
+
+          <nb-alert status="warning" class="guide-alert">
+            <strong>שימו לב:</strong> כותב רשאי לערוך ולמחוק <em>רק את ההודעות שהוא עצמו כתב</em>.
+            מנהל ומעלה רשאי לערוך ולמחוק כל הודעה בערוץ, של כל אחד. הודעות מערכת — כאלה שפורסמו
+            דרך תזמון או דרך יבוא ב-API ואין להן כותב אישי — ניתנות לעריכה גם על ידי כותב.
+          </nb-alert>
+
+          <p class="guide-note">
+            כל בדיקות ההרשאה נאכפות בשרת, ולכן טאב שאינו מוצג לך אינו נגיש גם בעקיפין.
+          </p>
+        </nb-accordion-item-body>
+      </nb-accordion-item>
+
+      <!-- ========== פרטי ערוץ ========== -->
+      <nb-accordion-item>
+        <nb-accordion-item-header>
+          <nb-icon icon="info-outline"></nb-icon>
+          <span class="guide-section-title">פרטי ערוץ — לוגו, כותרת ותיאור</span>
+          <span class="role-badge role-badge--moderator">מנהל</span>
+        </nb-accordion-item-header>
+        <nb-accordion-item-body>
+          <ul class="guide-list">
+            <li>טאב <em>פרטי ערוץ</em> — הטאב הראשון בפאנל, זה שנפתח כברירת מחדל.</li>
+            <li><strong>לוגו:</strong> לחיצה על התמונה העגולה (או על כפתור העיפרון) פותחת בחירת
+              קובץ תמונה. התמונה נשמרת מיד עם הבחירה.</li>
+            <li><strong>כותרת:</strong> שם הערוץ כפי שמוצג בראש המסך ובכותרת הלשונית בדפדפן.</li>
+            <li><strong>תיאור:</strong> שורת המשנה שמתחת לשם.</li>
+            <li>בסיום יש ללחוץ <em>עדכן</em>. הכותרת והתיאור אינם נשמרים בלי לחיצה זו.</li>
+          </ul>
+        </nb-accordion-item-body>
+      </nb-accordion-item>
+
+      <!-- ========== הגדרות ========== -->
+      <nb-accordion-item>
+        <nb-accordion-item-header>
+          <nb-icon icon="settings-2-outline"></nb-icon>
+          <span class="guide-section-title">הגדרות — כל השדות, אחד אחד</span>
+          <span class="role-badge role-badge--owner">בעלים</span>
+        </nb-accordion-item-header>
+        <nb-accordion-item-body>
+          <p class="guide-text">
+            טאב <em>הגדרות</em>. כל השינויים במסך נשמרים יחד בלחיצה על <em>שמור שינויים</em>
+            שבתחתית המסך.
+          </p>
+
+          <h4 class="guide-subtitle">הגדרות כלליות</h4>
+          <ul class="guide-list">
+            <li><strong>הגבלת גודל קובץ להעלאה (MB)</strong> — הגודל המרבי לקובץ שמצורף להודעה.
+              ברירת מחדל: 100 MB. קובץ גדול מהמותר נדחה עם הודעת "קובץ גדול מדי".</li>
+          </ul>
+
+          <h4 class="guide-subtitle">אבטחה ו-API</h4>
+          <ul class="guide-list">
+            <li><strong>מפתח API ליבוא הודעות</strong> — מפתח סודי שמאפשר למערכת חיצונית לפרסם
+              לערוץ. כל עוד השדה ריק, נתיב היבוא סגור לחלוטין. ראו את הסעיף
+              "יבוא הודעות דרך API" בהמשך.</li>
+          </ul>
+
+          <h4 class="guide-subtitle">אחסון ומדיה</h4>
+          <ul class="guide-list">
+            <li><strong>מפתח API של TinyPNG לכיווץ תמונות</strong> — כשמוגדר מפתח, תמונות
+              PNG/JPEG/WebP נדחסות אוטומטית לפני שמירתן ותופסות פחות מקום במכסת האחסון.
+              מפתח חינמי מתקבל באתר <code dir="ltr">tinypng.com</code>.</li>
+          </ul>
+
+          <h4 class="guide-subtitle">פרסומות</h4>
+          <ul class="guide-list">
+            <li><strong>קישור HTML של פרסומת להטמעה</strong> — כתובת של עמוד שיוצג במסגרת פרסומת
+              בערוץ. הזנת כתובת היא מה שמפעיל את הצגת המסגרת; ריקון השדה מכבה אותה.</li>
+            <li><strong>רוחב חלון הפרסומת (פיקסלים)</strong> — רוחב מומלץ: 300.</li>
+          </ul>
+
+          <h4 class="guide-subtitle">וובהוק (Webhook)</h4>
+          <ul class="guide-list">
+            <li><strong>כתובת ה-Webhook</strong> — כתובת שאליה תישלח בקשת POST בכל יצירה, עדכון
+              או מחיקה של הודעה. שימושי לסנכרון עם מערכת חיצונית.</li>
+            <li><strong>טוקן אימות</strong> — מחרוזת סודית שנשלחת יחד עם כל בקשה, כדי שהצד המקבל
+              יוכל לוודא שהבקשה אכן הגיעה מכאן. מומלץ למלא.</li>
+          </ul>
+
+          <h4 class="guide-subtitle">התראות דחיפה (Push)</h4>
+          <ul class="guide-list">
+            <li><strong>הפעלת התראות דחיפה בערוץ זה</strong> — מתג. כשהוא דלוק, מנויי הערוץ מקבלים
+              התראה בכל הודעה חדשה. פרטים נוספים בסעיף ההתראות בהמשך.</li>
+          </ul>
+
+          <h4 class="guide-subtitle">החלפות טקסט אוטומטיות (Regex)</h4>
+          <ul class="guide-list">
+            <li>כללי החלפה שרצים אוטומטית על כל הודעה חדשה שמתפרסמת.</li>
+            <li>בכל כלל שני שדות: <em>תבנית (Regex)</em> ו-<em>החלפה</em>.</li>
+            <li>לדוגמה, תבנית <code dir="ltr">(.*?\!)(.*)</code> והחלפה
+              <code dir="ltr">**$1**$2</code> יגרמו לכך שכותרת הודעה המסתיימת בסימן קריאה תודגש.</li>
+            <li>מוסיפים עם <em>הוסף כלל החלפה</em>, מסירים בכפתור פח האשפה שבצד הכלל.</li>
+            <li>תבנית שגויה פשוט לא תופעל — כדאי לבדוק על הודעת ניסיון לפני שמסתמכים עליה.</li>
+          </ul>
+
+          <h4 class="guide-subtitle">הגדרות מתקדמות / מותאמות אישית</h4>
+          <ul class="guide-list">
+            <li>אקורדיון בתחתית המסך, לשמירת הגדרות שאין להן עדיין שדה בטופס.</li>
+            <li>מזינים ידנית <em>שם הגדרה</em> ו-<em>ערך</em>. בשימוש רק כשנאמר לכם במפורש מה
+              להזין — שם שגוי פשוט יישמר ולא יעשה דבר.</li>
+          </ul>
+        </nb-accordion-item-body>
+      </nb-accordion-item>
+
+      <!-- ========== אימוג'ים ========== -->
+      <nb-accordion-item>
+        <nb-accordion-item-header>
+          <nb-icon icon="smiling-face-outline"></nb-icon>
+          <span class="guide-section-title">אימוג'ים — התגובות המותרות בערוץ</span>
+          <span class="role-badge role-badge--moderator">מנהל</span>
+        </nb-accordion-item-header>
+        <nb-accordion-item-body>
+          <ul class="guide-list">
+            <li>טאב <em>אימוג'ים</em> קובע אילו אימוג'ים הקוראים יכולים לבחור כתגובה להודעה.</li>
+            <li>הוספה: בחירת אימוג'י מתוך הבורר שבתחתית המסך.</li>
+            <li>הסרה: לחיצה על אימוג'י ברשימת המאופשרים.</li>
+            <li>בסיום יש ללחוץ <em>שמור</em>.</li>
+            <li>רשימה ריקה משמעה שאין מה לבחור — הקוראים לא יוכלו להגיב בכלל.</li>
+          </ul>
+        </nb-accordion-item-body>
+      </nb-accordion-item>
+
+      <!-- ========== דיווחים ========== -->
+      <nb-accordion-item>
+        <nb-accordion-item-header>
+          <nb-icon icon="alert-triangle-outline"></nb-icon>
+          <span class="guide-section-title">דיווחים — טיפול בפניות מהקוראים</span>
+          <span class="role-badge role-badge--moderator">מנהל</span>
+        </nb-accordion-item-header>
+        <nb-accordion-item-body>
+          <ul class="guide-list">
+            <li>טאב <em>דיווחים</em> נפתח לשלוש תת-רשימות: <em>פתוחים</em>, <em>סגורים</em>
+              ו-<em>כל הדיווחים</em>.</li>
+            <li>בכל דיווח מוצגים מועד הקבלה, שם המדווח, כתובת המייל שלו וסיבת הדיווח.</li>
+            <li><strong>צפה בהודעה</strong> — קופץ להודעה שעליה דווח בתוך הערוץ.</li>
+            <li><strong>סגור דיווח</strong> — מסמן כמטופל ומעביר לרשימת הסגורים; אפשר תמיד
+              <em>לפתוח דיווח מחדש</em>.</li>
+            <li>סגירת דיווח אינה מוחקת את ההודעה. אם ההודעה עצמה בעייתית — יש למחוק אותה
+              מתוך הערוץ.</li>
+          </ul>
+        </nb-accordion-item-body>
+      </nb-accordion-item>
+
+      <!-- ========== סטטיסטיקות ========== -->
+      <nb-accordion-item>
+        <nb-accordion-item-header>
+          <nb-icon icon="bar-chart-outline"></nb-icon>
+          <span class="guide-section-title">סטטיסטיקות</span>
+          <span class="role-badge role-badge--moderator">מנהל</span>
+        </nb-accordion-item-header>
+        <nb-accordion-item-body>
+          <ul class="guide-list">
+            <li>מספר המשתמשים שהזדהו במערכת, שיא המשתמשים המחוברים בו-זמנית (עם מועד השיא),
+              ומספר המחוברים כרגע.</li>
+            <li>מתחת לנתונים גרף קו של החיבורים לאורך זמן. אפשר לשנות זום בגרף, ולחזור למצב
+              ההתחלתי בכפתור <em>איפוס גרף</em>.</li>
+          </ul>
+        </nb-accordion-item-body>
+      </nb-accordion-item>
+
+      <!-- ========== אחסון ========== -->
+      <nb-accordion-item>
+        <nb-accordion-item-header>
+          <nb-icon icon="hard-drive-outline"></nb-icon>
+          <span class="guide-section-title">אחסון — מכסת הקבצים של הערוץ</span>
+          <span class="role-badge role-badge--owner">בעלים</span>
+        </nb-accordion-item-header>
+        <nb-accordion-item-body>
+          <ul class="guide-list">
+            <li>טאב <em>אחסון</em> מציג כמה מקום תופסים הקבצים שהועלו לערוץ מתוך המכסה שהוקצתה לו.</li>
+            <li>כשהשימוש מתקרב למכסה מוצגת התראה, וכשהוא כמעט מלא ההתראה הופכת אדומה.</li>
+            <li><strong>ניקוי אוטומטי של מדיה ישנה</strong> — מתג שנשמר מיד עם השינוי. כשהוא דלוק,
+              המערכת מוחקת מעצמה קבצים ישנים כדי לפנות מקום כשהאחסון עומד להיגמר.</li>
+            <li>המכסה עצמה נקבעת על ידי מנהל המערכת ואינה ניתנת לשינוי מכאן.</li>
+            <li>הגדרת מפתח TinyPNG (בטאב ההגדרות) מקטינה את התמונות ומאטה את התמלאות המכסה.</li>
+          </ul>
+        </nb-accordion-item-body>
+      </nb-accordion-item>
+
+      <!-- ========== פרסומות ========== -->
+      <nb-accordion-item>
+        <nb-accordion-item-header>
+          <nb-icon icon="pricetags-outline"></nb-icon>
+          <span class="guide-section-title">פרסומות — מסגרת פרסומת ושילוב מגנט</span>
+          <span class="role-badge role-badge--owner">בעלים</span>
+        </nb-accordion-item-header>
+        <nb-accordion-item-body>
+          <p class="guide-text">בערוץ קיימות שתי דרכים נפרדות להצגת פרסומות:</p>
+
+          <h4 class="guide-subtitle">1. מסגרת פרסומת (בטאב הגדרות)</h4>
+          <ul class="guide-list">
+            <li>ממלאים <em>קישור HTML של פרסומת להטמעה</em> ו-<em>רוחב חלון הפרסומת</em>.</li>
+            <li>המסגרת מוצגת בצד הערוץ. ריקון הקישור מבטל אותה.</li>
+          </ul>
+
+          <h4 class="guide-subtitle">2. שילוב פרסומות ממגנט (טאב נפרד)</h4>
+          <ul class="guide-list">
+            <li><strong>הפעלת שילוב פרסומות מגנט</strong> — מתג ראשי; כיבוי מסיר לגמרי את הפרסומות.</li>
+            <li><strong>קוד הטמעה ממגנט</strong> — מדביקים כאן את קוד ה-HTML/JavaScript שקיבלתם
+              ממגנט. הוא מוטמע כפי שהוא בכל מיקום פרסומת בין ההודעות, ונטען אצל הגולש בלבד —
+              אם אין תשובה משרת הפרסום, פשוט לא מוצג כלום.</li>
+            <li><strong>תדירות הצגה</strong> — בוחרים אחת משתי שיטות:
+              <ul class="guide-list">
+                <li><em>לפי כמות הודעות</em>: פרסומת אחת בכל X הודעות, עם החרגה אופציונלית של
+                  זמן מינימום בשניות בין פרסומות.</li>
+                <li><em>לפי זמן</em>: פרסומת אחת בכל X שניות, עם החרגה אופציונלית של מספר
+                  הודעות חדשות מינימלי מאז הפרסומת הקודמת.</li>
+              </ul>
+            </li>
+            <li>בסיום לוחצים <em>שמור הגדרות מגנט</em>.</li>
+            <li>נתוני ההקלקות והתגמולים ממגנט מגיעים מהמפתח הגלובלי של המערכת ולכן מוצגים
+              למנהל-על בלבד, לא לבעלי הערוץ.</li>
+          </ul>
+
+          <p class="guide-note">
+            אפשר גם לסמן הודעה בודדת שכתבתם כתוכן פרסומי, בעזרת כפתור המנעול בתיבת הכתיבה.
+          </p>
+        </nb-accordion-item-body>
+      </nb-accordion-item>
+
+      <!-- ========== התראות דחיפה ========== -->
+      <nb-accordion-item>
+        <nb-accordion-item-header>
+          <nb-icon icon="bell-outline"></nb-icon>
+          <span class="guide-section-title">התראות דחיפה (Push)</span>
+          <span class="role-badge role-badge--owner">בעלים</span>
+        </nb-accordion-item-header>
+        <nb-accordion-item-body>
+          <ul class="guide-list">
+            <li>בטאב <em>הגדרות</em>, בקטגוריית "התראות דחיפה (Push)", מדליקים את המתג
+              <em>הפעלת התראות דחיפה בערוץ זה</em> ולוחצים <em>שמור שינויים</em>.</li>
+            <li>הקורא עצמו צריך לאשר קבלת התראות: בכותרת הערוץ מופיע כפתור פעמון, ולחיצה עליו
+              מבקשת את הרשאת ההתראות מהדפדפן.</li>
+          </ul>
+          <nb-alert status="warning" class="guide-alert">
+            תשתית ההתראות (FCM) מוגדרת גלובלית על ידי מנהל המערכת. אם היא לא הוגדרה, כפתור
+            הפעמון לא יופיע לקוראים והתראות לא יישלחו — גם אם המתג בהגדרות דלוק. במקרה כזה
+            יש לפנות למנהל המערכת; אין דרך להשלים את ההגדרה מתוך פאנל הערוץ.
+          </nb-alert>
+        </nb-accordion-item-body>
+      </nb-accordion-item>
+
+      <!-- ========== יבוא API ו-Webhook ========== -->
+      <nb-accordion-item>
+        <nb-accordion-item-header>
+          <nb-icon icon="link-2-outline"></nb-icon>
+          <span class="guide-section-title">חיבור מערכות חיצוניות — יבוא הודעות ו-Webhook</span>
+          <span class="role-badge role-badge--owner">בעלים</span>
+        </nb-accordion-item-header>
+        <nb-accordion-item-body>
+          <h4 class="guide-subtitle">יבוא הודעות דרך API</h4>
+          <ul class="guide-list">
+            <li>ממלאים <em>מפתח API ליבוא הודעות</em> בטאב ההגדרות ושומרים.</li>
+            <li>מערכת חיצונית שולחת בקשת POST לכתובת
+              <code dir="ltr">/api/channel/&lt;slug&gt;/import/post</code>
+              עם הכותרת <code dir="ltr">X-API-Key</code> ובה המפתח.</li>
+            <li>גוף הבקשה הוא JSON עם שדה טקסט (Markdown), ואפשר גם חותמת זמן.
+              חותמת זמן ריקה משמעה "עכשיו"; חותמת עתידית נדחית.</li>
+            <li>הודעות שנוצרו כך הן הודעות מערכת ואין להן כותב אישי — לכן כל כותב בערוץ
+              רשאי לערוך ולמחוק אותן.</li>
+            <li>המפתח מקנה זכות פרסום בערוץ — יש לשמור עליו כמו על סיסמה, ולהחליפו אם דלף.</li>
+          </ul>
+
+          <h4 class="guide-subtitle">Webhook יוצא</h4>
+          <ul class="guide-list">
+            <li>ממלאים <em>כתובת ה-Webhook</em> ו-<em>טוקן אימות</em> בטאב ההגדרות.</li>
+            <li>בכל יצירה, עדכון או מחיקה של הודעה נשלחת בקשת POST לכתובת שהוגדרה.</li>
+            <li>אם הכתובת ריקה — לא נשלח דבר.</li>
+          </ul>
+        </nb-accordion-item-body>
+      </nb-accordion-item>
+
+      <!-- ========== מה עושים כשמשהו חסר ========== -->
+      <nb-accordion-item>
+        <nb-accordion-item-header>
+          <nb-icon icon="question-mark-circle-outline"></nb-icon>
+          <span class="guide-section-title">משהו שכתוב כאן לא מופיע אצלי?</span>
+        </nb-accordion-item-header>
+        <nb-accordion-item-body>
+          <p class="guide-text">שלוש סיבות אפשריות, לפי הסדר:</p>
+          <ol class="guide-list guide-list--steps">
+            <li>
+              <strong>הרשאה.</strong> טאב שדורש הרשאת בעלים לא מוצג למנהל כלל. בדקו בטאב
+              <em>הרשאות</em> איזה תפקיד יש לכם, או בקשו מבעל הערוץ.
+            </li>
+            <li>
+              <strong>היכולת בוטלה לערוץ.</strong> מנהל המערכת יכול לכבות יכולות עבור ערוץ מסוים:
+              תגובות אימוג'י, העלאת קבצים, דיווחים, הודעות מתוזמנות, פרסומות, התראות ו-Webhook.
+              במקרה כזה הכפתור המתאים פשוט לא מוצג, גם לבעלים. אין דרך להחזיר אותו מתוך הפאנל —
+              יש לפנות למנהל המערכת.
+            </li>
+            <li>
+              <strong>הערוץ הושבת.</strong> למנהל המערכת יש מתג שמשבית ערוץ שלם. במצב זה הערוץ
+              אינו נגיש לאיש, כולל הבעלים.
+            </li>
+          </ol>
+          <p class="guide-note">
+            אם הכול נראה תקין ובכל זאת משהו לא עובד — כדאי לרענן את העמוד; חלק מההגדרות
+            נטענות פעם אחת בכניסה לערוץ.
+          </p>
+        </nb-accordion-item-body>
+      </nb-accordion-item>
+
+    </nb-accordion>
+  </nb-card-body>
+</nb-card>
