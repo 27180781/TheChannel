@@ -45,6 +45,26 @@ const channelCtxKey ctxKey = "channel"
 
 var slugRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9\-]{1,48}[a-z0-9]$`)
 
+// defaultChannelFeatures is the single source of the toggles every new channel
+// starts with. Both creation paths (createChannel, approveChannelRequest) must
+// use it: requireFeature is only applied to toggles both paths default to true,
+// and a drifted copy of this literal is exactly what backfillChannelFeatures
+// had to repair.
+func defaultChannelFeatures() ChannelFeatures {
+	return ChannelFeatures{
+		Reactions:         true,
+		FileUploads:       true,
+		Reports:           true,
+		ScheduledMessages: true,
+		// Permission to use the feature, not a request to use it: each one
+		// still needs the owner to configure it in channel settings. Left
+		// false these would be unusable and undiagnosable for a new tenant.
+		Ads:           true,
+		Notifications: true,
+		Webhook:       true,
+	}
+}
+
 func channelMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		slug := chi.URLParam(r, "slug")
@@ -170,18 +190,7 @@ func createChannel(w http.ResponseWriter, r *http.Request) {
 		Name:       req.Name,
 		OwnerEmail: req.OwnerEmail,
 		CreatedAt:  time.Now(),
-		Features: ChannelFeatures{
-			Reactions:         true,
-			FileUploads:       true,
-			Reports:           true,
-			ScheduledMessages: true,
-			// Permission to use the feature, not a request to use it: each one
-			// still needs the owner to configure it in channel settings. Left
-			// false these would be unusable and undiagnosable for a new tenant.
-			Ads:           true,
-			Notifications: true,
-			Webhook:       true,
-		},
+		Features:   defaultChannelFeatures(),
 	}
 
 	if err := dbCreateChannel(ctx, channel); err != nil {
@@ -277,159 +286,24 @@ func getSuperAdminChannel(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(channel)
 }
 
-// Super admin: set channel users
-func superAdminSetChannelUsers(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+// channelUserChange is one requested role change on a channel's user list.
+type channelUserChange struct {
+	Email string      `json:"email"`
+	Role  ChannelRole `json:"role"`
+}
 
-	slug := chi.URLParam(r, "slug")
-
-	var req struct {
-		Users []struct {
-			Email string      `json:"email"`
-			Role  ChannelRole `json:"role"`
-		} `json:"users"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-	defer r.Body.Close()
-
-	// Read-modify-write under a WATCH so a concurrent role edit elsewhere is not
-	// silently overwritten by this one.
-	if err := dbUpdateUsersList(ctx, func(users []User) []User {
+// applyChannelRoleChanges returns the dbUpdateUsersList callback shared by the
+// super-admin and owner user-management handlers. allowOwner is the only
+// difference between them: a channel owner may not promote others to owner.
+func applyChannelRoleChanges(slug string, changes []channelUserChange, allowOwner bool) func([]User) []User {
+	return func(users []User) []User {
 		userMap := make(map[string]int)
 		for i, u := range users {
 			userMap[u.Email] = i
 		}
 
-		for _, ru := range req.Users {
-			if i, exists := userMap[ru.Email]; exists {
-				if users[i].ChannelRoles == nil {
-					users[i].ChannelRoles = make(map[string]ChannelRole)
-				}
-				if ru.Role == "" {
-					delete(users[i].ChannelRoles, slug)
-				} else {
-					users[i].ChannelRoles[slug] = ru.Role
-				}
-			} else if ru.Role != "" {
-				userMap[ru.Email] = len(users)
-				users = append(users, User{
-					Email:        ru.Email,
-					ChannelRoles: map[string]ChannelRole{slug: ru.Role},
-				})
-			}
-		}
-		return users
-	}); err != nil {
-		http.Error(w, "error", http.StatusInternalServerError)
-		return
-	}
-	if err := initializePrivilegeUsers(); err != nil {
-		log.Printf("initializePrivilegeUsers after superAdminSetChannelUsers: %v", err)
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(Response{Success: true})
-}
-
-// Super admin: get channel users
-func superAdminGetChannelUsers(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	slug := chi.URLParam(r, "slug")
-
-	users, err := dbGetUsersList(ctx)
-	if err != nil {
-		http.Error(w, "error", http.StatusInternalServerError)
-		return
-	}
-
-	type ChannelUser struct {
-		Email string      `json:"email"`
-		Role  ChannelRole `json:"role"`
-	}
-
-	// Encoded straight to JSON: a nil slice would serialise as null, which the
-	// user management screens do not accept.
-	channelUsers := make([]ChannelUser, 0)
-	for _, u := range users {
-		if u.ChannelRoles != nil {
-			if role, exists := u.ChannelRoles[slug]; exists {
-				channelUsers = append(channelUsers, ChannelUser{Email: u.Email, Role: role})
-			}
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(channelUsers)
-}
-
-// Channel owner: get channel users (for this channel only)
-func getChannelUsers(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	slug := channelSlugFromCtx(r)
-
-	users, err := dbGetUsersList(ctx)
-	if err != nil {
-		http.Error(w, "error", http.StatusInternalServerError)
-		return
-	}
-
-	type ChannelUser struct {
-		Email string      `json:"email"`
-		Role  ChannelRole `json:"role"`
-	}
-
-	// Encoded straight to JSON: a nil slice would serialise as null, which the
-	// user management screens do not accept.
-	channelUsers := make([]ChannelUser, 0)
-	for _, u := range users {
-		if u.ChannelRoles != nil {
-			if role, exists := u.ChannelRoles[slug]; exists {
-				channelUsers = append(channelUsers, ChannelUser{Email: u.Email, Role: role})
-			}
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(channelUsers)
-}
-
-// Channel owner: set channel users (cannot assign owner role)
-func setChannelUsers(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	slug := channelSlugFromCtx(r)
-
-	var req struct {
-		Users []struct {
-			Email string      `json:"email"`
-			Role  ChannelRole `json:"role"`
-		} `json:"users"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-	defer r.Body.Close()
-
-	// Read-modify-write under a WATCH so a concurrent role edit elsewhere is not
-	// silently overwritten by this one.
-	if err := dbUpdateUsersList(ctx, func(users []User) []User {
-		userMap := make(map[string]int)
-		for i, u := range users {
-			userMap[u.Email] = i
-		}
-
-		for _, ru := range req.Users {
-			if ru.Role == RoleOwner {
+		for _, ru := range changes {
+			if !allowOwner && ru.Role == RoleOwner {
 				continue // owner cannot promote others to owner
 			}
 			if i, exists := userMap[ru.Email]; exists {
@@ -450,14 +324,86 @@ func setChannelUsers(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		return users
-	}); err != nil {
+	}
+}
+
+// setChannelUsersForSlug decodes the request and applies the role changes under
+// the guarded users:list transaction. Shared by both set-users handlers.
+func setChannelUsersForSlug(w http.ResponseWriter, r *http.Request, slug string, allowOwner bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var req struct {
+		Users []channelUserChange `json:"users"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	// Read-modify-write under a WATCH so a concurrent role edit elsewhere is not
+	// silently overwritten by this one.
+	if err := dbUpdateUsersList(ctx, applyChannelRoleChanges(slug, req.Users, allowOwner)); err != nil {
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
 	if err := initializePrivilegeUsers(); err != nil {
-		log.Printf("initializePrivilegeUsers after setChannelUsers: %v", err)
+		log.Printf("initializePrivilegeUsers after setChannelUsers(%s): %v", slug, err)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(Response{Success: true})
+}
+
+// listChannelUsers writes the channel's user/role list. Shared by the
+// super-admin and owner get-users handlers.
+func listChannelUsers(w http.ResponseWriter, slug string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	users, err := dbGetUsersList(ctx)
+	if err != nil {
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
+	}
+
+	type ChannelUser struct {
+		Email string      `json:"email"`
+		Role  ChannelRole `json:"role"`
+	}
+
+	// Encoded straight to JSON: a nil slice would serialise as null, which the
+	// user management screens do not accept.
+	channelUsers := make([]ChannelUser, 0)
+	for _, u := range users {
+		if u.ChannelRoles != nil {
+			if role, exists := u.ChannelRoles[slug]; exists {
+				channelUsers = append(channelUsers, ChannelUser{Email: u.Email, Role: role})
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(channelUsers)
+}
+
+// Super admin: set channel users
+func superAdminSetChannelUsers(w http.ResponseWriter, r *http.Request) {
+	setChannelUsersForSlug(w, r, chi.URLParam(r, "slug"), true)
+}
+
+// Super admin: get channel users
+func superAdminGetChannelUsers(w http.ResponseWriter, r *http.Request) {
+	listChannelUsers(w, chi.URLParam(r, "slug"))
+}
+
+// Channel owner: get channel users (for this channel only)
+func getChannelUsers(w http.ResponseWriter, r *http.Request) {
+	listChannelUsers(w, channelSlugFromCtx(r))
+}
+
+// Channel owner: set channel users (cannot assign owner role)
+func setChannelUsers(w http.ResponseWriter, r *http.Request) {
+	setChannelUsersForSlug(w, r, channelSlugFromCtx(r), false)
 }

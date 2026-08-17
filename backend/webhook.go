@@ -33,14 +33,17 @@ func SendWebhook(ctx context.Context, slug string, action string, message *Messa
 	chCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	// Operator-level kill switch: the super admin can withdraw webhooks from a
-	// tenant regardless of what the owner has configured.
-	if ch, err := dbGetChannel(chCtx, slug); err == nil && !ch.Features.Webhook {
+	cfg := getChannelConfig(chCtx, slug)
+	if cfg.WebhookURL == "" {
 		return
 	}
 
-	cfg := getChannelConfig(chCtx, slug)
-	if cfg.WebhookURL == "" {
+	// Operator-level kill switch: the super admin can withdraw webhooks from a
+	// tenant regardless of what the owner has configured. The channel HAS a
+	// webhook configured at this point, so going silent without a trace would
+	// make the kill switch undiagnosable.
+	if ch, err := dbGetChannel(chCtx, slug); err == nil && !ch.Features.Webhook {
+		log.Printf("webhook suppressed for %s: feature disabled by operator\n", slug)
 		return
 	}
 

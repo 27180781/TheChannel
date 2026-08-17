@@ -55,7 +55,7 @@ func buildStorageInfo(ctx context.Context, slug string) (*StorageInfo, error) {
 	}, nil
 }
 
-// ─── Channel Owner Handlers ───────────────────────────────────────────────────
+// ─── Channel Owner Handlers ─────────────────────────────────────────────────
 
 // GET /api/channel/{slug}/admin/storage
 func getChannelStorageInfo(w http.ResponseWriter, r *http.Request) {
@@ -98,7 +98,7 @@ func setChannelAutoCleanup(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(Response{Success: true})
 }
 
-// ─── Super Admin Handlers ─────────────────────────────────────────────────────
+// ─── Super Admin Handlers ───────────────────────────────────────────────────
 
 type GlobalStorageConfig struct {
 	DefaultQuotaGB float64 `json:"defaultQuotaGb"` // in GB for display
@@ -134,6 +134,14 @@ func setSuperAdminStorageConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer r.Body.Close()
+
+	// A negative quota would make every upload fail the used+size <= quota test
+	// platform-wide while the dashboard still shows "ok" (pct math is guarded by
+	// quota > 0), so it must be rejected up front.
+	if req.DefaultQuotaGB < 0 {
+		http.Error(w, "quota must be >= 0", http.StatusBadRequest)
+		return
+	}
 
 	bytes := int64(req.DefaultQuotaGB * 1024 * 1024 * 1024)
 	if err := dbSetGlobalStorageQuota(ctx, bytes); err != nil {
@@ -193,6 +201,11 @@ func setSuperAdminChannelStorage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer r.Body.Close()
+
+	if req.QuotaGB < 0 {
+		http.Error(w, "quota must be >= 0 (0 = use global)", http.StatusBadRequest)
+		return
+	}
 
 	bytes := int64(req.QuotaGB * 1024 * 1024 * 1024)
 	if err := dbSetChannelStorageQuota(ctx, slug, bytes); err != nil {
