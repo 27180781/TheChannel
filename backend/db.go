@@ -508,7 +508,7 @@ func dbGetEmojisList(ctx context.Context, slug string) ([]string, error) {
 
 	var emojisList []string
 	if err := json.Unmarshal([]byte(emojisJSON), &emojisList); err != nil {
-	eturn nil, fmt.Errorf("failed to unmarshal emojis: %v", err)
+		return nil, fmt.Errorf("failed to unmarshal emojis: %v", err)
 	}
 
 	return emojisList, nil
@@ -1275,7 +1275,7 @@ func dbSetGlobalAdsConfig(ctx context.Context, cfg *GlobalAdsConfig) error {
 	return rdb.Set(ctx, "global:ads:config", data, 0).Err()
 }
 
-// ─── Storage Quota & Usage ────────────────────────────────────────────────────
+// ─── Storage Quota & Usage ──────────────────────────────────────────────────
 
 const defaultStorageQuotaBytes = int64(5 * 1024 * 1024 * 1024) // 5 GB
 
