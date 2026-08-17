@@ -47,10 +47,14 @@ func main() {
 	runMigrations(migCtx)
 	migCancel()
 
-	go statLogger()
-
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
+	// The shipped deployment fronts the backend with Caddy (docker-compose
+	// exposes only the proxy), so RemoteAddr is the proxy's container IP for
+	// every request. RealIP restores the client address from X-Forwarded-For so
+	// per-IP rate limiting works; the backend port must therefore never be
+	// exposed directly, since RealIP trusts the header.
+	r.Use(middleware.RealIP)
 
 	// Auth routes
 	r.Get("/auth/google", getGoogleAuthValues)

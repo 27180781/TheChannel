@@ -259,6 +259,13 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 	slug := channelSlugFromCtx(r)
 	streamKey := fmt.Sprintf("channel:%s:events", slug)
 
+	// The stream stores the full payload including real author identity; the
+	// /messages Lua deliberately anonymizes author/authorId for anyone below
+	// writer, and this stream must not leak what that endpoint withholds. The
+	// role is fixed per connection, so it is resolved once here and applied at
+	// send time.
+	isWriter := hasChannelRole(r, slug, RoleWriter)
+
 	// Support SSE reconnection: browser sends Last-Event-ID with the stream entry ID
 	// from the last event it received. On fresh connect, start from "now".
 	// A malformed value would make every XREAD fail, turning the loop below into
@@ -335,6 +342,9 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 			for _, msg := range stream.Messages {
 				lastID = msg.ID
 				data, _ := msg.Values["data"].(string)
+				if !isWriter {
+					data = maskEventAuthor(data)
+				}
 				if _, err := fmt.Fprintf(w, "id: %s\ndata: %s\n\n", lastID, data); err != nil {
 					return
 				}
@@ -342,4 +352,26 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		flusher.Flush()
 	}
+}
+
+// maskEventAuthor rewrites an event payload the way the /messages Lua does for
+// sub-writer viewers: author becomes "Anonymous" and authorId is blanked. Kept
+// cheap: the payload is only re-marshalled when there is something to mask, and
+// anything that is not a PushMessage (heartbeats, malformed entries) passes
+// through untouched.
+func maskEventAuthor(data string) string {
+	var pm PushMessage
+	if err := json.Unmarshal([]byte(data), &pm); err != nil {
+		return data
+	}
+	if pm.M.Author == "" && pm.M.AuthorId == "" {
+		return data
+	}
+	pm.M.Author = "Anonymous"
+	pm.M.AuthorId = ""
+	masked, err := json.Marshal(pm)
+	if err != nil {
+		return data
+	}
+	return string(masked)
 }

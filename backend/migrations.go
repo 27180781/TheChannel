@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
+	"regexp"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // migrationsAppliedKey holds the set of migration IDs that have already run.
@@ -20,6 +22,19 @@ const channelFeaturesBackfillID = "2026-08-channel-features-backfill"
 // fileChannelSlugBackfillID is the one-shot backfill that stamps the owning
 // channel onto file records written before FileMetadata had a ChannelSlug.
 const fileChannelSlugBackfillID = "2026-08-file-channel-slug-backfill"
+
+// fileSlugFromMessagesID is the second file-ownership pass: it derives ownership
+// from message content and channel logos, catching every legacy file that is in
+// no channel:<slug>:files index (the index and ChannelSlug were introduced in
+// the same commit, so index-only iteration visits essentially no legacy record).
+const fileSlugFromMessagesID = "2026-08-file-slug-from-messages"
+
+// channelFeaturesBackfillV2ID converges environments where the v1 backfill
+// already ran with its old conditional logic (which enabled Webhook/
+// Notifications/Ads only for channels using them at migration time, leaving
+// late adopters silently dead). It unconditionally enables the same seven
+// toggles the creation paths default to true.
+const channelFeaturesBackfillV2ID = "2026-08-channel-features-backfill-v2"
 
 // runMigrations applies any data migration that has not run yet.
 //
@@ -39,6 +54,8 @@ func runMigrations(ctx context.Context) {
 	}{
 		{channelFeaturesBackfillID, backfillChannelFeatures},
 		{fileChannelSlugBackfillID, backfillFileChannelSlugs},
+		{fileSlugFromMessagesID, backfillFileSlugsFromMessages},
+		{channelFeaturesBackfillV2ID, backfillChannelFeaturesV2},
 	}
 
 	for _, m := range migrations {
@@ -64,16 +81,6 @@ func runMigrations(ctx context.Context) {
 	}
 }
 
-// settingString returns the value of key, or "" when it is absent.
-func settingString(settings Settings, key string) string {
-	for i := range settings {
-		if settings[i].Key == key {
-			return settings[i].GetString()
-		}
-	}
-	return ""
-}
-
 // settingBool reports whether key is present and truthy, using the same
 // parsing the rest of the app uses (booleans are persisted as "1").
 func settingBool(settings Settings, key string) bool {
@@ -85,8 +92,8 @@ func settingBool(settings Settings, key string) bool {
 	return false
 }
 
-// backfillChannelFeatures turns on the ChannelFeatures toggles for channels that
-// were already using the corresponding feature.
+// backfillChannelFeatures turns on the ChannelFeatures toggles that were never
+// enforced before the flags shipped.
 //
 // Why this is needed: createChannel and approveChannelRequest only ever set
 // Reactions, FileUploads, Reports and ScheduledMessages, so Ads, Notifications
@@ -95,20 +102,17 @@ func settingBool(settings Settings, key string) bool {
 // Enforcing them without this backfill would switch the features off platform
 // wide.
 //
+// All seven toggles are enabled unconditionally, matching the creation-path
+// defaults: the flags are pure super-admin kill switches, and a channel that
+// first configures a webhook/push/ad AFTER the deploy must not find the feature
+// silently dead because it happened to be unconfigured at migration time.
+//
 // The migration only ever turns a flag ON. It runs exactly once, so a super
 // admin who later turns something off is never overridden.
 func backfillChannelFeatures(ctx context.Context) error {
 	channels, err := dbListChannels(ctx)
 	if err != nil {
 		return fmt.Errorf("list channels: %w", err)
-	}
-
-	// A channel under an ads lock serves the GLOBAL ad source and ignores its own
-	// settings (see isChannelAdsLocked / getAdsSettings), so "has no ad-iframe-src
-	// of its own" does not mean "shows no ads".
-	globalAds, err := dbGetGlobalAdsConfig(ctx)
-	if err != nil {
-		return fmt.Errorf("get global ads config: %w", err)
 	}
 
 	// require_auth / require_auth_for_view_files / count_views were removed from
@@ -138,29 +142,16 @@ func backfillChannelFeatures(ctx context.Context) error {
 		// before requireFeature started gating them, and nothing outside
 		// dbCreateChannel ever set them — so a channel whose features blob was
 		// written before that would silently lose all four on the first boot
-		// after the gates ship.
+		// after the gates ship. Webhook, Notifications and Ads were likewise
+		// unenforced pre-deploy, so enabling them preserves live behaviour for
+		// every channel and keeps them pure super-admin kill switches.
 		f.Reactions = true
 		f.FileUploads = true
 		f.Reports = true
 		f.ScheduledMessages = true
-
-		// Configured to call out to a webhook.
-		if settingString(settings, "webhook_url") != "" {
-			f.Webhook = true
-		}
-
-		// Owner switched push on for this channel.
-		if settingBool(settings, "on_notification") {
-			f.Notifications = true
-		}
-
-		// Either the channel has its own iframe ad, or it is locked to a global
-		// one that is actually configured.
-		if settingString(settings, "ad-iframe-src") != "" {
-			f.Ads = true
-		} else if isChannelAdsLocked(globalAds, ch) && globalAds.Src != "" {
-			f.Ads = true
-		}
+		f.Webhook = true
+		f.Notifications = true
+		f.Ads = true
 
 		if applyAuthFlags {
 			// These three keys were offered in the channel settings UI but the
@@ -192,6 +183,44 @@ func backfillChannelFeatures(ctx context.Context) error {
 	return nil
 }
 
+// backfillChannelFeaturesV2 unconditionally enables the seven default-on
+// toggles. It exists because v1 originally enabled Webhook/Notifications/Ads
+// only for channels using them at migration time; environments where that
+// version already ran (and marked itself applied) still converge through this
+// second pass. Like v1 it only ever turns flags ON and runs exactly once, so a
+// super admin who turns something off afterwards is never overridden.
+func backfillChannelFeaturesV2(ctx context.Context) error {
+	channels, err := dbListChannels(ctx)
+	if err != nil {
+		return fmt.Errorf("list channels: %w", err)
+	}
+
+	var changed int
+	for _, ch := range channels {
+		before := ch.Features
+		f := ch.Features
+		f.Reactions = true
+		f.FileUploads = true
+		f.Reports = true
+		f.ScheduledMessages = true
+		f.Webhook = true
+		f.Notifications = true
+		f.Ads = true
+
+		if f == before {
+			continue
+		}
+		if err := dbSetChannelFeatures(ctx, ch.Slug, &f); err != nil {
+			return fmt.Errorf("set features for %s: %w", ch.Slug, err)
+		}
+		changed++
+		log.Printf("migrations: %s features updated: %+v -> %+v", ch.Slug, before, f)
+	}
+
+	log.Printf("migrations: channel features backfill v2 touched %d of %d channels", changed, len(channels))
+	return nil
+}
+
 // backfillFileChannelSlugs stamps the owning channel onto file records that
 // predate FileMetadata.ChannelSlug.
 //
@@ -214,18 +243,23 @@ func backfillFileChannelSlugs(ctx context.Context) error {
 
 	var stamped int
 	for _, ch := range channels {
-		members, err := rdb.ZRange(ctx, fmt.Sprintf("channel:%s:files", ch.Slug), 0, -1).Result()
+		members, err := rdb.ZRange(ctx, channelFilesKey(ch.Slug), 0, -1).Result()
 		if err != nil {
 			return fmt.Errorf("list files for %s: %w", ch.Slug, err)
 		}
 
 		for _, m := range members {
-			// member format: "fileID:size"
-			i := strings.LastIndex(m, ":")
-			if i <= 0 {
+			fileID, _, ok := decodeFileMember(m)
+			if !ok {
 				continue
 			}
-			fileID := m[:i]
+			// dbGetFileMetadata's YAML fallback slices id[:4]; a malformed short
+			// member must be skipped, not crash-loop the boot (see db.go's
+			// identical guard in dbDeleteChannel).
+			if len(fileID) < 4 {
+				log.Printf("migrations: %s: malformed file index member %q, skipping", ch.Slug, m)
+				continue
+			}
 
 			meta, err := dbGetFileMetadata(ctx, fileID)
 			if err != nil {
@@ -250,6 +284,91 @@ func backfillFileChannelSlugs(ctx context.Context) error {
 	}
 
 	log.Printf("migrations: stamped channel ownership onto %d legacy file records across %d channels", stamped, len(channels))
+	return nil
+}
+
+// fileRefRegexes extract file IDs from message text: the channel-scoped URL
+// uploads have produced since files became per-channel, and the legacy global
+// one older messages still embed.
+var (
+	channelFileRefRegex = regexp.MustCompile(`/api/channel/[a-z0-9\-]+/files/([0-9a-fA-F]{4,})`)
+	legacyFileRefRegex  = regexp.MustCompile(`/api/files/([0-9a-fA-F]{4,})`)
+)
+
+// backfillFileSlugsFromMessages is the second ownership pass. The index-based
+// backfill above visits only channel:<slug>:files members, but the index and
+// FileMetadata.ChannelSlug were introduced by the same commit — so every
+// genuinely legacy record (YAML-era files and pre-index Redis records) is in no
+// index at all and would 404 forever. This pass derives ownership from what the
+// channels actually reference: file URLs embedded in message text and each
+// channel's logo. Records that already carry a slug are left alone; IDs
+// referenced by no channel stay denied.
+func backfillFileSlugsFromMessages(ctx context.Context) error {
+	channels, err := dbListChannels(ctx)
+	if err != nil {
+		return fmt.Errorf("list channels: %w", err)
+	}
+
+	var stamped int
+	stampFile := func(slug, fileID string) error {
+		if len(fileID) < 4 {
+			return nil
+		}
+		meta, err := dbGetFileMetadata(ctx, fileID)
+		if err != nil {
+			// A referenced id with no surviving metadata anywhere is debris,
+			// not a reason to abandon the run.
+			return nil
+		}
+		if meta.ChannelSlug != "" {
+			return nil
+		}
+		// A YAML-era record reaches this point through the fallback path;
+		// saving it promotes it into Redis with the owner attached.
+		meta.ChannelSlug = slug
+		if err := dbSaveFileMetadata(ctx, meta); err != nil {
+			return fmt.Errorf("save metadata for %s: %w", fileID, err)
+		}
+		stamped++
+		return nil
+	}
+
+	for _, ch := range channels {
+		// The channel's logo is a file reference too.
+		if ch.LogoUrl != "" {
+			for _, re := range []*regexp.Regexp{channelFileRefRegex, legacyFileRefRegex} {
+				for _, m := range re.FindAllStringSubmatch(ch.LogoUrl, -1) {
+					if err := stampFile(ch.Slug, m[1]); err != nil {
+						return err
+					}
+				}
+			}
+		}
+
+		// m_times members are the full message hash keys.
+		messageKeys, err := rdb.ZRange(ctx, fmt.Sprintf("channel:%s:m_times", ch.Slug), 0, -1).Result()
+		if err != nil {
+			return fmt.Errorf("list messages for %s: %w", ch.Slug, err)
+		}
+		for _, mk := range messageKeys {
+			text, err := rdb.HGet(ctx, mk, "text").Result()
+			if err != nil {
+				if err == redis.Nil {
+					continue
+				}
+				return fmt.Errorf("read message %s: %w", mk, err)
+			}
+			for _, re := range []*regexp.Regexp{channelFileRefRegex, legacyFileRefRegex} {
+				for _, m := range re.FindAllStringSubmatch(text, -1) {
+					if err := stampFile(ch.Slug, m[1]); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+
+	log.Printf("migrations: stamped channel ownership onto %d legacy file records referenced by messages/logos", stamped)
 	return nil
 }
 

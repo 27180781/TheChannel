@@ -58,53 +58,41 @@ func featuresOf(t *testing.T, ctx context.Context, slug string) ChannelFeatures 
 	return ch.Features
 }
 
-func TestMigrationBackfillsFeaturesFromSettings(t *testing.T) {
+// The flags are pure super-admin kill switches: the backfill enables Webhook,
+// Notifications and Ads for every channel, configured or not, so a tenant that
+// first adopts one of those features after the deploy is not silently dead.
+func TestMigrationEnablesFeaturesUnconditionally(t *testing.T) {
 	ctx := testCtx(t)
-
-	// Ads must be off globally, otherwise every channel would qualify via the
-	// lock branch and the per-channel assertions would be meaningless.
-	if err := dbSetGlobalAdsConfig(ctx, &GlobalAdsConfig{}); err != nil {
-		t.Fatalf("reset global ads: %v", err)
-	}
 
 	seedChannel(t, ctx, "mig-test-webhook", Settings{
 		{Key: "webhook_url", Value: "https://example.com/hook"},
 	})
-	seedChannel(t, ctx, "mig-test-push", Settings{
-		{Key: "on_notification", Value: "1"},
-	})
-	seedChannel(t, ctx, "mig-test-ads", Settings{
-		{Key: "ad-iframe-src", Value: "https://ads.example.com/b.html"},
+	// Uses nothing today: must STILL come out fully enabled, so adopting a
+	// feature later works.
+	seedChannel(t, ctx, "mig-test-bare", Settings{})
+	// Empty/false settings are just as irrelevant as absent ones.
+	seedChannel(t, ctx, "mig-test-empty", Settings{
+		{Key: "webhook_url", Value: ""},
+		{Key: "on_notification", Value: "0"},
 	})
 	seedChannel(t, ctx, "mig-test-auth", Settings{
 		{Key: "require_auth", Value: "1"},
 		{Key: "require_auth_for_view_files", Value: "1"},
 		{Key: "count_views", Value: "1"},
 	})
-	// Uses nothing: must come out untouched, so enforcement stays off for it.
-	seedChannel(t, ctx, "mig-test-bare", Settings{})
-	// An empty webhook_url is configuration debris, not usage.
-	seedChannel(t, ctx, "mig-test-empty", Settings{
-		{Key: "webhook_url", Value: ""},
-		{Key: "on_notification", Value: "0"},
-	})
 
 	if err := backfillChannelFeatures(ctx); err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
 
-	if f := featuresOf(t, ctx, "mig-test-webhook"); !f.Webhook {
-		t.Error("channel with webhook_url should have Webhook enabled")
-	} else if f.Ads || f.Notifications {
-		t.Error("webhook channel should not have gained Ads or Notifications")
-	}
-
-	if f := featuresOf(t, ctx, "mig-test-push"); !f.Notifications {
-		t.Error("channel with on_notification=1 should have Notifications enabled")
-	}
-
-	if f := featuresOf(t, ctx, "mig-test-ads"); !f.Ads {
-		t.Error("channel with ad-iframe-src should have Ads enabled")
+	for _, slug := range []string{"mig-test-webhook", "mig-test-bare", "mig-test-empty"} {
+		f := featuresOf(t, ctx, slug)
+		if !f.Webhook || !f.Notifications || !f.Ads {
+			t.Errorf("%s: expected Webhook/Notifications/Ads all enabled, got %+v", slug, f)
+		}
+		if !f.Reactions || !f.FileUploads || !f.Reports || !f.ScheduledMessages {
+			t.Errorf("%s: pre-existing true flags must be preserved, got %+v", slug, f)
+		}
 	}
 
 	// require_auth / require_auth_for_view_files / count_views are no longer in
@@ -112,17 +100,23 @@ func TestMigrationBackfillsFeaturesFromSettings(t *testing.T) {
 	if f := featuresOf(t, ctx, "mig-test-auth"); f.RequireAuth || f.RequireAuthFiles || f.CountViews {
 		t.Errorf("auth/view settings must not be applied by default, got %+v", f)
 	}
+}
 
-	if f := featuresOf(t, ctx, "mig-test-bare"); f.Ads || f.Notifications || f.Webhook {
-		t.Errorf("unused channel should not have gained anything, got %+v", f)
-	}
-	// The flags the old creation path did set must survive untouched.
-	if f := featuresOf(t, ctx, "mig-test-bare"); !f.Reactions || !f.FileUploads || !f.Reports || !f.ScheduledMessages {
-		t.Errorf("pre-existing true flags must be preserved, got %+v", f)
+// The v2 backfill converges environments where v1 already ran with its old
+// conditional logic: it too enables everything unconditionally.
+func TestMigrationV2EnablesFeaturesUnconditionally(t *testing.T) {
+	ctx := testCtx(t)
+
+	seedChannel(t, ctx, "mig-test-v2-bare", Settings{})
+
+	if err := backfillChannelFeaturesV2(ctx); err != nil {
+		t.Fatalf("backfill v2: %v", err)
 	}
 
-	if f := featuresOf(t, ctx, "mig-test-empty"); f.Webhook || f.Notifications {
-		t.Errorf("empty/false settings must not enable anything, got %+v", f)
+	f := featuresOf(t, ctx, "mig-test-v2-bare")
+	if !f.Webhook || !f.Notifications || !f.Ads ||
+		!f.Reactions || !f.FileUploads || !f.Reports || !f.ScheduledMessages {
+		t.Errorf("v2 must enable all seven default-on toggles, got %+v", f)
 	}
 }
 
@@ -131,9 +125,6 @@ func TestMigrationBackfillsFeaturesFromSettings(t *testing.T) {
 func TestMigrationAppliesAuthFlagsWhenOptedIn(t *testing.T) {
 	ctx := testCtx(t)
 
-	if err := dbSetGlobalAdsConfig(ctx, &GlobalAdsConfig{}); err != nil {
-		t.Fatalf("reset global ads: %v", err)
-	}
 	seedChannel(t, ctx, "mig-test-auth-optin", Settings{
 		{Key: "require_auth", Value: "1"},
 		{Key: "require_auth_for_view_files", Value: "1"},
@@ -156,10 +147,6 @@ func TestMigrationAppliesAuthFlagsWhenOptedIn(t *testing.T) {
 func TestMigrationDefaultsEverydayFeaturesOn(t *testing.T) {
 	ctx := testCtx(t)
 
-	if err := dbSetGlobalAdsConfig(ctx, &GlobalAdsConfig{}); err != nil {
-		t.Fatalf("reset global ads: %v", err)
-	}
-
 	// A channel whose features blob predates dbCreateChannel setting the four.
 	seedChannel(t, ctx, "mig-test-nofeatures", Settings{})
 	if err := dbSetChannelFeatures(ctx, "mig-test-nofeatures", &ChannelFeatures{}); err != nil {
@@ -176,43 +163,13 @@ func TestMigrationDefaultsEverydayFeaturesOn(t *testing.T) {
 	}
 }
 
-// A channel with no ad of its own still shows ads when the super admin has
-// locked it to a configured global ad, so the migration must enable Ads for it.
-func TestMigrationEnablesAdsForGloballyLockedChannel(t *testing.T) {
-	ctx := testCtx(t)
-
-	seedChannel(t, ctx, "mig-test-locked", Settings{})
-
-	if err := dbSetGlobalAdsConfig(ctx, &GlobalAdsConfig{
-		Src:     "https://ads.example.com/global.html",
-		Width:   300,
-		LockAll: true,
-	}); err != nil {
-		t.Fatalf("set global ads: %v", err)
-	}
-	t.Cleanup(func() {
-		cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		_ = dbSetGlobalAdsConfig(cctx, &GlobalAdsConfig{})
-	})
-
-	if err := backfillChannelFeatures(ctx); err != nil {
-		t.Fatalf("backfill: %v", err)
-	}
-
-	if f := featuresOf(t, ctx, "mig-test-locked"); !f.Ads {
-		t.Error("channel locked to a configured global ad should have Ads enabled")
-	}
-}
-
 // The migration must not undo a deliberate super-admin decision on a re-run,
 // and runMigrations must not execute an already-applied migration at all.
+// Both the v1 and v2 feature backfills are marked applied here, so the
+// withdrawn flag proves neither of them ran again through the full registry.
 func TestMigrationIsOneShotAndOnlyEverEnables(t *testing.T) {
 	ctx := testCtx(t)
 
-	if err := dbSetGlobalAdsConfig(ctx, &GlobalAdsConfig{}); err != nil {
-		t.Fatalf("reset global ads: %v", err)
-	}
 	seedChannel(t, ctx, "mig-test-oneshot", Settings{
 		{Key: "webhook_url", Value: "https://example.com/hook"},
 	})
@@ -231,12 +188,25 @@ func TestMigrationIsOneShotAndOnlyEverEnables(t *testing.T) {
 		t.Fatalf("set features: %v", err)
 	}
 
-	// runMigrations must be a no-op now: the ID is already in the applied set.
-	rdb.SAdd(ctx, migrationsAppliedKey, channelFeaturesBackfillID)
+	// runMigrations must be a no-op for both feature backfills now: their IDs
+	// are in the applied set. (The file-slug migrations may run; they do not
+	// touch features and their marks are removed again below.)
+	appliedIDs := []string{
+		channelFeaturesBackfillID,
+		channelFeaturesBackfillV2ID,
+	}
+	for _, id := range appliedIDs {
+		rdb.SAdd(ctx, migrationsAppliedKey, id)
+	}
 	t.Cleanup(func() {
 		cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		rdb.SRem(cctx, migrationsAppliedKey, channelFeaturesBackfillID)
+		rdb.SRem(cctx, migrationsAppliedKey,
+			channelFeaturesBackfillID,
+			channelFeaturesBackfillV2ID,
+			fileChannelSlugBackfillID,
+			fileSlugFromMessagesID,
+		)
 	})
 
 	runMigrations(ctx)
