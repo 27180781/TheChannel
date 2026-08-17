@@ -28,6 +28,7 @@ import { MagnetAdsService } from '../../services/magnet-ads.service';
 import { ChannelStatusService } from '../../services/channel-status.service';
 import { NotificationsService } from '../../services/notifications.service';
 import { CreateChannelFormComponent } from '../channel-create/create-channel-form.component';
+import { PlatformAttributionComponent } from './platform-attribution/platform-attribution.component';
 import { Subscription } from 'rxjs';
 
 @Component({
@@ -47,7 +48,8 @@ import { Subscription } from 'rxjs';
     NbSidebarModule,
     NbListModule,
     ChatComponent,
-    CreateChannelFormComponent
+    CreateChannelFormComponent,
+    PlatformAttributionComponent
   ],
   templateUrl: './channel.component.html',
   styleUrl: './channel.component.scss'

@@ -1,0 +1,56 @@
+// Colours go through the Nebular CSS custom properties so the strip follows the
+// active theme (including dark mode) instead of pinning hex values.
+:host {
+  display: block;
+  width: 100%;
+}
+
+.attribution {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.15rem 0.4rem;
+  padding: 0.3rem 0.75rem;
+  border-radius: 0.4rem;
+  margin-bottom: 0.75rem;
+  background: var(--background-basic-color-2, #f7f9fc);
+  border: 1px solid var(--divider-color, #edf1f7);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.attribution__text {
+  color: var(--text-hint-color, #8f9bb3);
+}
+
+.attribution__sep {
+  color: var(--text-hint-color, #8f9bb3);
+  opacity: 0.6;
+}
+
+.attribution__link {
+  color: var(--color-primary-default, #3366ff);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.attribution__link:hover,
+.attribution__link:focus-visible {
+  text-decoration: underline;
+}
+
+// On a narrow phone the two halves stack; the middle dot would then float on a
+// line of its own, so it is dropped and the parts read as two short lines.
+@media (max-width: 575px) {
+  .attribution {
+    flex-direction: column;
+    gap: 0.1rem;
+    font-size: 0.72rem;
+  }
+
+  .attribution__sep {
+    display: none;
+  }
+}

@@ -94,6 +94,10 @@
     </nb-layout-header>
 
     <nb-layout-column class="chat-column">
+      <!-- Attribution lives inside the scrolling column, not in the fixed
+           header: the header has a fixed height that the .columns padding and
+           the ad-column height calculation are both derived from. -->
+      <app-platform-attribution></app-platform-attribution>
       <app-chat class=""></app-chat>
     </nb-layout-column>
 
