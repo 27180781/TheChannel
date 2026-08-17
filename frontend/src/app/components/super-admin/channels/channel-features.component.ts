@@ -13,6 +13,9 @@ import { SuperAdminService, ChannelFeatures } from '../../../services/super-admi
 interface FeatureConfig {
   key: keyof ChannelFeatures;
   label: string;
+  /** Renders the row as a warning block — turning it on takes the channel down. */
+  destructive?: boolean;
+  description?: string;
 }
 
 @Component({
@@ -27,6 +30,7 @@ interface FeatureConfig {
     NbToggleModule,
   ],
   templateUrl: './channel-features.component.html',
+  styleUrl: './channel-features.component.scss',
 })
 export class ChannelFeaturesComponent implements OnInit {
   @Input() slug!: string;
@@ -44,6 +48,7 @@ export class ChannelFeaturesComponent implements OnInit {
     webhook: false,
     magnetLockedByAdmin: false,
     adsLockedByAdmin: false,
+    disabled: false,
   };
 
   saving = false;
@@ -59,6 +64,12 @@ export class ChannelFeaturesComponent implements OnInit {
     { key: 'countViews', label: 'ספירת צפיות' },
     { key: 'scheduledMessages', label: 'הודעות מתוזמנות' },
     { key: 'webhook', label: 'Webhook' },
+    {
+      key: 'disabled',
+      label: 'השבתת הערוץ',
+      destructive: true,
+      description: 'הערוץ יפסיק להיות זמין לכל המשתמשים, כולל הבעלים, ויוצג במקומו מסך "הערוץ מושבת".',
+    },
     // magnetLockedByAdmin / adsLockedByAdmin are managed by the global
     // ads/magnet locked-channel lists — the single source of truth. The values
     // loaded from the channel are passed back through save() untouched.
@@ -76,7 +87,9 @@ export class ChannelFeaturesComponent implements OnInit {
   loadFeatures() {
     this.superAdminService.getChannel(this.slug)
       .then(channel => {
-        this.features = { ...channel.features };
+        // Merge over the defaults: an older backend omits newer flags entirely,
+        // and an undefined value would leave the toggle unbound.
+        this.features = { ...this.features, ...channel.features };
       })
       .catch(() => this.toastr.danger('', 'שגיאה בטעינת תכונות הערוץ'));
   }

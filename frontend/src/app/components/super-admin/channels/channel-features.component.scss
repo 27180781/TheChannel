@@ -1,0 +1,35 @@
+@use '../../../../themes' as *;
+
+// Theme tokens rather than fixed hex, so the destructive row keeps its contrast
+// in whichever Nebular theme is active.
+@include nb-install-component() {
+  .feature-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .feature-row--destructive {
+    margin-top: 0.5rem;
+    padding: 0.85rem 1rem;
+    border-radius: nb-theme(border-radius);
+    border: 1px solid nb-theme(color-danger-400);
+    background: nb-theme(color-danger-100);
+  }
+
+  .feature-row__warn {
+    color: nb-theme(color-danger-500);
+  }
+
+  .feature-row__label {
+    font-weight: 700;
+    color: nb-theme(color-danger-700);
+  }
+
+  .feature-row__desc {
+    margin: 0;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    color: nb-theme(text-hint-color);
+  }
+}

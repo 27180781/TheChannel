@@ -22,6 +22,7 @@ import { SuperAdminService, ChannelData } from '../../../services/super-admin.se
     NbIconModule,
   ],
   templateUrl: './channels-list.component.html',
+  styleUrl: './channels-list.component.scss',
 })
 export class ChannelsListComponent implements OnInit {
   @Output() editFeatures = new EventEmitter<string>();

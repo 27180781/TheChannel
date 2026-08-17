@@ -59,8 +59,16 @@
         </thead>
         <tbody>
           @for (channel of channels; track channel.slug) {
-            <tr>
-              <td><code>{{ channel.slug }}</code></td>
+            <tr [class.channel-row--disabled]="channel.features.disabled">
+              <td>
+                <code>{{ channel.slug }}</code>
+                @if (channel.features.disabled) {
+                  <span class="disabled-badge">
+                    <nb-icon icon="slash-outline"></nb-icon>
+                    מושבת
+                  </span>
+                }
+              </td>
               <td>{{ channel.name }}</td>
               <td>{{ channel.ownerEmail }}</td>
               <td>{{ channel.createdAt | date:'dd/MM/yyyy' }}</td>

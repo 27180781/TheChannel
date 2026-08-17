@@ -7,13 +7,30 @@
   <nb-card-body>
     <div class="d-flex flex-column gap-3">
       @for (config of featureConfigs; track config.key) {
-        <div class="d-flex align-items-center gap-2">
-          <nb-toggle
-            [checked]="features[config.key]"
-            (checkedChange)="features[config.key] = $event">
-            <span>{{ config.label }}</span>
-          </nb-toggle>
-        </div>
+        @if (config.destructive) {
+          <div class="feature-row feature-row--destructive">
+            <div class="d-flex align-items-center gap-2">
+              <nb-icon icon="alert-triangle-outline" class="feature-row__warn"></nb-icon>
+              <nb-toggle
+                status="danger"
+                [checked]="features[config.key]"
+                (checkedChange)="features[config.key] = $event">
+                <span class="feature-row__label">{{ config.label }}</span>
+              </nb-toggle>
+            </div>
+            @if (config.description) {
+              <p class="feature-row__desc">{{ config.description }}</p>
+            }
+          </div>
+        } @else {
+          <div class="d-flex align-items-center gap-2">
+            <nb-toggle
+              [checked]="features[config.key]"
+              (checkedChange)="features[config.key] = $event">
+              <span>{{ config.label }}</span>
+            </nb-toggle>
+          </div>
+        }
       }
     </div>
   </nb-card-body>

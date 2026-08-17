@@ -1,0 +1,28 @@
+@use '../../../../themes' as *;
+
+@include nb-install-component() {
+  .disabled-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    margin-inline-start: 0.4rem;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    background: nb-theme(color-danger-100);
+    border: 1px solid nb-theme(color-danger-400);
+    color: nb-theme(color-danger-700);
+    white-space: nowrap;
+  }
+
+  .disabled-badge nb-icon {
+    font-size: 0.8rem;
+    width: 0.8rem;
+    height: 0.8rem;
+  }
+
+  .channel-row--disabled td:not(:last-child) {
+    opacity: 0.65;
+  }
+}
