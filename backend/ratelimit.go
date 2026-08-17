@@ -20,9 +20,9 @@ type limiterEntry struct {
 	lastSeen atomic.Int64
 }
 
-// limiterIdleTTL is well past both refill windows (20s*3 and 2s*10), so a
-// swept-and-recreated limiter starting with a full burst changes nothing a
-// legitimate client would notice.
+// limiterIdleTTL is well past every refill window below (the slowest is
+// 60s*3), so a swept-and-recreated limiter starting with a full burst changes
+// nothing a legitimate client would notice.
 const limiterIdleTTL = 10 * time.Minute
 
 func init() {
@@ -41,6 +41,8 @@ func init() {
 			}
 			sweep(&uploadLimiters)
 			sweep(&channelRequestLimiters)
+			sweep(&channelCreateLimiters)
+			sweep(&slugCheckLimiters)
 		}
 	}()
 }
@@ -99,6 +101,34 @@ func channelRequestLimiter(r *http.Request) *rate.Limiter {
 
 	return getLimiter(&channelRequestLimiters, &channelRequestMu, key, func() *rate.Limiter {
 		return rate.NewLimiter(rate.Every(20*time.Second), 3)
+	})
+}
+
+// channelCreateLimiters throttles self-service channel creation per session
+// user — 3 creations/hour, burst of 3. Creation is cheap for the caller and
+// permanent for us, so the window is much wider than the upload limiter's.
+var (
+	channelCreateLimiters sync.Map
+	channelCreateMu       sync.Mutex
+)
+
+func channelCreateLimiter(email string) *rate.Limiter {
+	return getLimiter(&channelCreateLimiters, &channelCreateMu, email, func() *rate.Limiter {
+		return rate.NewLimiter(rate.Every(20*time.Minute), 3)
+	})
+}
+
+// slugCheckLimiters throttles the slug-availability probe per session user.
+// It is a single EXISTS, but it is also a slug enumeration oracle, so it is
+// generous rather than free — 60 checks/min (one per second), burst of 10.
+var (
+	slugCheckLimiters sync.Map
+	slugCheckMu       sync.Mutex
+)
+
+func slugCheckLimiter(email string) *rate.Limiter {
+	return getLimiter(&slugCheckLimiters, &slugCheckMu, email, func() *rate.Limiter {
+		return rate.NewLimiter(rate.Every(time.Second), 10)
 	})
 }
 
