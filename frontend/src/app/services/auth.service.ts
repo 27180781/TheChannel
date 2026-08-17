@@ -66,4 +66,11 @@ export class AuthService {
     }
     return this.userInfo;
   }
+
+  // Fire-and-forget visit registration: the channel-scoped user-info handler is
+  // what writes the viewer into channel:<slug>:registered_emails, which feeds
+  // the participant counter. Errors (e.g. anonymous visitor) are irrelevant.
+  registerChannelVisit(slug: string): void {
+    firstValueFrom(this._http.get<User>(`/api/channel/${slug}/user-info`)).catch(() => { });
+  }
 }

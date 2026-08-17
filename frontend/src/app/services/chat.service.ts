@@ -43,7 +43,9 @@ export interface Attachment {
 })
 export class ChatService {
   private eventSource!: EventSource;
-  private emojis: string[] = [];
+  // null = not loaded yet; an empty array is a legitimately empty, loaded list.
+  private emojis: string[] | null = null;
+  private emojisRequest?: Promise<string[]>;
   public channelInfo?: Channel;
   private channelInfoRequest?: Promise<void>;
 
@@ -97,15 +99,18 @@ export class ChatService {
   }
 
   clearCache() {
-    this.emojis = [];
+    this.emojis = null;
     this.channelInfo = undefined;
     this.channelInfoRequest = undefined;
   }
 
   async getEmojisList(reload: boolean = false): Promise<string[]> {
-    if (this.emojis.length && !reload) return this.emojis;
-    this.emojis = await firstValueFrom(this.http.get<string[]>(`/api/channel/${this.slug}/emojis/list`));
-    return this.emojis;
+    if (this.emojis && !reload) return this.emojis;
+    // Deduplicated: every message component asks for the list on first paint.
+    this.emojisRequest ??= firstValueFrom(this.http.get<string[]>(`/api/channel/${this.slug}/emojis/list`))
+      .then(list => { this.emojis = list; return list; })
+      .finally(() => { this.emojisRequest = undefined; });
+    return this.emojisRequest;
   }
 
   reportMessage(messageId: number, reason: string): Promise<ResponseResult> {

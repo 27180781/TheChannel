@@ -7,11 +7,9 @@ import { Setting } from '../models/setting.model';
 import { Reports, Report } from '../models/report.model';
 import { Statistics } from '../models/statistics.model';
 import { SlugService } from './slug.service';
+import { ChannelUser } from '../models/channel-user.model';
 
-export interface ChannelUser {
-  email: string;
-  role: 'owner' | 'moderator' | 'writer' | '';
-}
+export type { ChannelUser };
 
 export type EditMsg = {
   new?: boolean;
@@ -68,7 +66,7 @@ export class AdminService {
   }
 
   deleteMessage(id: number | undefined): Observable<ResponseResult> {
-    return this.http.get<ResponseResult>(`/api/channel/${this.slug}/admin/delete-message/${id}`);
+    return this.http.delete<ResponseResult>(`/api/channel/${this.slug}/admin/delete-message/${id}`);
   }
 
   uploadFile(formData: FormData) {

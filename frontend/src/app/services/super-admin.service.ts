@@ -1,6 +1,10 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
+import { ChannelUser } from '../models/channel-user.model';
+import { Setting } from '../models/setting.model';
+
+export type { ChannelUser, Setting };
 
 export interface ChannelFeatures {
   reactions: boolean;
@@ -26,11 +30,6 @@ export interface ChannelData {
   createdAt: string;
   features: ChannelFeatures;
   contactUs: string;
-}
-
-export interface ChannelUser {
-  email: string;
-  role: 'owner' | 'moderator' | 'writer' | '';
 }
 
 export interface GlobalAdsConfig {
@@ -60,11 +59,6 @@ export interface SuperAdminUser {
   publicName: string;
   globalRole: string;
   channelRoles: Record<string, string>;
-}
-
-export interface Setting {
-  key: string;
-  value: any;
 }
 
 @Injectable({
