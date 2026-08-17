@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/mail"
 	"strconv"
 	"time"
 
@@ -14,8 +13,8 @@ import (
 )
 
 const (
-	// channelRequestTTL bounds how long a pending request (and its index entry)
-	// survives, since anyone can create them.
+	// channelRequestTTL bounds how long a request record (and its index entry)
+	// survives.
 	channelRequestTTL = 30 * 24 * time.Hour
 	// maxChannelRequestsListed caps the admin queue read, which does one GET per
 	// entry.
@@ -47,7 +46,7 @@ func dbSaveChannelRequest(ctx context.Context, req *ChannelRequest) error {
 	if err != nil {
 		return err
 	}
-	// TTL so an unbounded public endpoint cannot accumulate records forever.
+	// TTL so the audit trail cannot accumulate records forever.
 	if err := rdb.Set(ctx, "channel_request:"+req.ID, data, channelRequestTTL).Err(); err != nil {
 		return err
 	}
@@ -71,7 +70,7 @@ func dbGetChannelRequest(ctx context.Context, id string) (*ChannelRequest, error
 
 func dbListChannelRequests(ctx context.Context) ([]*ChannelRequest, error) {
 	// Drop index entries whose bodies have already expired, then read a bounded
-	// page: the index is fed by an unauthenticated endpoint.
+	// page: the list does one GET per entry.
 	cutoff := strconv.FormatInt(time.Now().Add(-channelRequestTTL).Unix(), 10)
 	rdb.ZRemRangeByScore(ctx, "channel_requests:list", "-inf", cutoff)
 
@@ -88,71 +87,6 @@ func dbListChannelRequests(ctx context.Context) ([]*ChannelRequest, error) {
 		requests = append(requests, req)
 	}
 	return requests, nil
-}
-
-// POST /api/channel-request (public)
-func submitChannelRequest(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	// Unauthenticated endpoint: cap the body and validate every field before it
-	// becomes a persistent record in the super admin's queue. The per-IP throttle
-	// sits further down, immediately before the write — what is being rationed is
-	// persisted records, and charging quota for a rejected field meant a user
-	// correcting a typo could lock themselves out without saving anything.
-	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
-	defer r.Body.Close()
-
-	var body struct {
-		Name        string `json:"name"`
-		Email       string `json:"email"`
-		DesiredSlug string `json:"desiredSlug"`
-		Description string `json:"description"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-	if body.Name == "" || body.Email == "" || body.DesiredSlug == "" {
-		http.Error(w, "name, email, and desiredSlug are required", http.StatusBadRequest)
-		return
-	}
-	if len(body.Name) > 100 || len(body.Email) > 254 || len(body.Description) > 2000 {
-		http.Error(w, "field too long", http.StatusBadRequest)
-		return
-	}
-	if !slugRegex.MatchString(body.DesiredSlug) {
-		http.Error(w, "invalid slug", http.StatusBadRequest)
-		return
-	}
-	if _, err := mail.ParseAddress(body.Email); err != nil {
-		http.Error(w, "invalid email", http.StatusBadRequest)
-		return
-	}
-
-	// Everything above is validation that persists nothing, so the throttle is
-	// spent here — on an request that is actually about to be stored.
-	if !allowOrRetryAfter(w, channelRequestLimiter(r), "too many requests — please try again later") {
-		return
-	}
-
-	req := &ChannelRequest{
-		ID:          generatedRandomID(12),
-		Name:        body.Name,
-		Email:       body.Email,
-		DesiredSlug: body.DesiredSlug,
-		Description: body.Description,
-		Status:      RequestStatusPending,
-		CreatedAt:   time.Now(),
-	}
-
-	if err := dbSaveChannelRequest(ctx, req); err != nil {
-		http.Error(w, "error saving request", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "id": req.ID})
 }
 
 // GET /api/super-admin/channel-requests

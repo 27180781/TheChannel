@@ -35,7 +35,7 @@ func addNewPost(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	// The decoded text is stored verbatim and broadcast to every SSE client, so
-	// an unbounded body must not reach it (same cap style as submitChannelRequest).
+	// an unbounded body must not reach it.
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 
 	body := Message{}

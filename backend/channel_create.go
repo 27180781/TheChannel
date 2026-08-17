@@ -14,7 +14,7 @@ const (
 	// open to every logged-in user, so without a cap one account can mint
 	// channels (and their Redis keyspace) without bound.
 	maxChannelsPerOwner = 5
-	// Mirrors the limits submitChannelRequest already enforces on the public path.
+	// Field caps on the stored channel record.
 	maxChannelNameLen = 100
 	maxChannelDescLen = 2000
 )
@@ -85,9 +85,8 @@ func countOwnedChannels(ctx context.Context, email string) (int, error) {
 
 // sessionEmail returns the authenticated email carried by the session cookie.
 // Self-service creation must take the owner from here and never from the
-// request body: the public /api/channel-request path accepts an arbitrary
-// email, and auto-creating from that would let anyone squat a slug and hand
-// ownership to somebody else's address.
+// request body: an email accepted from the body would let anyone squat a slug
+// and hand ownership to somebody else's address.
 func sessionEmail(r *http.Request) (Session, bool) {
 	session, _ := store.Get(r, cookieName)
 	s, ok := session.Values["user"].(Session)
@@ -110,10 +109,9 @@ func sessionDisplayName(s Session) string {
 
 // POST /api/channels/create (authenticated)
 //
-// The primary channel creation path: a logged-in user gets their channel
-// instantly instead of waiting for a super admin to approve a
-// /api/channel-request. That older public endpoint stays as the fallback for
-// visitors who are not logged in.
+// The only channel creation path: a logged-in user gets their channel
+// instantly. The super admin's channel-requests screen still serves the records
+// written below (plus any request left over from the removed public form).
 func createChannelSelfService(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

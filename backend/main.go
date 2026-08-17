@@ -107,9 +107,6 @@ func main() {
 		r.Post("/channel-requests/{id}/reject", rejectChannelRequest)
 	})
 
-	// Public: submit channel request (no auth required)
-	r.Post("/api/channel-request", submitChannelRequest)
-
 	// Per-channel API import (with API key, no channel middleware needed - slug from URL)
 	r.Post("/api/channel/{slug}/import/post", addNewPost)
 

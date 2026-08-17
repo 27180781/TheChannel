@@ -2,9 +2,7 @@ package main
 
 import (
 	"math"
-	"net"
 	"net/http"
-	"net/netip"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -14,9 +12,8 @@ import (
 )
 
 // limiterEntry pairs a limiter with its last use so idle entries can be swept:
-// both maps below otherwise grow monotonically for the process lifetime (one
-// entry per client IP on an unauthenticated endpoint is attacker-controlled
-// once RealIP is in play).
+// the maps below otherwise grow monotonically for the process lifetime, one
+// entry per distinct key.
 type limiterEntry struct {
 	l        *rate.Limiter
 	lastSeen atomic.Int64
@@ -65,7 +62,6 @@ func init() {
 				})
 			}
 			sweep(&uploadLimiters)
-			sweep(&channelRequestLimiters)
 			sweep(&channelCreateLimiters)
 			sweep(&slugCheckLimiters)
 		}
@@ -101,31 +97,6 @@ var (
 func getUploadLimiter(key string) *rate.Limiter {
 	return getLimiter(&uploadLimiters, &uploadLimiterMu, key, func() *rate.Limiter {
 		return rate.NewLimiter(rate.Every(2*time.Second), 10)
-	})
-}
-
-// channelRequestLimiters throttles the public channel-request endpoint per
-// client IP — 3 submissions/min, burst of 3.
-var (
-	channelRequestLimiters sync.Map
-	channelRequestMu       sync.Mutex
-)
-
-func channelRequestLimiter(r *http.Request) *rate.Limiter {
-	key, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		key = r.RemoteAddr
-	}
-	// An IPv6 client can trivially hop across its routed /64, minting unlimited
-	// distinct addresses; key the whole prefix as one client.
-	if addr, perr := netip.ParseAddr(key); perr == nil && addr.Is6() && !addr.Is4In6() {
-		if p, perr := addr.Prefix(64); perr == nil {
-			key = p.Masked().String()
-		}
-	}
-
-	return getLimiter(&channelRequestLimiters, &channelRequestMu, key, func() *rate.Limiter {
-		return rate.NewLimiter(rate.Every(20*time.Second), 3)
 	})
 }
 
