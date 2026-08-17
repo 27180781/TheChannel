@@ -37,40 +37,137 @@
     margin-bottom: 1rem;
   }
 
-  .create-card__done {
-    text-align: center;
-    padding: 2rem 0;
+  /* ---------- success state ---------- */
+
+  .created {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
   }
 
-  .create-card__done-icon {
+  .created__head {
+    text-align: center;
+  }
+
+  .created__icon {
     font-size: 3.25rem;
     width: 3.25rem;
     height: 3.25rem;
     color: nb-theme(color-success-500);
   }
 
-  .create-card__done-title {
-    margin: 1rem 0 0.25rem;
+  .created__title {
+    margin: 0.75rem 0 0.25rem;
     font-size: 1.15rem;
     font-weight: 700;
     color: nb-theme(text-basic-color);
   }
 
-  .create-card__done-text {
+  .created__text {
     margin: 0;
+    font-size: 0.9rem;
     color: nb-theme(text-hint-color);
+  }
+
+  .created__url {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.85rem 1rem;
+    border-radius: nb-theme(border-radius);
+    background: nb-theme(background-basic-color-2);
+    border: 1px solid nb-theme(color-success-500);
+  }
+
+  // The page is RTL; without an explicit LTR direction the URL renders with
+  // its parts reordered and is unusable to copy by eye.
+  .created__url-value {
+    flex: 1 1 12rem;
+    min-width: 0;
+    font-family: nb-theme(font-family-secondary), monospace;
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-align: left;
+    color: nb-theme(text-basic-color);
+    overflow-wrap: anywhere;
+    user-select: all;
+  }
+
+  .created__copy {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .created__copy-note {
+    margin: -0.5rem 0 0;
+    font-size: 0.78rem;
+    color: nb-theme(text-hint-color);
+  }
+
+  .created__steps {
+    list-style: none;
+    counter-reset: created-step;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .created__step {
+    counter-increment: created-step;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.65rem;
+    padding: 0.75rem 0.9rem;
+    border-radius: nb-theme(border-radius);
+    background: nb-theme(background-basic-color-2);
+    border: 1px solid nb-theme(border-basic-color-3);
+  }
+
+  .created__step-icon {
+    flex: 0 0 auto;
+    font-size: 1.25rem;
+    width: 1.25rem;
+    height: 1.25rem;
+    margin-top: 0.1rem;
+    color: nb-theme(color-primary-500);
+  }
+
+  .created__step-title {
+    display: block;
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: nb-theme(text-basic-color);
+
+    &::before {
+      content: counter(created-step) '. ';
+      color: nb-theme(color-primary-500);
+    }
+  }
+
+  .created__step-text {
+    display: block;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    color: nb-theme(text-hint-color);
+  }
+
+  .created__enter {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
   }
 
   .create-form {
     display: flex;
     flex-direction: column;
     gap: 1.1rem;
-  }
-
-  .create-form__row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1rem;
   }
 
   .create-form__field {
@@ -150,8 +247,13 @@
   }
 
   @media (max-width: 575px) {
-    .create-form__row {
-      grid-template-columns: 1fr;
+    .created__url {
+      align-items: stretch;
+    }
+
+    .created__copy {
+      width: 100%;
+      justify-content: center;
     }
   }
 }

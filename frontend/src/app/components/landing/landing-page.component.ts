@@ -4,7 +4,6 @@ import {
   NbCardModule, NbButtonModule, NbIconModule, NbLayoutModule,
 } from '@nebular/theme';
 import { AuthService } from '../../services/auth.service';
-import { CreateChannelFormComponent } from '../channel-create/create-channel-form.component';
 
 interface LandingStep {
   icon: string;
@@ -27,7 +26,6 @@ interface LandingFeature {
     NbButtonModule,
     NbIconModule,
     NbLayoutModule,
-    CreateChannelFormComponent,
   ],
   styleUrl: './landing-page.component.scss',
   template: `
@@ -56,14 +54,11 @@ interface LandingFeature {
         </p>
         <div class="hero__actions">
           <button nbButton status="primary" size="large" class="hero__cta" (click)="startCreate()">
-            <nb-icon icon="plus-circle-outline"></nb-icon>
-            פתחו ערוץ עכשיו
+            <nb-icon icon="google-outline"></nb-icon>
+            התחברו עם גוגל ופתחו ערוץ
           </button>
-          <a nbButton ghost status="control" size="large" href="#request" (click)="scrollToForm($event)">
-            מעדיפים לא להתחבר?
-          </a>
         </div>
-        <p class="hero__note">ההתחברות נדרשת רק כדי שהערוץ יירשם על שמכם. אין עלות.</p>
+        <p class="hero__note">ההתחברות עם חשבון גוגל נדרשת רק כדי שהערוץ יירשם על שמכם. אין עלות.</p>
       </div>
     </section>
 
@@ -102,21 +97,17 @@ interface LandingFeature {
       </div>
     </section>
 
-    <!-- Secondary path: request a channel without signing in -->
-    <section class="section" id="request">
-      <div class="wrap wrap--narrow">
-        <div class="request-head">
-          <h2 class="section__title">אין לכם חשבון גוגל?</h2>
-          <p class="request-head__text">
-            אפשר גם להגיש בקשה ידנית. הבקשה נבדקת על ידי צוות המערכת ולוקחת עד 24 שעות —
-            הדרך המהירה היא <button type="button" class="linklike" (click)="startCreate()">התחברות ופתיחה מיידית</button>.
-          </p>
-        </div>
-        <app-create-channel-form
-          variant="request"
-          title="בקשה לפתיחת ערוץ"
-          subtitle="נשיב לכם במייל לאחר בדיקת הבקשה">
-        </app-create-channel-form>
+    <!-- Closing CTA — the one and only way in -->
+    <section class="section cta">
+      <div class="wrap wrap--narrow cta__inner">
+        <h2 class="section__title">מוכנים להתחיל?</h2>
+        <p class="cta__text">
+          התחברות מהירה עם חשבון גוגל, שם וכתובת לערוץ — והערוץ שלכם באוויר.
+        </p>
+        <button nbButton status="primary" size="large" class="cta__button" (click)="startCreate()">
+          <nb-icon icon="google-outline"></nb-icon>
+          התחברו עם גוגל ופתחו ערוץ
+        </button>
       </div>
     </section>
 
@@ -177,10 +168,5 @@ export class LandingPageComponent implements OnInit {
   startCreate(): void {
     localStorage.setItem('returnUrl', '/channel');
     this.router.navigate(['/login'], { queryParams: { returnUrl: '/channel' } });
-  }
-
-  scrollToForm(event: Event) {
-    event.preventDefault();
-    document.getElementById('request')?.scrollIntoView({ behavior: 'smooth' });
   }
 }

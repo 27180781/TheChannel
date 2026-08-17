@@ -60,7 +60,7 @@
           <h1 class="onboarding__title">שלום{{ userInfo?.publicName ? ' ' + userInfo?.publicName : '' }}, בואו נפתח לכם ערוץ</h1>
           <p class="onboarding__lead">
             עוד אין ערוץ מקושר לחשבון שלכם. בחרו שם וכתובת — הערוץ נפתח מיד,
-            ואתם נכנסים אליו ומתחילים לשדר. אין בקשות ואין המתנה לאישור.
+            ואתם מקבלים את הקישור לשיתוף ונכנסים לשדר. אין המתנה לאישור.
           </p>
         </section>
 
@@ -78,7 +78,6 @@
         </div>
 
         <app-create-channel-form
-          variant="instant"
           title="פרטי הערוץ"
           subtitle="אפשר לשנות הכול אחר כך מתוך הגדרות הערוץ"
           (created)="onChannelCreated($event)">
