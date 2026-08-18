@@ -36,8 +36,12 @@
 // the row, and both need min-height:0 for the same reason as the body above;
 // the menu additionally scrolls on its own so a long menu cannot be what
 // forces the panel taller than the screen.
+//
+// The content column carries .panel-content purely so this rule has something
+// to hold on to: it was written against that class before the class existed,
+// which made the rule dead and left the height cap above doing all the work.
 .panel-content,
-.admin-panel-card ::ng-deep nb-menu {
+:host ::ng-deep nb-menu {
   min-height: 0;
   overflow-y: auto;
 }
