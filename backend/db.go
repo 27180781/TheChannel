@@ -276,11 +276,33 @@ var getMessageRange = redis.NewScript(`
 
 	local messages = {}
 	local max_scan_rounds = 20
+	-- Bounding rounds alone is not a bound on work: each round does one HGETALL
+	-- per entry, and a soft-deleted entry is not appended for a non-admin
+	-- viewer, so #messages stops growing and batch_size stays at the full page
+	-- size for every round. A page of 100 over a run of tombstones was 20 x 100
+	-- HGETALLs inside one atomic script, and Redis is single-threaded, so every
+	-- other tenant waited behind it. Cap the entries examined, not the rounds.
+	--
+	-- The trade-off, which the old round cap had too at 2000: a run of more
+	-- than max_scanned consecutive tombstones exhausts the budget and returns
+	-- an empty page, so a client paging through one stops early rather than
+	-- reaching the live messages beneath it. Bounding the work is still the
+	-- right side to err on — an unbounded scan stalls every tenant, not one
+	-- feed. Removing deleted entries from this index (keeping a separate one
+	-- for the admin view, which is the only reader that wants them) would make
+	-- the scan never pay for tombstones at all and retire the cap.
+	local max_scanned = 500
+	local scanned = 0
 	local scan_rounds = 0
 	repeat
 		scan_rounds = scan_rounds + 1
 		if scan_rounds > max_scan_rounds then break end
 		local batch_size = required_length - #messages
+		-- Never look at more than the remaining budget allows.
+		if batch_size > max_scanned - scanned then
+			batch_size = max_scanned - scanned
+		end
+		if batch_size <= 0 then break end
 		-- ZRANGE/ZREVRANGE are inclusive on both ends, so the window is
 		-- batch_size wide only when stop is one short of start + batch_size.
 		-- Line 'start_index = start_index + batch_size' below then advances to
@@ -347,6 +369,7 @@ var getMessageRange = redis.NewScript(`
 			end
 		end
 
+		scanned = scanned + #message_ids
 		start_index = start_index + batch_size
 
 	until #messages >= required_length
@@ -866,6 +889,14 @@ func dbGetPeakSSEConnections(ctx context.Context, slug string) (*PeakSSEConnecti
 	return &peak, nil
 }
 
+// sseStatisticsMaxPoints bounds one channel-month series. dbGetSSEStatistics
+// reads at most 1000 points back, so keeping more only costs memory.
+const sseStatisticsMaxPoints = 1000
+
+// sseStatisticsTTL retires a channel-month series well after the month it
+// covers, so an abandoned channel cannot leave keys behind for ever.
+const sseStatisticsTTL = 400 * 24 * time.Hour
+
 func dbSaveSSEStatistics(slug string, amount int64) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -873,7 +904,20 @@ func dbSaveSSEStatistics(slug string, amount int64) {
 	key := fmt.Sprintf("channel:%s:sse_statistics:%d:%d", slug, time.Now().Month(), time.Now().Year())
 	member := fmt.Sprintf("%d&%s", amount, time.Now().Format("02-01-2006 15:04"))
 
-	rdb.ZAdd(ctx, key, redis.Z{Score: float64(time.Now().Unix()), Member: member})
+	// A member is added on every connect and every disconnect, and distinct
+	// counts within the same minute are distinct members — so on a busy channel
+	// with churning mobile clients this series grew without bound, for every
+	// channel, with nothing but a channel delete or a statistics reset ever
+	// removing it. Trim to the most recent entries and expire the key, so the
+	// series stays a rolling window rather than a permanent leak. Only the last
+	// 1000 are ever read back (dbGetSSEStatistics).
+	pipe := rdb.Pipeline()
+	pipe.ZAdd(ctx, key, redis.Z{Score: float64(time.Now().Unix()), Member: member})
+	pipe.ZRemRangeByRank(ctx, key, 0, -(sseStatisticsMaxPoints + 1))
+	pipe.Expire(ctx, key, sseStatisticsTTL)
+	if _, err := pipe.Exec(ctx); err != nil {
+		log.Printf("dbSaveSSEStatistics: %s: recording connection count failed: %v\n", slug, err)
+	}
 }
 
 func dbGetSSEStatistics(ctx context.Context, slug string, length int64) (*Statistics, error) {

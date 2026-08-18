@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -197,15 +198,31 @@ func resetStatistics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Pipelined, and flushed per channel. Each channel means one peak key plus
+	// 11 years x 12 months of series keys: issued one at a time that is ~133
+	// sequential round trips per channel, so a few thousand channels ran well
+	// past this handler's own deadline and left statistics half-reset — with
+	// every Del's error discarded, silently. dbDeleteChannel already batches
+	// the same key set this way.
 	currentYear := time.Now().Year()
 	for _, ch := range channels {
-		rdb.Del(ctx, fmt.Sprintf("channel:%s:peak_sse_connections", ch.Slug))
+		if err := ctx.Err(); err != nil {
+			// Out of time: say so rather than reporting a reset that did not finish.
+			log.Printf("resetStatistics: aborted after partial reset: %v\n", err)
+			http.Error(w, "reset did not complete", http.StatusGatewayTimeout)
+			return
+		}
+		pipe := rdb.Pipeline()
+		pipe.Del(ctx, fmt.Sprintf("channel:%s:peak_sse_connections", ch.Slug))
 		// The monthly series keys have no index; enumerate the possible
 		// month/year combinations (mirrors dbDeleteChannel).
 		for year := currentYear - 10; year <= currentYear; year++ {
 			for month := time.January; month <= time.December; month++ {
-				rdb.Del(ctx, fmt.Sprintf("channel:%s:sse_statistics:%d:%d", ch.Slug, month, year))
+				pipe.Del(ctx, fmt.Sprintf("channel:%s:sse_statistics:%d:%d", ch.Slug, month, year))
 			}
+		}
+		if _, err := pipe.Exec(ctx); err != nil {
+			log.Printf("resetStatistics: %s: clearing statistics failed: %v\n", ch.Slug, err)
 		}
 	}
 
