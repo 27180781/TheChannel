@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi"
@@ -20,6 +21,21 @@ const maxMessagesPerRequest = 100
 // maxStreamReadFailures bounds how long an SSE connection keeps retrying a
 // stream read that consistently fails before the handler gives up.
 const maxStreamReadFailures = 5
+
+// sseRedisPoolSize is the size of the SSE-only Redis pool (see db.go init).
+// Each connected viewer sits in a blocking XREAD and so occupies one connection
+// for as long as it is connected.
+const sseRedisPoolSize = 500
+
+// sseMaxConnections caps concurrent SSE viewers per instance, just below the
+// pool that serves them. Without a cap, viewer number PoolSize+1 does not fail
+// fast: it blocks waiting for a connection that only frees when somebody else
+// disconnects, holding a request goroutine and a socket while it waits. Turning
+// that into an immediate 503 lets a client back off and reconnect instead.
+const sseMaxConnections = sseRedisPoolSize - 20
+
+// sseActiveConnections counts live SSE handlers on this instance.
+var sseActiveConnections atomic.Int64
 
 // streamIDRegex matches a Redis stream entry ID ("<ms>" or "<ms>-<seq>").
 var streamIDRegex = regexp.MustCompile(`^\d+(-\d+)?$`)
@@ -256,6 +272,15 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Admit before doing any work, and release on every exit path.
+	if n := sseActiveConnections.Add(1); n > sseMaxConnections {
+		sseActiveConnections.Add(-1)
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, "too many live connections, please retry", http.StatusServiceUnavailable)
+		return
+	}
+	defer sseActiveConnections.Add(-1)
+
 	slug := channelSlugFromCtx(r)
 	streamKey := fmt.Sprintf("channel:%s:events", slug)
 
@@ -313,7 +338,9 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 
 		// XREAD blocks until new messages arrive or timeout expires.
 		// A short block duration lets us send periodic heartbeats and check for disconnect.
-		streams, err := rdb.XRead(clientCtx, &redis.XReadArgs{
+		// rdbEvents, not rdb: a blocking read must never consume a connection
+		// that the rest of the application needs.
+		streams, err := rdbEvents.XRead(clientCtx, &redis.XReadArgs{
 			Streams: []string{streamKey, lastID},
 			Count:   50,
 			Block:   blockDuration,

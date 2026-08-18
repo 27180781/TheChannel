@@ -23,6 +23,9 @@ var redisAddr = os.Getenv("REDIS_ADDR")
 var redisPass = os.Getenv("REDIS_PASSWORD")
 var rdb redis.UniversalClient
 
+// rdbEvents is the SSE-only client; see init() for why it is separate.
+var rdbEvents redis.UniversalClient
+
 type Message struct {
 	ID        int          `json:"id" redis:"id"`
 	Type      string       `json:"type" redis:"type"`
@@ -69,6 +72,36 @@ func init() {
 		MaxRetries:   3,
 		DialTimeout:  5 * time.Second,
 		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 5 * time.Second,
+	})
+
+	// A second client, used only by the SSE event loop.
+	//
+	// Every connected viewer sits in a blocking XREAD, and a blocking command
+	// holds its pooled connection for the whole block — the loop re-issues
+	// immediately, so one viewer occupies one connection essentially all the
+	// time. Sharing the main pool meant roughly PoolSize concurrent viewers
+	// could consume every connection in the process, at which point logins,
+	// uploads and message reads all queued behind them and timed out: a hundred
+	// idle readers took the whole platform down.
+	//
+	// Giving SSE its own pool turns that platform-wide outage into a bounded
+	// limit on concurrent viewers, which sseMaxConnections then refuses
+	// cleanly. The real fix for viewer scale is one fan-out reader per stream
+	// rather than one per viewer; this is the isolation that makes the current
+	// design safe to run in the meantime.
+	rdbEvents = redis.NewUniversalClient(&redis.UniversalOptions{
+		Addrs:        addrs,
+		Password:     redisPass,
+		DB:           0,
+		MasterName:   os.Getenv("REDIS_MASTER"),
+		PoolSize:     sseRedisPoolSize,
+		MinIdleConns: 5,
+		MaxRetries:   3,
+		DialTimeout:  5 * time.Second,
+		// Must exceed the XREAD block duration, or every block would surface as
+		// a read timeout instead of an empty result.
+		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 5 * time.Second,
 	})
 
@@ -1339,6 +1372,14 @@ func dbGetChannelStorageUsed(ctx context.Context, slug string) (int64, error) {
 
 func dbIncrChannelStorageUsed(ctx context.Context, slug string, bytes int64) error {
 	return rdb.IncrBy(ctx, "channel:"+slug+":storage:used_bytes", bytes).Err()
+}
+
+// dbIncrChannelStorageUsedResult increments and returns the caller's own
+// post-increment total. That return value is what makes a quota check safe
+// under concurrency: every concurrent uploader gets a different number, so only
+// one of them can be the request that crosses the limit.
+func dbIncrChannelStorageUsedResult(ctx context.Context, slug string, bytes int64) (int64, error) {
+	return rdb.IncrBy(ctx, "channel:"+slug+":storage:used_bytes", bytes).Result()
 }
 
 func dbDecrChannelStorageUsed(ctx context.Context, slug string, bytes int64) error {

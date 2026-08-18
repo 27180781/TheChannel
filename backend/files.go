@@ -343,12 +343,26 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 	hashBytes := sha256.Sum256(fileBytes)
 	fileHash := hex.EncodeToString(hashBytes[:])
 
-	// Quota check + auto-cleanup
-	if err := enforceStorageQuota(ctx, slug, fileSize); err != nil {
+	// Quota check + auto-cleanup. This RESERVES the bytes: the counter moves
+	// here, not after the blob is written, because everything between the two
+	// points — an R2 PutObject with a 60-second budget — is time during which
+	// every other concurrent upload would otherwise read a counter that does
+	// not yet include this file and pass a quota check it should have failed.
+	//
+	// committed stays false until the file record exists; every early return
+	// below therefore gives the reservation back rather than leaking quota that
+	// no stored file accounts for.
+	committed := false
+	if err := reserveStorageQuota(ctx, slug, fileSize); err != nil {
 		log.Printf("uploadFile: %s: quota check rejected %d bytes: %v\n", slug, fileSize, err)
 		http.Error(w, err.Error(), http.StatusInsufficientStorage)
 		return
 	}
+	defer func() {
+		if !committed {
+			releaseStorageReservation(ctx, slug, fileSize)
+		}
+	}()
 
 	id := generatedRandomID(20)
 	if id == "" {
@@ -428,7 +442,9 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dbIncrChannelStorageUsed(ctx, slug, fileSize)
+	// The reservation above already accounted for these bytes; incrementing
+	// again here would double-count every upload.
+	committed = true
 	dbAddChannelFile(ctx, slug, id, time.Now().Unix(), fileSize)
 
 	fileUrl := "/api/channel/" + slug + "/files/" + id
@@ -443,9 +459,32 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// enforceStorageQuota checks quota and runs auto-cleanup if needed.
-// Returns error if quota is exceeded and auto-cleanup is disabled or insufficient.
-func enforceStorageQuota(ctx context.Context, slug string, newFileSize int64) error {
+// releaseStorageReservation gives back bytes reserved by reserveStorageQuota
+// for an upload that then failed. Best effort: a lost release overstates usage
+// for the channel until a file is deleted, which is the safe direction to err.
+func releaseStorageReservation(ctx context.Context, slug string, size int64) {
+	if size <= 0 {
+		return
+	}
+	if err := dbDecrChannelStorageUsed(ctx, slug, size); err != nil {
+		log.Printf("releaseStorageReservation: %s: returning %d reserved bytes failed: %v\n", slug, size, err)
+	}
+}
+
+// reserveStorageQuota atomically claims newFileSize bytes of the channel's
+// quota, or reports why it cannot.
+//
+// The claim is made with a single INCRBY and only then compared against the
+// quota, which is what makes it safe under concurrency: a plain read-compare-
+// write lets N simultaneous uploads all read the same "used" value, all decide
+// they fit, and all proceed — overshooting the quota by up to N times the file
+// size. Because the increment is the same atomic operation for every caller,
+// exactly one of them can be the request that crosses the limit, and that one
+// hands its bytes straight back.
+//
+// The caller owns the reserved bytes until it either records a file (making the
+// reservation the real accounting) or calls releaseStorageReservation.
+func reserveStorageQuota(ctx context.Context, slug string, newFileSize int64) error {
 	// All three config reads fail closed: dbGetEffectiveStorageQuota and
 	// dbGetChannelStorageUsed already map redis.Nil to defaults, so only real
 	// failures surface here — and a real failure silently disabling quota
@@ -455,39 +494,52 @@ func enforceStorageQuota(ctx context.Context, slug string, newFileSize int64) er
 		// The client only ever sees "storage configuration unavailable", which
 		// is indistinguishable from a genuine quota breach; the real cause (a
 		// failed Redis read) only exists here.
-		log.Printf("enforceStorageQuota: %s: reading effective quota failed: %v\n", slug, err)
+		log.Printf("reserveStorageQuota: %s: reading effective quota failed: %v\n", slug, err)
 		return fmt.Errorf("storage configuration unavailable")
 	}
 	if quota == 0 {
+		// Unlimited: still count the bytes, since used_bytes is what the storage
+		// screens report and what a later quota would be measured against.
+		if err := dbIncrChannelStorageUsed(ctx, slug, newFileSize); err != nil {
+			log.Printf("reserveStorageQuota: %s: counting %d bytes failed: %v\n", slug, newFileSize, err)
+			return fmt.Errorf("storage configuration unavailable")
+		}
 		return nil
 	}
 
-	used, err := dbGetChannelStorageUsed(ctx, slug)
+	// Claim first, judge second. INCRBY returns this caller's own post-increment
+	// total, so concurrent uploads get distinct values and cannot all conclude
+	// they fit.
+	used, err := dbIncrChannelStorageUsedResult(ctx, slug, newFileSize)
 	if err != nil {
-		log.Printf("enforceStorageQuota: %s: reading used bytes failed: %v\n", slug, err)
+		log.Printf("reserveStorageQuota: %s: reserving %d bytes failed: %v\n", slug, newFileSize, err)
 		return fmt.Errorf("storage configuration unavailable")
 	}
-
-	if used+newFileSize <= quota {
-		return nil // within quota
+	if used <= quota {
+		return nil // within quota, bytes already accounted for
 	}
 
 	autoCleanup, err := dbGetChannelAutoCleanup(ctx, slug)
 	if err != nil {
-		log.Printf("enforceStorageQuota: %s: reading auto-cleanup flag failed: %v\n", slug, err)
+		log.Printf("reserveStorageQuota: %s: reading auto-cleanup flag failed: %v\n", slug, err)
+		releaseStorageReservation(ctx, slug, newFileSize)
 		return fmt.Errorf("storage configuration unavailable")
 	}
 	if !autoCleanup {
-		return fmt.Errorf("storage quota exceeded (%d/%d bytes)", used, quota)
+		releaseStorageReservation(ctx, slug, newFileSize)
+		return fmt.Errorf("storage quota exceeded (%d/%d bytes)", used-newFileSize, quota)
 	}
 
-	// Auto-cleanup: delete oldest files until we have enough space (target: 80% of quota)
+	// Auto-cleanup: delete oldest files until we have enough space (target: 80%
+	// of quota). used already includes this file's reservation, so freeing down
+	// to the target makes room for it too.
 	target := int64(float64(quota) * 0.80)
-	needToFree := (used + newFileSize) - target
+	needToFree := used - target
 
 	files, err := dbGetOldestChannelFiles(ctx, slug, 200)
 	if err != nil {
-		log.Printf("enforceStorageQuota: %s: listing oldest files for auto-cleanup failed: %v\n", slug, err)
+		log.Printf("reserveStorageQuota: %s: listing oldest files for auto-cleanup failed: %v\n", slug, err)
+		releaseStorageReservation(ctx, slug, newFileSize)
 		return fmt.Errorf("storage quota exceeded")
 	}
 
@@ -503,7 +555,8 @@ func enforceStorageQuota(ctx context.Context, slug string, newFileSize int64) er
 	// finish without having made room. Reporting success here would let the
 	// channel grow past its quota indefinitely.
 	if needToFree > 0 {
-		return fmt.Errorf("storage quota exceeded (%d/%d bytes); auto-cleanup could not free enough space", used, quota)
+		releaseStorageReservation(ctx, slug, newFileSize)
+		return fmt.Errorf("storage quota exceeded (%d/%d bytes); auto-cleanup could not free enough space", used-newFileSize, quota)
 	}
 
 	return nil
@@ -581,6 +634,19 @@ func getFavicon(w http.ResponseWriter, r *http.Request) {
 
 	c, err := getChannelDetails(ctx, slug)
 	if err != nil {
+		http.ServeFile(w, r, "assets/favicon.ico")
+		return
+	}
+
+	// This route is mounted at the router root, so none of channelMiddleware's
+	// disabled check, channelIfRequireAuth or channelIfRequireAuthFiles runs —
+	// yet it serves a blob out of the channel's own file store. A favicon
+	// request cannot carry a meaningful session (browsers fetch it out of band),
+	// so instead of trying to authenticate it, a channel that has asked not to
+	// be readable anonymously simply gets the platform default. That leaks
+	// neither the logo nor the fact that the channel exists.
+	if ch, chErr := dbGetChannel(ctx, slug); chErr != nil ||
+		ch.Features.Disabled || ch.Features.RequireAuth || ch.Features.RequireAuthFiles {
 		http.ServeFile(w, r, "assets/favicon.ico")
 		return
 	}

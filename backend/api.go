@@ -30,8 +30,24 @@ func addNewPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// This route is mounted at the router root, outside the /api/channel/{slug}
+	// group, so channelMiddleware never runs for it — and channelMiddleware is
+	// where the super admin's kill switch lives. Without this check, disabling a
+	// channel stopped every browser-facing route while the owner's API key kept
+	// ingesting posts, publishing to SSE and firing the channel's webhook. The
+	// check is repeated here rather than by remounting the route because the
+	// API key, not a session, is what authenticates it.
+	channel, err := dbGetChannel(ctx, slug)
+	if err != nil {
+		http.Error(w, "Channel not found", http.StatusNotFound)
+		return
+	}
+	if channel.Features.Disabled {
+		http.Error(w, "channel_disabled", http.StatusForbidden)
+		return
+	}
+
 	var message Message
-	var err error
 	defer r.Body.Close()
 
 	// The decoded text is stored verbatim and broadcast to every SSE client, so

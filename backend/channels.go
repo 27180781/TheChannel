@@ -323,6 +323,15 @@ func applyChannelRoleChanges(slug string, changes []channelUserChange, allowOwne
 				continue // owner cannot promote others to owner
 			}
 			if i, exists := userMap[ru.Email]; exists {
+				// Guarding only the promotion above left the reverse open: a
+				// change to "" or to any lesser role is not RoleOwner, so an
+				// owner could strip a co-owner's role and take sole control of
+				// the tenant — irreversibly, since only a super admin can grant
+				// owner back. Who currently holds owner is what matters here,
+				// not what the change asks for.
+				if !allowOwner && users[i].ChannelRoles[slug] == RoleOwner {
+					continue
+				}
 				if users[i].ChannelRoles == nil {
 					users[i].ChannelRoles = make(map[string]ChannelRole)
 				}

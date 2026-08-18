@@ -64,6 +64,11 @@ func init() {
 			sweep(&uploadLimiters)
 			sweep(&channelCreateLimiters)
 			sweep(&slugCheckLimiters)
+			// Support submissions are keyed by client IP when there is no
+			// session, so this is the one map an anonymous caller can add
+			// unbounded distinct keys to. Leaving it out of the sweep made it
+			// the only limiter map that grew for the process lifetime.
+			sweep(&supportSubmitLimiters)
 		}
 	}()
 }

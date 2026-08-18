@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/boj/redistore"
 	"github.com/go-chi/chi"
@@ -56,6 +57,7 @@ func main() {
 	// per-IP rate limiting works; the backend port must therefore never be
 	// exposed directly, since RealIP trusts the header.
 	r.Use(middleware.RealIP)
+	r.Use(limitRequestBody)
 
 	// Auth routes
 	r.Get("/auth/google", getGoogleAuthValues)
@@ -148,10 +150,16 @@ func main() {
 				// Writer level
 				r.Post("/new", protectedWithChannelRole(RoleWriter, addMessage))
 				r.Post("/edit-message", protectedWithChannelRole(RoleWriter, updateMessage))
-				// Deletion is a state change, so it belongs on DELETE. The GET
-				// route stays registered for existing clients until they migrate.
+				// DELETE only. The GET alias that used to sit here was a CSRF
+				// hole: the session cookie is SameSite=Lax, which deliberately
+				// still rides along on a top-level GET navigation, so merely
+				// visiting a link like
+				// /api/channel/<slug>/admin/delete-message/42 was enough to
+				// delete a writer's message from any site on the web. Lax
+				// withholds the cookie from cross-site DELETE, so the verb is
+				// the whole defence. The only client (admin.service.ts) has
+				// always used DELETE.
 				r.Delete("/delete-message/{id}", protectedWithChannelRole(RoleWriter, deleteMessage))
-				r.Get("/delete-message/{id}", protectedWithChannelRole(RoleWriter, deleteMessage))
 				r.Post("/upload", protectedWithChannelRole(RoleWriter, requireFeature(func(f *ChannelFeatures) bool { return f.FileUploads }, uploadRateLimit(uploadFile))))
 				r.Get("/scheduled-messages/get", protectedWithChannelRole(RoleWriter, requireFeature(func(f *ChannelFeatures) bool { return f.ScheduledMessages }, getScheduledMessages)))
 				r.Post("/scheduled-messages/update", protectedWithChannelRole(RoleWriter, requireFeature(func(f *ChannelFeatures) bool { return f.ScheduledMessages }, updateScheduledMessages)))
@@ -193,6 +201,29 @@ func main() {
 	if err := http.ListenAndServe(":"+os.Getenv("SERVER_PORT"), r); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// maxJSONRequestBody caps any non-multipart request body. Handlers decode
+// straight into memory with json.NewDecoder(r.Body), which reads as much as the
+// client sends: without a cap, a single authenticated writer could post a
+// multi-gigabyte body to /admin/new and have it buffered, stored verbatim and
+// then fanned out to every SSE viewer of the channel.
+//
+// 2 MiB is far above any legitimate payload here — the largest is a scheduled
+// message list, and message text is separately capped at 100k — while bounding
+// what one request can allocate.
+const maxJSONRequestBody = 2 << 20
+
+// limitRequestBody applies that cap to every route, so a handler added later
+// cannot forget it. File uploads are exempt: they are multipart and enforce
+// their own, much larger, per-channel size limit in uploadFile.
+func limitRequestBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil && !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+			r.Body = http.MaxBytesReader(w, r.Body, maxJSONRequestBody)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func serveSpaFile(w http.ResponseWriter, r *http.Request) {
