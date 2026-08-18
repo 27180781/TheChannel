@@ -86,6 +86,9 @@ export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
   slugReady = false;
   noChannel = false;
   private paramSub?: Subscription;
+  /** Watches the fixed header's height; see ngAfterViewChecked. */
+  private chromeObserver?: ResizeObserver;
+  private chromeTarget?: Element;
 
   /**
    * Slug of the channel an operator switched off, raised centrally by
@@ -103,14 +106,29 @@ export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
   ];
 
   ngAfterViewChecked(): void {
-    // The header only exists once slugReady flips, and its height changes when
-    // the channel name loads and wraps, so this is re-read rather than measured
-    // once. setStyle with an unchanged value is a no-op, so there is no loop.
+    // The header is created and destroyed as slugReady flips, so its arrival
+    // has to be noticed here — but cheaply. This does a querySelector and an
+    // identity comparison, never a measurement: measuring here meant a forced
+    // synchronous layout on every change-detection pass, and change detection
+    // runs on every scroll frame because the feed listens for scroll. The
+    // measuring is left to the observer below, which fires only when the header
+    // actually changes size.
+    const header = this.el.nativeElement.querySelector('nb-layout-header');
+    if (header === this.chromeTarget) return;
+
+    this.chromeTarget = header ?? undefined;
+    this.chromeObserver?.disconnect();
+    this.chromeObserver = undefined;
+    if (!header) return;
+
+    // Covers both the channel name loading and wrapping to a second line, and
+    // any window resize — the header is full width, so a resize changes it too.
+    this.chromeObserver = new ResizeObserver(() => this.updateChromeHeight());
+    this.chromeObserver.observe(header);
     this.updateChromeHeight();
   }
 
   ngOnInit(): void {
-    window.addEventListener('resize', this.updateChromeHeight);
     this.paramSub = this.route.paramMap.subscribe(params => {
       const slug = params.get('slug');
       this.initChannel(slug);
@@ -118,7 +136,7 @@ export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
   }
 
   ngOnDestroy(): void {
-    window.removeEventListener('resize', this.updateChromeHeight);
+    this.chromeObserver?.disconnect();
     this.paramSub?.unsubscribe();
   }
 

@@ -496,8 +496,16 @@ func addViewsToMessages(ctx context.Context, slug string, countViews bool, messa
 	if !countViews {
 		return
 	}
+	// One pipeline, not one round trip per message. This runs on every page of
+	// /messages, so at a page size of 100 it turned the platform's most-read
+	// endpoint into 100 sequential writes per read — competing for the same
+	// connection pool the rest of the application shares.
+	pipe := rdb.Pipeline()
 	for _, m := range messages {
-		rdb.HIncrBy(ctx, fmt.Sprintf("channel:%s:messages:%d", slug, m.ID), "views", 1)
+		pipe.HIncrBy(ctx, fmt.Sprintf("channel:%s:messages:%d", slug, m.ID), "views", 1)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		log.Printf("addViewsToMessages: %s: recording %d views failed: %v\n", slug, len(messages), err)
 	}
 }
 
@@ -1538,6 +1546,13 @@ func dbSetChannelAutoCleanup(ctx context.Context, slug string, enabled bool) err
 // dbIncrFileHashRefs increments the reference count for a file hash (dedup tracking).
 func dbIncrFileHashRefs(ctx context.Context, hash string) error {
 	return rdb.Incr(ctx, "file:hash:"+hash+":refs").Err()
+}
+
+// dbIncrFileHashRefsResult claims a reference and returns the resulting count.
+// The upload path claims BEFORE deciding whether the blob needs writing, and
+// the returned count is what tells it whether it is the first reference.
+func dbIncrFileHashRefsResult(ctx context.Context, hash string) (int64, error) {
+	return rdb.Incr(ctx, "file:hash:"+hash+":refs").Result()
 }
 
 // dbDelFileHashRefs removes the ref counter entirely (used once it reaches zero).

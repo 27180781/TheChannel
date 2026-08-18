@@ -377,6 +377,28 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 		contentType = "application/octet-stream"
 	}
 
+	// Claim a reference to the blob BEFORE looking at whether it exists.
+	//
+	// Incrementing afterwards left a window in which a concurrent delete could
+	// take the count to zero and physically remove the very blob this upload had
+	// just decided it did not need to write — leaving a file record, charged
+	// against the channel's quota and present in every index, that 404s forever.
+	// Claiming first means any concurrent delete sees this reference and leaves
+	// the blob alone.
+	refs, refErr := dbIncrFileHashRefsResult(ctx, fileHash)
+	if refErr != nil {
+		log.Printf("uploadFile: %s: claiming a reference to hash %s failed: %v\n", slug, fileHash, refErr)
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
+	}
+	defer func() {
+		if !committed {
+			if _, err := dbDecrFileHashRefs(ctx, fileHash); err != nil {
+				log.Printf("uploadFile: %s: releasing the reference to hash %s failed: %v\n", slug, fileHash, err)
+			}
+		}
+	}()
+
 	isNewHash := true
 	if r2Enabled {
 		key := r2ObjectKey(fileHash)
@@ -421,9 +443,18 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 			isNewHash = false
 		}
 	}
-	_ = isNewHash
-
-	dbIncrFileHashRefs(ctx, fileHash)
+	// A count of 1 means this upload created the counter, so as far as the
+	// counter knows it is the only reference. If the blob was nonetheless
+	// already there, some record predating reference counting points at it too.
+	// Count that unknown reference, or this channel deleting its own copy would
+	// destroy the other channel's file. Erring this way can at worst strand a
+	// blob nothing references; the other direction loses somebody's data.
+	if !isNewHash && refs == 1 {
+		log.Printf("uploadFile: %s: hash %s had no reference count but its blob already existed; counting the pre-existing reference\n", slug, fileHash)
+		if err := dbIncrFileHashRefs(ctx, fileHash); err != nil {
+			log.Printf("uploadFile: %s: counting the pre-existing reference to %s failed: %v\n", slug, fileHash, err)
+		}
+	}
 
 	meta := &FileMetadata{
 		ID:          id,

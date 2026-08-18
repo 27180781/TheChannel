@@ -45,6 +45,9 @@ func releaseScheduledLock(slug, token string) {
 // runScheduledMessages only processes channels that have at least one message
 // due before now, using the "scheduled:due_channels" sorted set (score = earliest
 // due timestamp). This avoids querying every channel every minute.
+// maxDueChannelsPerTick bounds one scheduler pass.
+const maxDueChannelsPerTick = 500
+
 func runScheduledMessages() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -52,9 +55,14 @@ func runScheduledMessages() {
 	now := float64(time.Now().Unix())
 
 	// Get all channels with at least one message due by now
+	// Bounded: an unbounded read meant a post-outage catch-up, where every
+	// channel is due at once, produced a tick that ran far past its own budget
+	// while the next tick started anyway and piled up on top of it. Whatever
+	// does not fit is still due and is picked up by the following tick.
 	slugs, err := rdb.ZRangeByScore(ctx, "scheduled:due_channels", &redis.ZRangeBy{
-		Min: "0",
-		Max: fmt.Sprintf("%f", now),
+		Min:   "0",
+		Max:   fmt.Sprintf("%f", now),
+		Count: maxDueChannelsPerTick,
 	}).Result()
 	if err != nil || len(slugs) == 0 {
 		return
@@ -62,6 +70,15 @@ func runScheduledMessages() {
 
 	for _, slug := range slugs {
 		slug := slug
+
+		// The outer budget was declared and then never consulted: every
+		// operation inside this loop builds its own context, so the loop could
+		// run indefinitely. Stop when the tick's time is up and leave the rest
+		// for the next one.
+		if ctx.Err() != nil {
+			log.Printf("runScheduledMessages: tick budget exhausted; %d channels deferred to the next tick\n", len(slugs))
+			return
+		}
 
 		// Claim the channel for this tick. Every instance runs this ticker, and
 		// dispatch is a read-then-write over the pending list with no atomicity,

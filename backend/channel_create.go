@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -163,6 +164,28 @@ func createChannelSelfService(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "slug already taken", http.StatusConflict)
 		return
 	}
+
+	// Serialise creates by the same owner. The cap below is a check-then-act:
+	// countOwnedChannels reads the roles list, but the role that would make this
+	// channel count is only assigned after dbCreateChannel further down. Three
+	// concurrent requests (which the creation limiter's burst of 3 allows) all
+	// read the same count, all pass, and all create — an account holding five
+	// channels ends up with seven. dbCreateChannel's atomic slug claim does not
+	// help, because the slugs are different.
+	//
+	// The lock is short-lived and owner-scoped, so it costs nothing to anyone
+	// else and cannot outlive a crashed request.
+	createLock := "channel_create:lock:" + strings.ToLower(s.Email)
+	gotLock, lockErr := rdb.SetNX(ctx, createLock, 1, 15*time.Second).Result()
+	if lockErr != nil {
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
+	}
+	if !gotLock {
+		http.Error(w, "another channel is already being created for this account", http.StatusConflict)
+		return
+	}
+	defer rdb.Del(ctx, createLock)
 
 	owned, err := countOwnedChannels(ctx, s.Email)
 	if err != nil {
