@@ -547,8 +547,12 @@ func reserveStorageQuota(ctx context.Context, slug string, newFileSize int64) er
 		if needToFree <= 0 {
 			break
 		}
-		deleteFileByID(ctx, slug, f.ID, true)
-		needToFree -= f.Size
+		// Count what the delete actually released. Subtracting f.Size
+		// unconditionally meant a no-op still counted as freed space: two
+		// concurrent near-quota uploads read the same oldest-files list, and the
+		// one that lost every deletion claim still reached needToFree <= 0 and
+		// was admitted against bytes the other upload had freed for itself.
+		needToFree -= deleteFileByID(ctx, slug, f.ID, true)
 	}
 
 	// Cleanup is best-effort: it walks at most the 200 oldest files, so it can
@@ -566,10 +570,14 @@ func reserveStorageQuota(ctx context.Context, slug string, newFileSize int64) er
 // from R2/disk if no more refs. removeFromIndex controls whether the channel's
 // file tracking set is updated; dbDeleteChannel passes false because it drops
 // the whole set itself (and a per-file O(N) scan would make deletion O(N^2)).
-func deleteFileByID(ctx context.Context, slug, fileID string, removeFromIndex bool) {
+// It returns the number of bytes it actually released, which is 0 whenever it
+// no-ops — an unreadable record, one already deleted, or a claim lost to a
+// concurrent caller. Callers that are freeing space to make room must count
+// that return value rather than the size they hoped to free.
+func deleteFileByID(ctx context.Context, slug, fileID string, removeFromIndex bool) int64 {
 	meta, err := dbGetFileMetadata(ctx, fileID)
 	if err != nil || meta.Delete {
-		return
+		return 0
 	}
 
 	// Claim the deletion atomically: two concurrent callers (e.g. parallel
@@ -578,14 +586,14 @@ func deleteFileByID(ctx context.Context, slug, fileID string, removeFromIndex bo
 	// deleting a blob another channel still references.
 	claimed, err := rdb.SetNX(ctx, "file:"+fileID+":deleting", 1, time.Minute).Result()
 	if err != nil || !claimed {
-		return
+		return 0
 	}
 
 	meta.Delete = true
 	dbSaveFileMetadata(ctx, meta)
 	dbDecrChannelStorageUsed(ctx, slug, meta.Size)
 	if removeFromIndex {
-		dbRemoveChannelFile(ctx, slug, fileID)
+		dbRemoveChannelFile(ctx, slug, fileID, meta.Size)
 	}
 
 	// Decrement hash refs and delete from storage if no more references
@@ -604,6 +612,7 @@ func deleteFileByID(ctx context.Context, slug, fileID string, removeFromIndex bo
 		// Drop the counter itself; a fresh upload of the same hash starts at 1 again.
 		dbDelFileHashRefs(ctx, meta.Hash)
 	}
+	return meta.Size
 }
 
 func generatedFileHash(file io.Reader) (string, error) {

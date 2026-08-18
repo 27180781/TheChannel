@@ -1415,7 +1415,25 @@ func dbAddChannelFile(ctx context.Context, slug, fileID string, uploadedAt int64
 }
 
 // dbRemoveChannelFile removes a file from the channel's tracking set.
-func dbRemoveChannelFile(ctx context.Context, slug, fileID string) error {
+// size is the file's recorded size, which the caller already holds. Because a
+// member is exactly "id:size", knowing the size makes removal a direct ZREM
+// instead of a scan: this used to pull the channel's entire file index over the
+// wire to locate one entry, and auto-cleanup calls it up to 200 times inside a
+// single upload — on a channel with 100k files that was millions of member
+// transfers per request, with Redis blocked on each one.
+//
+// The scan survives only as a fallback for an index entry whose size disagrees
+// with the metadata (a record written before the size was tracked), so a
+// mismatch still removes the entry rather than silently leaking it.
+func dbRemoveChannelFile(ctx context.Context, slug, fileID string, size int64) error {
+	removed, err := rdb.ZRem(ctx, channelFilesKey(slug), encodeFileMember(fileID, size)).Result()
+	if err != nil {
+		return err
+	}
+	if removed > 0 {
+		return nil
+	}
+
 	members, err := rdb.ZRange(ctx, channelFilesKey(slug), 0, -1).Result()
 	if err != nil {
 		return err

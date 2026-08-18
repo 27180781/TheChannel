@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
+	"math/rand"
 	"net/http"
 	"strconv"
 	"strings"
@@ -41,6 +43,28 @@ const (
 	SupportStatusAnswered SupportStatus = "answered"
 	SupportStatusClosed   SupportStatus = "closed"
 )
+
+// Sentinels returned by a dbUpdateSupportTicket mutator to abort the
+// transaction, judged against the ticket as it stands at write time rather than
+// the copy the handler read earlier.
+var (
+	errTicketClosed = errors.New("this ticket is closed")
+	errThreadFull   = errors.New("this thread has reached its message limit")
+)
+
+// writeTicketUpdateError maps a dbUpdateSupportTicket failure onto a status
+// code. A ticket that vanished (expired TTL) reads as not found, exactly as it
+// would have before the transaction.
+func writeTicketUpdateError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, errTicketClosed), errors.Is(err, errThreadFull):
+		http.Error(w, err.Error(), http.StatusConflict)
+	case errors.Is(err, redis.Nil):
+		http.Error(w, "not found", http.StatusNotFound)
+	default:
+		http.Error(w, "error", http.StatusInternalServerError)
+	}
+}
 
 func validSupportStatus(s SupportStatus) bool {
 	switch s {
@@ -118,6 +142,83 @@ func dbSaveSupportTicket(ctx context.Context, t *SupportTicket) error {
 		rdb.Expire(ctx, key, supportTicketTTL)
 	}
 	return nil
+}
+
+// dbUpdateSupportTicket applies mutate to a ticket under a WATCH-guarded
+// read-modify-write, following dbUpdateUsersList.
+//
+// A ticket is one JSON blob holding the whole thread, so the obvious
+// read-mutate-Set loses writes: an operator answering while the requester adds
+// a message means both load the same thread, both append, and whichever SET
+// lands second silently discards the other's message — with a 200 for both. The
+// same race let a reply composed from a pre-close snapshot reopen a ticket an
+// operator had just closed.
+//
+// mutate may be called more than once and must therefore only act on the ticket
+// it is handed. It returns an error to abort the transaction and report back
+// (used for the conditions that must be judged against fresh state, such as a
+// ticket that has since been closed).
+func dbUpdateSupportTicket(ctx context.Context, id string, mutate func(*SupportTicket) error) (*SupportTicket, error) {
+	// Optimistic concurrency: every loser of a race retries, so the budget has
+	// to cover the contenders, not just a couple of collisions. With a flat
+	// retry and no pause, simultaneous writers re-collide in lockstep and one
+	// can exhaust a small budget while its peers commit — an honest error, but
+	// an avoidable one. The jittered backoff spreads them apart.
+	const maxRetries = 20
+	key := supportTicketKey(id)
+	var result *SupportTicket
+
+	txf := func(tx *redis.Tx) error {
+		data, err := tx.Get(ctx, key).Result()
+		if err != nil {
+			return err // redis.Nil surfaces as "not found" to the caller
+		}
+		var t SupportTicket
+		if err := json.Unmarshal([]byte(data), &t); err != nil {
+			return err
+		}
+		if err := mutate(&t); err != nil {
+			return err
+		}
+		encoded, err := json.Marshal(&t)
+		if err != nil {
+			return err
+		}
+
+		score := redis.Z{Score: float64(t.UpdatedAt.Unix()), Member: t.ID}
+		_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
+			p.Set(ctx, key, encoded, supportTicketTTL)
+			p.ZAdd(ctx, supportTicketIndexKey, score)
+			if t.Email != "" {
+				userKey := supportUserIndexKey(t.Email)
+				p.ZAdd(ctx, userKey, score)
+				p.Expire(ctx, userKey, supportTicketTTL)
+			}
+			return nil
+		})
+		if err == nil {
+			result = &t
+		}
+		return err
+	}
+
+	for i := 0; i < maxRetries; i++ {
+		err := rdb.Watch(ctx, txf, key)
+		if err != redis.TxFailedErr {
+			if err != nil {
+				return nil, err
+			}
+			return result, nil
+		}
+		// Someone else committed first. Pause briefly, with jitter so the
+		// contenders do not all wake and collide again together.
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Duration(rand.Int63n(int64(2*time.Millisecond))) + time.Millisecond):
+		}
+	}
+	return nil, errors.New("support ticket: too much contention")
 }
 
 func dbGetSupportTicket(ctx context.Context, id string) (*SupportTicket, error) {
@@ -349,22 +450,30 @@ func replySupportTicket(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if len(t.Messages) >= maxSupportMessages {
-		http.Error(w, "this thread has reached its message limit", http.StatusConflict)
-		return
-	}
 	if !allowOrRetryAfter(w, supportSubmitLimiter(clientKey(r)),
 		"too many requests — please try again later") {
 		return
 	}
 
-	appendSupportMessage(t, "user", t.Name, body, SupportStatusOpen)
-	if err := dbSaveSupportTicket(ctx, t); err != nil {
-		http.Error(w, "error", http.StatusInternalServerError)
+	// The thread-length and closed checks are re-made inside the transaction,
+	// against the ticket as it stands at write time rather than the copy read
+	// for authorisation.
+	updated, err := dbUpdateSupportTicket(ctx, t.ID, func(cur *SupportTicket) error {
+		if cur.Status == SupportStatusClosed {
+			return errTicketClosed
+		}
+		if len(cur.Messages) >= maxSupportMessages {
+			return errThreadFull
+		}
+		appendSupportMessage(cur, "user", cur.Name, body, SupportStatusOpen)
+		return nil
+	})
+	if err != nil {
+		writeTicketUpdateError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(publicView(t))
+	json.NewEncoder(w).Encode(publicView(updated))
 }
 
 // GET /api/support/my-tickets — a signed-in user's own threads.
@@ -420,25 +529,27 @@ func adminReplySupportTicket(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if len(t.Messages) >= maxSupportMessages {
-		http.Error(w, "this thread has reached its message limit", http.StatusConflict)
-		return
-	}
 
 	name := "הנהלת המערכת"
 	if s, ok := sessionEmail(r); ok {
 		name = sessionDisplayName(s)
 	}
-	// An operator reply reopens a closed ticket: answering it is a deliberate
-	// act, and leaving it closed would silently discard the reply from the
-	// requester's view.
-	appendSupportMessage(t, "admin", name, body, SupportStatusAnswered)
-	if err := dbSaveSupportTicket(ctx, t); err != nil {
-		http.Error(w, "error", http.StatusInternalServerError)
+	updated, err := dbUpdateSupportTicket(ctx, t.ID, func(cur *SupportTicket) error {
+		if len(cur.Messages) >= maxSupportMessages {
+			return errThreadFull
+		}
+		// An operator reply reopens a closed ticket: answering it is a
+		// deliberate act, and leaving it closed would silently discard the
+		// reply from the requester's view.
+		appendSupportMessage(cur, "admin", name, body, SupportStatusAnswered)
+		return nil
+	})
+	if err != nil {
+		writeTicketUpdateError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(publicView(t))
+	json.NewEncoder(w).Encode(publicView(updated))
 }
 
 // POST /api/super-admin/support/tickets/{id}/status
@@ -459,14 +570,17 @@ func adminSetSupportTicketStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid status", http.StatusBadRequest)
 		return
 	}
-	t.Status = req.Status
-	t.UpdatedAt = time.Now()
-	if err := dbSaveSupportTicket(ctx, t); err != nil {
-		http.Error(w, "error", http.StatusInternalServerError)
+	updated, err := dbUpdateSupportTicket(ctx, t.ID, func(cur *SupportTicket) error {
+		cur.Status = req.Status
+		cur.UpdatedAt = time.Now()
+		return nil
+	})
+	if err != nil {
+		writeTicketUpdateError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(publicView(t))
+	json.NewEncoder(w).Encode(publicView(updated))
 }
 
 // decodeSupportBody reads and bounds the one field every reply carries.

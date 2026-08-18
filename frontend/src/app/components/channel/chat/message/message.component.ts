@@ -19,6 +19,7 @@ import { AdminService } from '../../../../services/admin.service';
 import { AuthService } from '../../../../services/auth.service';
 import { SlugService } from '../../../../services/slug.service';
 import { ReportComponent } from './report/report.component';
+import { EMBED_PREFIX_REGEX } from '../../../../markdown.config';
 @Component({
   selector: 'app-message',
   imports: [
@@ -69,7 +70,9 @@ export class MessageComponent implements OnInit, AfterViewInit, OnDestroy {
   private isScrolling = false;
   private hoverTimer: any;
   private readonly minimalHoverMs = 200;
-  private readonly matchFindCustomEmbedReg = /^\[(video|audio|image|quote)-embedded#].*/;
+  // Shared with the renderer so the two can never disagree about what an embed
+  // token looks like — a private copy here missed the optional size suffix.
+  private readonly matchFindCustomEmbedReg = EMBED_PREFIX_REGEX;
 
   private get channelRole(): string | undefined {
     return this._authService.userInfo?.channelRoles?.[this.slugService.slug];
