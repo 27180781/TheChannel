@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi"
-	"github.com/redis/go-redis/v9"
 )
 
 // maxMessagesPerRequest caps the client-supplied page size for /messages.
@@ -23,16 +22,19 @@ const maxMessagesPerRequest = 100
 const maxStreamReadFailures = 5
 
 // sseRedisPoolSize is the size of the SSE-only Redis pool (see db.go init).
-// Each connected viewer sits in a blocking XREAD and so occupies one connection
-// for as long as it is connected.
+//
+// Connections are now held per *channel with at least one viewer*, not per
+// viewer: sse_hub.go runs one reader per stream and fans out in process. This
+// therefore bounds how many distinct channels can have live viewers at once on
+// one instance, and a channel with ten thousand readers still costs one
+// connection.
 const sseRedisPoolSize = 500
 
-// sseMaxConnections caps concurrent SSE viewers per instance, just below the
-// pool that serves them. Without a cap, viewer number PoolSize+1 does not fail
-// fast: it blocks waiting for a connection that only frees when somebody else
-// disconnects, holding a request goroutine and a socket while it waits. Turning
-// that into an immediate 503 lets a client back off and reconnect instead.
-const sseMaxConnections = sseRedisPoolSize - 20
+// sseMaxConnections caps concurrent SSE viewers per instance. It is no longer
+// tied to the Redis pool — a viewer costs a goroutine, a socket and a 256-event
+// buffer, not a connection — so it exists only to bound memory and file
+// descriptors, and sits far above the old ceiling.
+const sseMaxConnections = 20000
 
 // sseActiveConnections counts live SSE handlers on this instance.
 var sseActiveConnections atomic.Int64
@@ -317,67 +319,65 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 	defer decreaseCounterSSE(slug)
 
 	clientCtx := r.Context()
-	lastHeartbeat := time.Now()
-	failures := 0
-	const blockDuration = 5 * time.Second
 	const heartbeatInterval = 25 * time.Second
 
-	for {
-		if clientCtx.Err() != nil {
+	// Join the channel's shared reader BEFORE replaying history, so an event
+	// published during the replay is buffered rather than missed. The replay is
+	// then deduplicated against what the hub delivers, using the stream ids.
+	sub, unsubscribe := sseSubscribe(streamKey)
+	defer unsubscribe()
+
+	send := func(ev sseEvent) bool {
+		data := ev.data
+		if !isWriter {
+			data = maskEventAuthor(data)
+		}
+		if _, err := fmt.Fprintf(w, "id: %s\ndata: %s\n\n", ev.id, data); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+
+	// A reconnecting client carries Last-Event-ID; the hub reads from the tip,
+	// so whatever it missed while away is replayed from the stream here.
+	replayedTo := ""
+	for _, ev := range sseCatchUp(clientCtx, streamKey, lastID) {
+		if !send(ev) {
 			return
 		}
+		replayedTo = ev.id
+	}
 
-		// Send heartbeat if it's been too long
-		if time.Since(lastHeartbeat) >= heartbeatInterval {
+	heartbeat := time.NewTicker(heartbeatInterval)
+	defer heartbeat.Stop()
+
+	for {
+		select {
+		case <-clientCtx.Done():
+			return
+
+		case ev, ok := <-sub.ch:
+			if !ok {
+				// The hub stopped, or this connection fell too far behind and was
+				// dropped. Returning ends the response; the browser reconnects
+				// with Last-Event-ID and resumes.
+				return
+			}
+			// Skip anything the catch-up above already delivered.
+			if replayedTo != "" && ev.id <= replayedTo {
+				continue
+			}
+			if !send(ev) {
+				return
+			}
+
+		case <-heartbeat.C:
 			if _, err := fmt.Fprintf(w, "data: {\"type\": \"heartbeat\"}\n\n"); err != nil {
 				return
 			}
 			flusher.Flush()
-			lastHeartbeat = time.Now()
 		}
-
-		// XREAD blocks until new messages arrive or timeout expires.
-		// A short block duration lets us send periodic heartbeats and check for disconnect.
-		// rdbEvents, not rdb: a blocking read must never consume a connection
-		// that the rest of the application needs.
-		streams, err := rdbEvents.XRead(clientCtx, &redis.XReadArgs{
-			Streams: []string{streamKey, lastID},
-			Count:   50,
-			Block:   blockDuration,
-		}).Result()
-
-		if clientCtx.Err() != nil {
-			return
-		}
-		if err != nil {
-			// redis.Nil = block timeout with no messages; other errors: brief pause
-			// then retry, but a stream that keeps failing must not be retried
-			// forever at 2 Hz.
-			if err != redis.Nil {
-				failures++
-				if failures > maxStreamReadFailures {
-					log.Printf("SSE stream %s: giving up after %d failed reads: %v\n", streamKey, failures, err)
-					return
-				}
-				time.Sleep(500 * time.Millisecond)
-			}
-			continue
-		}
-		failures = 0
-
-		for _, stream := range streams {
-			for _, msg := range stream.Messages {
-				lastID = msg.ID
-				data, _ := msg.Values["data"].(string)
-				if !isWriter {
-					data = maskEventAuthor(data)
-				}
-				if _, err := fmt.Fprintf(w, "id: %s\ndata: %s\n\n", lastID, data); err != nil {
-					return
-				}
-			}
-		}
-		flusher.Flush()
 	}
 }
 
