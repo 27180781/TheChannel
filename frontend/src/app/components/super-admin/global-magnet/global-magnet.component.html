@@ -6,6 +6,19 @@
 
   <nb-card-body>
     <div class="d-flex flex-column gap-3">
+      <!-- These settings only reach a channel that is locked to them: otherwise
+           each channel uses its own magnet settings and this whole form has no
+           effect. That is easy to miss, because the lock lives at the bottom of
+           the form, so say so here rather than letting it fail silently. -->
+      @if (config.enabled && !config.lockAll && !config.lockedChannels.length) {
+        <nb-alert status="warning" class="mb-0">
+          <strong>ההגדרות האלה עדיין לא חלות על אף ערוץ.</strong>
+          מגנט גלובלי חל רק על ערוצים נעולים. הפעילו למטה
+          <em>"נעל מגנט על כל הערוצים"</em>, או הוסיפו ערוץ לרשימת
+          <em>"ערוצים נעולים"</em>. בלי זה כל ערוץ משתמש בהגדרות המגנט שלו.
+        </nb-alert>
+      }
+
       <div>
         <nb-toggle [(checked)]="config.enabled">
           <span>הפעל מגנט</span>

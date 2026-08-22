@@ -9,6 +9,7 @@ import {
   NbSelectModule,
   NbToggleModule,
   NbToastrService,
+  NbAlertModule,
 } from '@nebular/theme';
 import { SuperAdminService, GlobalMagnetConfig } from '../../../services/super-admin.service';
 
@@ -24,6 +25,7 @@ import { SuperAdminService, GlobalMagnetConfig } from '../../../services/super-a
     NbIconModule,
     NbSelectModule,
     NbToggleModule,
+    NbAlertModule,
   ],
   templateUrl: './global-magnet.component.html',
 })
