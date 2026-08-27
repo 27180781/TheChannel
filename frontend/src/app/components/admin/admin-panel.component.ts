@@ -1,5 +1,5 @@
-import { Component, OnDestroy, OnInit } from "@angular/core";
-import { NbCardModule, NbLayoutModule, NbMenuItem, NbMenuModule, NbMenuService, NbSidebarModule } from "@nebular/theme";
+import { Component, OnDestroy, OnInit, Optional } from "@angular/core";
+import { NbButtonModule, NbCardModule, NbDialogRef, NbIconModule, NbLayoutModule, NbMenuItem, NbMenuModule, NbMenuService, NbSidebarModule } from "@nebular/theme";
 import { filter, Subscription } from "rxjs";
 import { SlugService } from "../../services/slug.service";
 import { AuthService } from "../../services/auth.service";
@@ -23,6 +23,8 @@ type MenuAccess = 'moderator' | 'owner';
     NbSidebarModule,
     NbMenuModule,
     NbCardModule,
+    NbButtonModule,
+    NbIconModule,
     EmojisComponent,
     SettingsComponent,
     PrivilegDashboardComponent,
@@ -166,7 +168,14 @@ export class AdminPanelComponent implements OnInit, OnDestroy {
     private menuService: NbMenuService,
     private slugService: SlugService,
     private authService: AuthService,
+    // Optional: the panel is always opened as a dialog today, but injecting the
+    // ref optionally keeps it usable if it is ever embedded directly.
+    @Optional() private dialogRef: NbDialogRef<AdminPanelComponent> | null,
   ) { }
+
+  close(): void {
+    this.dialogRef?.close();
+  }
 
   ngOnInit(): void {
     this.navigationMenu = this.menuDefinition

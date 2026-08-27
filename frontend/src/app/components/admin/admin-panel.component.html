@@ -1,4 +1,10 @@
 <nb-card class="admin-panel-card" [size]="'giant'">
+    <!-- Explicit close: the dialog is dismissable by backdrop click, but on a
+         phone the card fills the screen and leaves only a sliver of backdrop,
+         with no Escape key — so there was no reliable way to close it. -->
+    <button nbButton ghost size="small" type="button" title="סגור" class="admin-panel-close" (click)="close()">
+        <nb-icon icon="close-outline"></nb-icon>
+    </button>
     <nb-card-body class="d-flex flex-row">
         <nb-menu [items]="navigationMenu" [tag]="menuTag"></nb-menu>
 

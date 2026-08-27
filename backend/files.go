@@ -748,10 +748,3 @@ func getFavicon(w http.ResponseWriter, r *http.Request) {
 	}
 	http.ServeFile(w, r, filePath)
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

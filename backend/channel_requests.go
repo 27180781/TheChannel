@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -175,7 +176,9 @@ func approveChannelRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dbAssignChannelRole(ctx, req.Email, finalSlug, RoleOwner)
+	if err := dbAssignChannelRole(ctx, req.Email, finalSlug, RoleOwner); err != nil {
+		log.Printf("approveChannelRequest: %s created but owner role for %s not assigned: %v\n", finalSlug, req.Email, err)
+	}
 	initializePrivilegeUsers()
 
 	req.Status = RequestStatusApproved

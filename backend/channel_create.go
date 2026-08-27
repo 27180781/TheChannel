@@ -223,7 +223,9 @@ func createChannelSelfService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dbAssignChannelRole(ctx, s.Email, channel.Slug, RoleOwner)
+	if err := dbAssignChannelRole(ctx, s.Email, channel.Slug, RoleOwner); err != nil {
+		log.Printf("createChannelSelfService: %s created but owner role for %s not assigned: %v\n", channel.Slug, s.Email, err)
+	}
 	if err := initializePrivilegeUsers(); err != nil {
 		log.Printf("initializePrivilegeUsers after createChannelSelfService(%s): %v", channel.Slug, err)
 	}

@@ -226,7 +226,9 @@ func createChannel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.OwnerEmail != "" {
-		dbAssignChannelRole(ctx, req.OwnerEmail, req.Slug, RoleOwner)
+		if err := dbAssignChannelRole(ctx, req.OwnerEmail, req.Slug, RoleOwner); err != nil {
+			log.Printf("createChannel: %s created but owner role for %s not assigned: %v\n", req.Slug, req.OwnerEmail, err)
+		}
 		if err := initializePrivilegeUsers(); err != nil {
 			log.Printf("initializePrivilegeUsers after createChannel: %v", err)
 		}

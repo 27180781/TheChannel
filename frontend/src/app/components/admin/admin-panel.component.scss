@@ -45,3 +45,15 @@
   min-height: 0;
   overflow-y: auto;
 }
+
+// Floats over the top-inline corner of the card so it does not take a row in
+// the flex body. Positioned at the inline-start because the layout is RTL.
+.admin-panel-card {
+  position: relative;
+}
+.admin-panel-close {
+  position: absolute;
+  top: 0.25rem;
+  inset-inline-start: 0.25rem;
+  z-index: 10;
+}
