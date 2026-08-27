@@ -365,7 +365,7 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			// Skip anything the catch-up above already delivered.
-			if replayedTo != "" && ev.id <= replayedTo {
+			if replayedTo != "" && streamIDLessOrEqual(ev.id, replayedTo) {
 				continue
 			}
 			if !send(ev) {

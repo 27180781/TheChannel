@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"log"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -235,6 +237,38 @@ func sseCatchUp(ctx context.Context, streamKey, lastID string) []sseEvent {
 		out = append(out, sseEvent{id: m.ID, data: data})
 	}
 	return out
+}
+
+// streamIDLessOrEqual reports whether a <= b for Redis stream ids of the form
+// "<ms>-<seq>". Both parts are compared numerically, because a lexical compare
+// misorders them: within one millisecond "1000-9" and "1000-55" have
+// single- and double-digit sequence parts, and as strings "1000-9" sorts
+// AFTER "1000-55". In the catch-up dedup that meant a brand-new event could be
+// skipped as already-seen (message loss) or a duplicate not skipped, whenever a
+// channel produced more than nine events in the same millisecond and a viewer
+// reconnected across that point.
+func streamIDLessOrEqual(a, b string) bool {
+	ams, aseq := splitStreamID(a)
+	bms, bseq := splitStreamID(b)
+	if ams != bms {
+		return ams < bms
+	}
+	return aseq <= bseq
+}
+
+// splitStreamID parses "<ms>-<seq>" into its two numbers. A missing sequence
+// part is 0, matching how Redis treats a bare "<ms>". Unparseable input yields
+// zeros, which only makes the dedup more conservative (it never causes a live
+// event to be dropped, since the ids the hub emits are always well-formed).
+func splitStreamID(id string) (ms, seq uint64) {
+	dash := strings.IndexByte(id, '-')
+	if dash < 0 {
+		ms, _ = strconv.ParseUint(id, 10, 64)
+		return ms, 0
+	}
+	ms, _ = strconv.ParseUint(id[:dash], 10, 64)
+	seq, _ = strconv.ParseUint(id[dash+1:], 10, 64)
+	return ms, seq
 }
 
 // sseHubCount reports how many hubs are running, i.e. how many Redis

@@ -223,3 +223,40 @@ func TestSSEHubDropsSlowSubscriberWithoutStallingOthers(t *testing.T) {
 		t.Error("healthy subscriber received nothing after the slow one was dropped")
 	}
 }
+
+// Redis stream ids are "<ms>-<seq>", and both parts are numbers. The catch-up
+// dedup compares them, and a lexical compare misorders same-millisecond ids
+// once the sequence crosses the single->double digit boundary. String compare
+// would drop a genuinely new event as already-seen (message loss) or fail to
+// skip a duplicate.
+func TestStreamIDLessOrEqual(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"1000-0", "1000-0", true},   // equal
+		{"1000-9", "1000-55", true},  // seq 9 < 55 (the case string compare gets wrong)
+		{"1000-55", "1000-9", false}, // seq 55 > 9
+		{"1000-9", "1000-10", true},  // 9 < 10 (string would say false)
+		{"1000-10", "1000-9", false}, // 10 > 9 (string would say true -> would drop new event)
+		{"999-0", "1000-0", true},    // different ms digit lengths
+		{"1000-0", "999-0", false},
+		{"1526919030474-0", "1526919030474-1", true},
+		{"1000", "1000-0", true},   // bare ms == "<ms>-0"
+		{"1000-5", "1000", false},  // seq 5 > implied 0
+	}
+	for _, c := range cases {
+		if got := streamIDLessOrEqual(c.a, c.b); got != c.want {
+			t.Errorf("streamIDLessOrEqual(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+
+	// The specific regression: string comparison would drop a new event. Prove
+	// the two disagree exactly where it matters, and that ours is right.
+	if ("1000-10" <= "1000-9") == streamIDLessOrEqual("1000-10", "1000-9") {
+		t.Error("test precondition: string and numeric compare should disagree on 1000-10 vs 1000-9")
+	}
+	if streamIDLessOrEqual("1000-10", "1000-9") {
+		t.Error("1000-10 (seq 10) must sort AFTER 1000-9 (seq 9); dropping it would lose a live message")
+	}
+}
