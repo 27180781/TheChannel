@@ -64,6 +64,7 @@ func init() {
 			sweep(&uploadLimiters)
 			sweep(&channelCreateLimiters)
 			sweep(&slugCheckLimiters)
+			sweep(&reportLimiters)
 			// Support submissions are keyed by client IP when there is no
 			// session, so this is the one map an anonymous caller can add
 			// unbounded distinct keys to. Leaving it out of the sweep made it
@@ -130,6 +131,21 @@ var (
 func slugCheckLimiter(email string) *rate.Limiter {
 	return getLimiter(&slugCheckLimiters, &slugCheckMu, email, func() *rate.Limiter {
 		return rate.NewLimiter(rate.Every(time.Second), 10)
+	})
+}
+
+// reportLimiters throttles message reports per user. Reporting is behind login
+// but was otherwise unlimited, and every report is a permanent Redis write
+// (a hash plus two sorted-set entries), so one user could grow the store
+// without bound. 10 reports/min, burst of 5.
+var (
+	reportLimiters sync.Map
+	reportMu       sync.Mutex
+)
+
+func reportLimiter(email string) *rate.Limiter {
+	return getLimiter(&reportLimiters, &reportMu, email, func() *rate.Limiter {
+		return rate.NewLimiter(rate.Every(6*time.Second), 5)
 	})
 }
 

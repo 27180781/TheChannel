@@ -20,7 +20,14 @@ func isChannelAdsLocked(globalAds *GlobalAdsConfig, ch *ChannelData) bool {
 	if globalAds.LockAll {
 		return true
 	}
-	if ch != nil && ch.Features.AdsLockedByAdmin {
+	// Guard the deref that follows: the LockedChannels lookup reads ch.Slug
+	// unconditionally, so a nil ch (a caller outside channelMiddleware) would
+	// panic. LockAll is already handled above; with no channel, nothing else can
+	// be locked.
+	if ch == nil {
+		return false
+	}
+	if ch.Features.AdsLockedByAdmin {
 		return true
 	}
 	return slices.Contains(globalAds.LockedChannels, ch.Slug)
@@ -136,7 +143,12 @@ func isChannelMagnetLocked(globalMagnet *GlobalMagnetConfig, ch *ChannelData) bo
 	if globalMagnet.LockAll {
 		return true
 	}
-	if ch != nil && ch.Features.MagnetLockedByAdmin {
+	// Same nil guard as isChannelAdsLocked: the LockedChannels lookup derefs
+	// ch.Slug, so a nil channel must be handled before it.
+	if ch == nil {
+		return false
+	}
+	if ch.Features.MagnetLockedByAdmin {
 		return true
 	}
 	return slices.Contains(globalMagnet.LockedChannels, ch.Slug)

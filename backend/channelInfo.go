@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -64,19 +65,45 @@ func getChannelInfo(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(channel)
 }
 
+// isSafeLogoURL accepts an empty value, a relative path (what the upload flow
+// produces, e.g. /api/channel/<slug>/files/<id>), or an http(s) URL. Anything
+// carrying another scheme is rejected, since the value is reflected into an
+// <img src> for every visitor.
+func isSafeLogoURL(u string) bool {
+	u = strings.TrimSpace(u)
+	if u == "" {
+		return true
+	}
+	// A scheme is "<letters>:" at the very start; a relative path has none.
+	if i := strings.IndexByte(u, ':'); i >= 0 {
+		scheme := u[:i]
+		// A "/" or "?" or "#" before the colon means it is a path, not a scheme
+		// (e.g. "/a:b" is a relative path whose first segment contains a colon).
+		if !strings.ContainsAny(scheme, "/?#") {
+			lower := strings.ToLower(scheme)
+			return lower == "http" || lower == "https"
+		}
+	}
+	return true
+}
+
 func editChannelInfo(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	slug := channelSlugFromCtx(r)
 
-	// ContactUs is a pointer so an absent field (the shape the current client
-	// posts) can be told apart from a deliberately cleared one. Only the latter
-	// may overwrite the stored value.
+	// Every field is a pointer so an ABSENT field can be told apart from a
+	// deliberately cleared one — only a field the client actually sent is
+	// written. Previously name/description/logoUrl were plain strings and always
+	// written, so any partial request (a client that omitted a field, or a form
+	// that opened before the channel had loaded) blanked the stored value. That
+	// is what left a channel with an empty name whose /info then came back with
+	// every field empty.
 	type Request struct {
-		Name        string  `json:"name"`
-		Description string  `json:"description"`
-		LogoUrl     string  `json:"logoUrl"`
+		Name        *string `json:"name"`
+		Description *string `json:"description"`
+		LogoUrl     *string `json:"logoUrl"`
 		ContactUs   *string `json:"contactUs"`
 	}
 
@@ -87,10 +114,40 @@ func editChannelInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
+	// A channel must keep a name: refuse to blank it. Description, logo and
+	// contact can be cleared, and an omitted field is simply left as-is.
+	if req.Name != nil && strings.TrimSpace(*req.Name) == "" {
+		http.Error(w, "channel name cannot be empty", http.StatusBadRequest)
+		return
+	}
+	// The logo is reflected to every visitor as an <img src>. A relative path
+	// (what the upload flow produces) or an http(s) URL is fine; anything with
+	// another scheme — javascript:, data: — is refused.
+	if req.LogoUrl != nil && !isSafeLogoURL(*req.LogoUrl) {
+		http.Error(w, "invalid logo URL", http.StatusBadRequest)
+		return
+	}
+
 	hashKey := "channel:" + slug
-	args := []any{"name", req.Name, "description", req.Description, "logoUrl", req.LogoUrl}
+	args := []any{}
+	if req.Name != nil {
+		args = append(args, "name", *req.Name)
+	}
+	if req.Description != nil {
+		args = append(args, "description", *req.Description)
+	}
+	if req.LogoUrl != nil {
+		args = append(args, "logoUrl", *req.LogoUrl)
+	}
 	if req.ContactUs != nil {
 		args = append(args, "contactUs", *req.ContactUs)
+	}
+	if len(args) == 0 {
+		// Nothing to change; do not issue an empty HSet.
+		res := Response{Success: true}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(res)
+		return
 	}
 	if _, err := rdb.HSet(ctx, hashKey, args...).Result(); err != nil {
 		http.Error(w, "error", http.StatusInternalServerError)

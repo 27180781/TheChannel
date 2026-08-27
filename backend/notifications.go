@@ -279,5 +279,22 @@ func pushFcmMessage(slug string, m *Message) {
 		}
 		log.Printf("Push notification sent to %d tokens: \n", r.SuccessCount)
 		log.Printf("Failed to send to %d tokens: \n", r.FailureCount)
+
+		// Prune the tokens FCM reports as permanently dead, so the set does not
+		// grow without bound and later pushes stop paying for them. Only
+		// unregistered/invalid tokens are removed — a transient failure
+		// (rate-limited, server error) is left in place to retry.
+		if r.FailureCount > 0 {
+			var dead []string
+			for i, resp := range r.Responses {
+				if resp.Success || i >= len(chunk) {
+					continue
+				}
+				if messaging.IsUnregistered(resp.Error) || messaging.IsInvalidArgument(resp.Error) {
+					dead = append(dead, chunk[i])
+				}
+			}
+			removeSubscriptions(slug, dead)
+		}
 	}
 }

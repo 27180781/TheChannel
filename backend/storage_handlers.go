@@ -20,6 +20,20 @@ type StorageInfo struct {
 	Level string `json:"level"`
 }
 
+// gbToBytes converts a GB quota to bytes, reporting whether the value is usable.
+// A negative quota makes every upload fail the used<=quota test platform-wide
+// while the dashboard still shows "ok"; a value so large that gb*2^30 overflows
+// int64 wraps to a negative number and bypasses a plain ">= 0" guard, producing
+// the same silent breakage. Both are rejected here.
+func gbToBytes(gb float64) (int64, bool) {
+	const maxInt64 = float64(1<<63 - 1)
+	bytesFloat := gb * (1024 * 1024 * 1024)
+	if gb < 0 || bytesFloat > maxInt64 {
+		return 0, false
+	}
+	return int64(bytesFloat), true
+}
+
 func buildStorageInfo(ctx context.Context, slug string) (*StorageInfo, error) {
 	quota, err := dbGetEffectiveStorageQuota(ctx, slug)
 	if err != nil {
@@ -138,12 +152,11 @@ func setSuperAdminStorageConfig(w http.ResponseWriter, r *http.Request) {
 	// A negative quota would make every upload fail the used+size <= quota test
 	// platform-wide while the dashboard still shows "ok" (pct math is guarded by
 	// quota > 0), so it must be rejected up front.
-	if req.DefaultQuotaGB < 0 {
-		http.Error(w, "quota must be >= 0", http.StatusBadRequest)
+	bytes, ok := gbToBytes(req.DefaultQuotaGB)
+	if !ok {
+		http.Error(w, "quota must be between 0 and a reasonable maximum", http.StatusBadRequest)
 		return
 	}
-
-	bytes := int64(req.DefaultQuotaGB * 1024 * 1024 * 1024)
 	if err := dbSetGlobalStorageQuota(ctx, bytes); err != nil {
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
@@ -202,12 +215,11 @@ func setSuperAdminChannelStorage(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	if req.QuotaGB < 0 {
-		http.Error(w, "quota must be >= 0 (0 = use global)", http.StatusBadRequest)
+	bytes, ok := gbToBytes(req.QuotaGB)
+	if !ok {
+		http.Error(w, "quota must be between 0 and a reasonable maximum (0 = use global)", http.StatusBadRequest)
 		return
 	}
-
-	bytes := int64(req.QuotaGB * 1024 * 1024 * 1024)
 	if err := dbSetChannelStorageQuota(ctx, slug, bytes); err != nil {
 		http.Error(w, "error", http.StatusInternalServerError)
 		return

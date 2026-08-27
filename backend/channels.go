@@ -190,6 +190,13 @@ func createChannel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid slug: use lowercase letters, numbers, hyphens (min 3 chars)", http.StatusBadRequest)
 		return
 	}
+	// The reserved check lived only in the self-service path; a slug like
+	// "admin", "api" or "login" created here would shadow a real route and be
+	// unreachable at /<slug>. The admin paths must refuse them too.
+	if isReservedSlug(req.Slug) {
+		http.Error(w, "Slug is reserved", http.StatusBadRequest)
+		return
+	}
 
 	exists, err := dbChannelExists(ctx, req.Slug)
 	if err != nil {

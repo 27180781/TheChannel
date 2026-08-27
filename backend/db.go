@@ -526,6 +526,30 @@ func addSubscription(slug, token string) error {
 	return nil
 }
 
+// removeSubscriptions drops tokens FCM has told us are dead (unregistered or
+// malformed). Without this the subscription set only ever grows: every expired
+// or rotated device token stays forever and every push wastes an FCM slot on
+// it. Best effort — a failed prune just means we retry the dead tokens next push.
+func removeSubscriptions(slug string, tokens []string) {
+	if len(tokens) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	key := "subscriptions"
+	if slug != "" {
+		key = fmt.Sprintf("channel:%s:subscriptions", slug)
+	}
+	members := make([]any, len(tokens))
+	for i, t := range tokens {
+		members[i] = t
+	}
+	if err := rdb.SRem(ctx, key, members...).Err(); err != nil {
+		log.Printf("removeSubscriptions: pruning %d dead tokens from %s failed: %v\n", len(tokens), key, err)
+	}
+}
+
 func getSubcriptionsList(slug string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -905,6 +929,22 @@ const sseStatisticsMaxPoints = 1000
 // covers, so an abandoned channel cannot leave keys behind for ever.
 const sseStatisticsTTL = 400 * 24 * time.Hour
 
+// sseStatisticsKeysFor returns every monthly SSE-statistics key a channel could
+// hold, over the retention window. These keys have no index, so both channel
+// deletion and the statistics reset enumerate the month/year space rather than
+// SCAN the keyspace. It is centralised here so the enumeration cannot drift from
+// the write-side format in dbSaveSSEStatistics.
+func sseStatisticsKeysFor(slug string) []string {
+	currentYear := time.Now().Year()
+	keys := make([]string, 0, 12*11)
+	for year := currentYear - 10; year <= currentYear; year++ {
+		for month := time.January; month <= time.December; month++ {
+			keys = append(keys, fmt.Sprintf("channel:%s:sse_statistics:%d:%d", slug, month, year))
+		}
+	}
+	return keys
+}
+
 func dbSaveSSEStatistics(slug string, amount int64) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1152,11 +1192,14 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 	// Step 1: collect all message keys and reaction keys from the sorted set (avoids SCAN)
 	messageKeys, _ := rdb.ZRange(ctx, fmt.Sprintf("channel:%s:m_times", p), 0, -1).Result()
 	reactionKeys := make([]string, 0, len(messageKeys))
+	reporterKeys := make([]string, 0, len(messageKeys))
 	for _, mk := range messageKeys {
 		// mk is already the full key e.g. "channel:{slug}:messages:{id}"
 		// derive reaction key from it by replacing "messages:" prefix with "message:" and appending ":reactions"
 		id := strings.TrimPrefix(mk, fmt.Sprintf("channel:%s:messages:", p))
 		reactionKeys = append(reactionKeys, fmt.Sprintf("channel:%s:message:%s:reactions", p, id))
+		// The per-message report-dedup set lives under the same message id.
+		reporterKeys = append(reporterKeys, fmt.Sprintf("channel:%s:message:%s:reporters", p, id))
 	}
 
 	// Step 1b: release every uploaded file through the normal delete path so
@@ -1188,13 +1231,7 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 
 	// Step 1d: monthly SSE statistics keys have no index; enumerate the possible
 	// month/year combinations instead of running a SCAN across the keyspace.
-	currentYear := time.Now().Year()
-	statsKeys := make([]string, 0, 12*11)
-	for year := currentYear - 10; year <= currentYear; year++ {
-		for month := time.January; month <= time.December; month++ {
-			statsKeys = append(statsKeys, fmt.Sprintf("channel:%s:sse_statistics:%d:%d", p, month, year))
-		}
-	}
+	statsKeys := sseStatisticsKeysFor(p)
 
 	// Step 2: delete all known fixed keys in one pipeline
 	fixedKeys := []string{
@@ -1222,6 +1259,7 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 	}
 	allKeys := append(fixedKeys, messageKeys...)
 	allKeys = append(allKeys, reactionKeys...)
+	allKeys = append(allKeys, reporterKeys...)
 	allKeys = append(allKeys, fileKeys...)
 	allKeys = append(allKeys, reportKeys...)
 	allKeys = append(allKeys, statsKeys...)

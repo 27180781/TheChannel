@@ -141,6 +141,12 @@ func approveChannelRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid slug format", http.StatusBadRequest)
 		return
 	}
+	// Same reserved-slug guard as the other creation paths: approving a request
+	// onto "admin"/"api"/"login"/... would shadow a real route.
+	if isReservedSlug(finalSlug) {
+		http.Error(w, "slug is reserved", http.StatusBadRequest)
+		return
+	}
 
 	exists, err := dbChannelExists(ctx, finalSlug)
 	if err != nil {

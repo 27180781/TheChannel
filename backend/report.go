@@ -72,6 +72,31 @@ func reportMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "message not found", http.StatusBadRequest)
 		return
 	}
+
+	// Rate-limit per user: reporting was unlimited, and each report is a
+	// permanent write, so a loop was a cheap way to grow Redis without bound.
+	if !allowOrRetryAfter(w, reportLimiter(s.Email), "too many reports — please slow down") {
+		return
+	}
+
+	// One report per user per message. SADD returns 0 when the reporter is
+	// already in the set, so a repeat report is acknowledged without creating
+	// another record. The set is dropped with the channel.
+	reportersKey := fmt.Sprintf("channel:%s:message:%d:reporters", slug, report.MessageId)
+	added, err := rdb.SAdd(ctx, reportersKey, s.ID).Result()
+	if err != nil {
+		http.Error(w, "Error saving report", http.StatusInternalServerError)
+		return
+	}
+	if added == 0 {
+		// Already reported by this user; idempotent success, no new record.
+		var response Response
+		response.Success = true
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
 	report.Closed = false
 	report.CreatedAt = time.Now()
 	report.ReporterID = s.ID
