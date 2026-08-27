@@ -1,4 +1,5 @@
 import { Component, Input, OnInit } from '@angular/core';
+import { formatBytes, storageLevelStatus } from '../../../utils/storage-format';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import {
@@ -105,18 +106,10 @@ export class StorageComponent implements OnInit {
   }
 
   progressStatus(): string {
+    // Before info loads there is no level yet; keep the neutral colour.
     if (!this.info) return 'primary';
-    if (this.info.level === 'critical') return 'danger';
-    if (this.info.level === 'warning') return 'warning';
-    return 'success';
+    return storageLevelStatus(this.info.level);
   }
 
-  formatBytes(bytes: number): string {
-    if (bytes === 0) return '0 B';
-    const gb = bytes / (1024 ** 3);
-    if (gb >= 1) return gb.toFixed(2) + ' GB';
-    const mb = bytes / (1024 ** 2);
-    if (mb >= 1) return mb.toFixed(1) + ' MB';
-    return (bytes / 1024).toFixed(0) + ' KB';
-  }
+  formatBytes = formatBytes;
 }

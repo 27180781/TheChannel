@@ -1,4 +1,5 @@
 import { Component, Input, OnChanges } from '@angular/core';
+import { formatBytes, storageLevelStatus } from '../../../utils/storage-format';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import {
@@ -98,18 +99,6 @@ export class SuperAdminStorageComponent implements OnChanges {
     }
   }
 
-  progressStatus(level: string): string {
-    if (level === 'critical') return 'danger';
-    if (level === 'warning') return 'warning';
-    return 'success';
-  }
-
-  formatBytes(bytes: number): string {
-    if (!bytes) return '0 B';
-    const gb = bytes / (1024 ** 3);
-    if (gb >= 1) return gb.toFixed(2) + ' GB';
-    const mb = bytes / (1024 ** 2);
-    if (mb >= 1) return mb.toFixed(1) + ' MB';
-    return (bytes / 1024).toFixed(0) + ' KB';
-  }
+  progressStatus = storageLevelStatus;
+  formatBytes = formatBytes;
 }
