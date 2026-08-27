@@ -242,8 +242,8 @@ func TestStreamIDLessOrEqual(t *testing.T) {
 		{"999-0", "1000-0", true},    // different ms digit lengths
 		{"1000-0", "999-0", false},
 		{"1526919030474-0", "1526919030474-1", true},
-		{"1000", "1000-0", true},   // bare ms == "<ms>-0"
-		{"1000-5", "1000", false},  // seq 5 > implied 0
+		{"1000", "1000-0", true},  // bare ms == "<ms>-0"
+		{"1000-5", "1000", false}, // seq 5 > implied 0
 	}
 	for _, c := range cases {
 		if got := streamIDLessOrEqual(c.a, c.b); got != c.want {
@@ -259,4 +259,80 @@ func TestStreamIDLessOrEqual(t *testing.T) {
 	if streamIDLessOrEqual("1000-10", "1000-9") {
 		t.Error("1000-10 (seq 10) must sort AFTER 1000-9 (seq 9); dropping it would lose a live message")
 	}
+}
+
+// Subscribe/retire race: a viewer arriving on a channel exactly as its last
+// existing viewer leaves must end up on a live hub (or cleanly closed), never
+// attached to a hub that has just been retired and will never deliver again.
+//
+// The invariant checked after each round: the subscriber that is still attached
+// receives a freshly published event. Under the pre-fix code, a subscriber
+// occasionally landed on a retired hub and its channel stayed silent. Runs many
+// rounds under -race.
+func TestSSEHubSubscribeRetireRace(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	drainHubs(t)
+	const slug = "hub-race"
+	streamKey := "channel:" + slug + ":events"
+	t.Cleanup(func() { rdb.Del(context.Background(), streamKey) })
+
+	for round := 0; round < 300; round++ {
+		// One existing viewer, about to leave.
+		_, stopA := sseSubscribe(streamKey)
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		// A leaves and B arrives concurrently — the exact contended window.
+		var subB *sseSubscriber
+		var stopB func()
+		go func() { defer wg.Done(); stopA() }()
+		go func() { defer wg.Done(); subB, stopB = sseSubscribe(streamKey) }()
+		wg.Wait()
+
+		// B is the surviving viewer. It must be on a live hub: publish and it
+		// must receive the event.
+		if sseHubCount() == 0 {
+			t.Fatalf("round %d: hub was retired while a viewer (B) is still subscribed", round)
+		}
+		// Let the hub reach its blocking read, then publish.
+		time.Sleep(5 * time.Millisecond)
+		publishEvent(ctx, slug, []byte(`{"r":`+itoa(round)+`}`))
+
+		select {
+		case ev, ok := <-subB.ch:
+			if !ok {
+				t.Fatalf("round %d: surviving viewer's channel was closed (attached to a dead hub)", round)
+			}
+			_ = ev
+		case <-time.After(3 * time.Second):
+			t.Fatalf("round %d: surviving viewer received no event — attached to a retired hub", round)
+		}
+		stopB()
+		// Drain any buffered events so the next round starts clean.
+		drainHubs(t)
+	}
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var b [20]byte
+	i := len(b)
+	for n > 0 {
+		i--
+		b[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		b[i] = '-'
+	}
+	return string(b[i:])
 }

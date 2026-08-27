@@ -91,11 +91,21 @@ func sseSubscribe(streamKey string) (*sseSubscriber, func()) {
 		sseHubs[streamKey] = hub
 		go hub.run(ctx)
 	}
-	sseHubsMu.Unlock()
-
+	// The subscriber is inserted while sseHubsMu is still held, so the insertion
+	// is atomic with the registry lookup above. Releasing sseHubsMu first left a
+	// gap: a concurrent last-viewer unsubscribe re-checks emptiness under
+	// sseHubsMu (see sseUnsubscribe) and, not yet seeing this subscriber, could
+	// retire the hub — leaving this viewer attached to a stopped hub that never
+	// delivers an event and never closes its channel, so its handler sits on
+	// heartbeats forever and the browser never reconnects. Holding sseHubsMu
+	// across the add forces the retire to either see this subscriber (and not
+	// retire) or run first (so the lookup above misses the hub and builds a new
+	// one). The lock order here — sseHubsMu then hub.mu — matches the retire
+	// path, so it cannot deadlock.
 	hub.mu.Lock()
 	hub.subs[sub] = struct{}{}
 	hub.mu.Unlock()
+	sseHubsMu.Unlock()
 
 	return sub, func() { sseUnsubscribe(hub, sub) }
 }
