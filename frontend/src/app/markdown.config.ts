@@ -1,5 +1,6 @@
 import { Token, Tokens, TokensList } from "marked";
 import { MarkdownModuleConfig, MARKED_EXTENSIONS, MARKED_OPTIONS, MarkedRenderer } from "ngx-markdown";
+import DOMPurify from "dompurify";
 
 /**
  * Embed token: `[image-embedded#](url)`, optionally carrying the media's pixel
@@ -186,6 +187,61 @@ renderer.image = ({ href, title, text }) => {
 }
 //renderer.paragraph = ({ tokens }) => Parser.parseInline(tokens);
 
+/**
+ * Final sanitization of the rendered feed HTML.
+ *
+ * The feed binds this output with `[disableSanitizer]="true"`, so Angular never
+ * gets a second look — and marked passes RAW HTML in the message body straight
+ * through its default renderer. Per-value escaping in the custom renderers above
+ * only covers what THEY build; a message body of `<img src=x onerror=alert(1)>`
+ * or `<a href="javascript:...">` reached the DOM verbatim and executed. This is
+ * the actual trust boundary, and it has to allow the small set of markup the
+ * feed legitimately produces (the media/quote/link embeds, and the `<u>` the
+ * formatting toolbar inserts) while removing everything dangerous.
+ *
+ * DOMPurify strips event handlers and javascript:/data: URLs by default; the
+ * config below additionally forbids elements the feed never needs and that are
+ * common injection vectors, and re-permits the two non-standard attributes the
+ * embeds rely on (youtubeid, quote-id) plus target/rel on links.
+ */
+/**
+ * DOMPurify allows `data:` URIs on media tags (img/video/audio/source)
+ * independent of ALLOWED_URI_REGEXP, as a legitimate way to inline images. The
+ * feed never inlines media that way — every image is a relative /api/... URL or
+ * an https thumbnail — so this hook strips any src/href that is not http(s),
+ * mailto, or relative. A `data:text/html` src on an img is inert on its own (an
+ * img never runs its src as a document), but removing it leaves no room for
+ * doubt and matches the backend's own scheme allow-list.
+ */
+DOMPurify.addHook('afterSanitizeAttributes', (node: Element) => {
+  for (const attr of ['src', 'href']) {
+    const value = node.getAttribute?.(attr);
+    if (value === null || value === undefined) continue;
+    const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(value.trim());
+    if (scheme && !/^(https?|mailto)$/i.test(scheme[1])) {
+      node.removeAttribute(attr);
+    }
+  }
+});
+
+function sanitizeFeedHtml(html: string): string {
+  return DOMPurify.sanitize(html, {
+    // Non-standard attributes the embed renderers emit and the message
+    // component reads (message.component.ts reads youtubeid); target/rel are on
+    // the link renderer's anchors.
+    ADD_ATTR: ['youtubeid', 'quote-id', 'target', 'rel'],
+    // The feed emits none of these, and each is a classic injection vector.
+    // Event handlers and dangerous URL schemes are removed by DOMPurify
+    // regardless of this list.
+    FORBID_TAGS: ['style', 'iframe', 'form', 'input', 'button', 'object', 'embed', 'svg', 'math', 'link', 'meta', 'base'],
+    // Only the schemes the feed actually uses: https/http (youtube, external
+    // links), mailto, and relative URLs (uploaded files are /api/channel/...).
+    // This also removes the inert-but-pointless data: image case, matching the
+    // backend's own safeUrl scheme allow-list.
+    ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i,
+  }) as unknown as string;
+}
+
 export const MarkdownConfig: MarkdownModuleConfig = {
   markedExtensions: [
     {
@@ -199,6 +255,11 @@ export const MarkdownConfig: MarkdownModuleConfig = {
     useValue: {
       renderer: renderer,
       breaks: true,
+      // Runs after marked has produced the HTML — including any raw HTML in the
+      // message body — so it is the last thing before the string is bound.
+      hooks: {
+        postprocess: (html: string) => sanitizeFeedHtml(html),
+      },
     },
   }
 }
