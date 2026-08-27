@@ -5,6 +5,14 @@
   </div>
 }
 
+@if (initialLoadFailed) {
+  <div class="load-failed-banner">
+    <nb-icon icon="alert-triangle-outline"></nb-icon>
+    <span>שגיאה בטעינת ההודעות.</span>
+    <button nbButton size="tiny" status="control" (click)="retryInitialLoad()">נסה שוב</button>
+  </div>
+}
+
 <div nbInfiniteList (scroll)="onListScroll()" [threshold]="300" [throttleTime]="1000" (topThreshold)="loadMessages()"
   (bottomThreshold)="loadMessages({ scrollDown: true })" [listenWindowScroll]="true"
   [class.chat-hidden]="!isVisible">

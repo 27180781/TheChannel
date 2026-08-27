@@ -63,8 +63,14 @@ export class ChatService {
   updateChannelInfo(): Promise<void> {
     // Deduplicated: several components need the channel info (and the feature
     // flags it carries) on the same first paint.
-    this.channelInfoRequest ??= firstValueFrom(this.http.get<Channel>(`/api/channel/${this.slug}/info`))
-      .then(info => { this.channelInfo = info; })
+    //
+    // The slug is captured when the request is issued and re-checked on
+    // arrival: a channel switch can leave the previous channel's /info still in
+    // flight, and if it resolves after the new channel's it would otherwise
+    // overwrite the wrong channel's info (name, feature flags, require-auth).
+    const requestedSlug = this.slug;
+    this.channelInfoRequest ??= firstValueFrom(this.http.get<Channel>(`/api/channel/${requestedSlug}/info`))
+      .then(info => { if (requestedSlug === this.slug) this.channelInfo = info; })
       .finally(() => { this.channelInfoRequest = undefined; });
     return this.channelInfoRequest;
   }
@@ -107,6 +113,7 @@ export class ChatService {
 
   clearCache() {
     this.emojis = null;
+    this.emojisRequest = undefined;
     this.channelInfo = undefined;
     this.channelInfoRequest = undefined;
   }
@@ -114,8 +121,13 @@ export class ChatService {
   async getEmojisList(reload: boolean = false): Promise<string[]> {
     if (this.emojis && !reload) return this.emojis;
     // Deduplicated: every message component asks for the list on first paint.
-    this.emojisRequest ??= firstValueFrom(this.http.get<string[]>(`/api/channel/${this.slug}/emojis/list`))
-      .then(list => { this.emojis = list; return list; })
+    // Same slug guard as updateChannelInfo — without it, a request for the
+    // previous channel resolving after a switch would cache that channel's
+    // reaction set under the new slug. clearCache also drops any in-flight
+    // request on switch so a forced reload actually re-fetches.
+    const requestedSlug = this.slug;
+    this.emojisRequest ??= firstValueFrom(this.http.get<string[]>(`/api/channel/${requestedSlug}/emojis/list`))
+      .then(list => { if (requestedSlug === this.slug) this.emojis = list; return list; })
       .finally(() => { this.emojisRequest = undefined; });
     return this.emojisRequest;
   }

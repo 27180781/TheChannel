@@ -181,6 +181,14 @@ export class ChannelHeaderComponent implements OnInit, OnDestroy {
   }
 
   openContactUs() {
-    window.open(this.chatService.channelInfo?.contact_us, '_blank');
+    const url = this.chatService.channelInfo?.contact_us?.trim();
+    if (!url) return;
+    // contact_us is operator-set free text. window.open on a javascript: value
+    // would execute it in the opened window with this origin, so only http(s)
+    // and mailto are honoured; anything else is ignored. noopener/noreferrer
+    // also stop the opened page from reaching back through window.opener.
+    const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(url);
+    if (scheme && !/^(https?|mailto)$/i.test(scheme[1])) return;
+    window.open(url, '_blank', 'noopener,noreferrer');
   }
 }

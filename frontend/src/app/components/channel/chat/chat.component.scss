@@ -20,6 +20,23 @@
   text-align: center;
 }
 
+.load-failed-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+  padding: 8px 16px;
+  background: var(--color-danger-default, #ff3d71);
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-align: center;
+
+  button {
+    margin-inline-start: 4px;
+  }
+}
+
 nb-list-item {
   border-bottom: 0 !important;
   padding: 0 !important;

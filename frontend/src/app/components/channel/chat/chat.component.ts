@@ -65,6 +65,8 @@ export class ChatComponent implements OnInit, OnDestroy {
   isLoading: boolean = false;
   isOffline: boolean = false;
   isVisible: boolean = false;   // hidden until initial scroll is resolved
+  initialLoadFailed = false;    // true when the first history load errored
+  private lastLoadOk = true;    // set by loadMessages; false after a failed load
   offset: number = 0;
   limit: number = 20;
   hasOldMessages: boolean = true;
@@ -184,31 +186,46 @@ export class ChatComponent implements OnInit, OnDestroy {
       this.userInfo = undefined;
     });
 
-    this.loadMessages().then(() => {
-      // Namespaced per channel — message ids are per-channel sequences, so a
-      // shared key would carry channel A's position into channel B.
-      const lastReadMsg = Number(localStorage.getItem(`lastReadMessage:${this.slugService.slug}`));
-      const lastMsgId = this.messages[0]?.id;
-      if (!lastMsgId) { this.isVisible = true; return; }
+    this.loadMessages().then(() => this.revealAfterInitialLoad());
+  }
 
-      if (lastReadMsg && lastReadMsg < lastMsgId) {
-        // Set the indicator BEFORE revealing the list so the line renders
-        // at the right position on first paint — no visible jump.
-        this.lastReadMessageId = lastReadMsg;
-        this.scrollToId({ messageId: lastReadMsg, smooth: false, mark: false });
-        // Wait one frame for scrollToId to finish (it may need to load more messages),
-        // then reveal. setLastReadMessage only after the user has actually seen the
-        // position — so a refresh still brings them back.
-        setTimeout(() => {
-          this.isVisible = true;
-          this.setLastReadMessage(lastMsgId.toString());
-        }, 350);
-      } else {
-        this.scrollToBottom(false);
+  /**
+   * Reveals the feed once the initial history load resolves. If that load
+   * failed and left the feed empty, it shows a retry affordance instead of a
+   * silent empty channel.
+   */
+  private revealAfterInitialLoad(): void {
+    if (!this.lastLoadOk && !this.messages.length) {
+      // Failed load, not an empty channel: surface it so the user can retry.
+      this.initialLoadFailed = true;
+      this.isVisible = true;
+      return;
+    }
+    this.initialLoadFailed = false;
+
+    // Namespaced per channel — message ids are per-channel sequences, so a
+    // shared key would carry channel A's position into channel B.
+    const lastReadMsg = Number(localStorage.getItem(`lastReadMessage:${this.slugService.slug}`));
+    const lastMsgId = this.messages[0]?.id;
+    if (!lastMsgId) { this.isVisible = true; return; }
+
+    if (lastReadMsg && lastReadMsg < lastMsgId) {
+      // Set the indicator BEFORE revealing the list so the line renders
+      // at the right position on first paint — no visible jump.
+      this.lastReadMessageId = lastReadMsg;
+      this.scrollToId({ messageId: lastReadMsg, smooth: false, mark: false });
+      // Wait one frame for scrollToId to finish (it may need to load more messages),
+      // then reveal. setLastReadMessage only after the user has actually seen the
+      // position — so a refresh still brings them back.
+      setTimeout(() => {
         this.isVisible = true;
         this.setLastReadMessage(lastMsgId.toString());
-      }
-    });
+      }, 350);
+    } else {
+      this.scrollToBottom(false);
+      this.isVisible = true;
+      this.setLastReadMessage(lastMsgId.toString());
+    }
   }
 
   async setLastReadMessage(id: string) {
@@ -411,6 +428,9 @@ export class ChatComponent implements OnInit, OnDestroy {
   async loadMessages(opt: LoadMsgOpt = {}) {
     if (this.isLoading || (opt.scrollDown && !this.hasNewMessages) || (!opt.scrollDown && !this.hasOldMessages)) return;
 
+    // Reset before the attempt; the catch flips it. Read after the call to tell
+    // an empty feed caused by a failed request from a genuinely empty channel.
+    this.lastLoadOk = true;
     let startId: number;
     let resetList: boolean = opt.resetList || false;
     let direction: string = "desc";
@@ -468,8 +488,20 @@ export class ChatComponent implements OnInit, OnDestroy {
       }
     } catch (error) {
       console.error('שגיאה בטעינת הודעות:', error);
+      this.lastLoadOk = false;
     } finally {
       this.isLoading = false;
     }
+  }
+
+  /**
+   * Re-runs the initial history load after it failed. Without this a /messages
+   * error on first paint left the feed permanently empty — indistinguishable
+   * from an empty channel, with no error and no way back short of a full reload.
+   */
+  retryInitialLoad(): void {
+    this.initialLoadFailed = false;
+    this.isVisible = false;
+    this.loadMessages({ resetList: true }).then(() => this.revealAfterInitialLoad());
   }
 }
