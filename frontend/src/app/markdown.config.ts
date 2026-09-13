@@ -1,4 +1,4 @@
-import { Token, Tokens, TokensList } from "marked";
+import { Hooks, Token, Tokens, TokensList } from "marked";
 import { MarkdownModuleConfig, MARKED_EXTENSIONS, MARKED_OPTIONS, MarkedRenderer } from "ngx-markdown";
 import DOMPurify from "dompurify";
 
@@ -255,11 +255,23 @@ export const MarkdownConfig: MarkdownModuleConfig = {
     useValue: {
       renderer: renderer,
       breaks: true,
-      // Runs after marked has produced the HTML — including any raw HTML in the
-      // message body — so it is the last thing before the string is bound.
-      hooks: {
-        postprocess: (html: string) => sanitizeFeedHtml(html),
-      },
+      // Sanitize after marked has produced the HTML — including any raw HTML in
+      // the message body — so it is the last thing before the string is bound.
+      //
+      // This MUST be a real marked Hooks instance, not a plain
+      // `{ postprocess }` object. ngx-markdown passes markedOptions straight to
+      // marked.parse(text, options), and marked v15 there calls every hook
+      // method (provideLexer, preprocess, processAllTokens, ...) on the object;
+      // a plain object missing them throws "opt.hooks.provideLexer is not a
+      // function" on EVERY message, rendering them all empty. A Hooks instance
+      // carries the defaults and we override only postprocess.
+      hooks: buildSanitizingHooks(),
     },
   }
+}
+
+function buildSanitizingHooks(): Hooks {
+  const hooks = new Hooks();
+  hooks.postprocess = (html: string) => sanitizeFeedHtml(html);
+  return hooks;
 }
