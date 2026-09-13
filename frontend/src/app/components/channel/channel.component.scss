@@ -180,6 +180,138 @@
       grid-template-columns: 1fr;
     }
   }
+
+  // The "my channel" page.
+  .my-channels {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 2rem 1rem 3rem;
+  }
+
+  .my-channels__hero {
+    text-align: center;
+    margin-bottom: 1.5rem;
+  }
+
+  .my-channels__title {
+    font-size: 1.6rem;
+    font-weight: 700;
+    margin: 0 0 0.5rem;
+    color: var(--text-basic-color);
+  }
+
+  .my-channels__lead {
+    color: var(--text-hint-color);
+    line-height: 1.6;
+    margin: 0;
+  }
+
+  .my-channels__card {
+    margin-bottom: 1rem;
+  }
+
+  .my-channels__slug {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--color-primary-default);
+    margin-bottom: 0.75rem;
+  }
+
+  .my-channels__url-label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--text-hint-color);
+    margin-bottom: 0.25rem;
+  }
+
+  .my-channels__url-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    background: var(--background-basic-color-2);
+    border: 1px solid var(--divider-color);
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  .my-channels__url {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-size: 0.9rem;
+    color: var(--text-basic-color);
+  }
+
+  .my-channels__copy {
+    white-space: nowrap;
+  }
+
+  .my-channels__enter {
+    width: 100%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+  }
+
+  .my-channels__help {
+    margin-top: 2rem;
+  }
+
+  .my-channels__help-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 0 0 1rem;
+    color: var(--text-basic-color);
+  }
+
+  .my-channels__help-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  .my-channels__help-item {
+    display: flex;
+    gap: 0.6rem;
+    align-items: flex-start;
+    padding: 0.75rem;
+    background: var(--background-basic-color-2);
+    border-radius: 0.5rem;
+  }
+
+  .my-channels__help-icon {
+    color: var(--color-primary-default);
+    font-size: 1.25rem;
+    flex-shrink: 0;
+  }
+
+  .my-channels__help-item-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin: 0 0 0.15rem;
+    color: var(--text-basic-color);
+  }
+
+  .my-channels__help-item-text {
+    font-size: 0.8rem;
+    color: var(--text-hint-color);
+    margin: 0;
+    line-height: 1.4;
+  }
+
+  .my-channels__new {
+    display: block;
+    margin: 1.5rem auto 0;
+  }
+
+  @media (max-width: 575px) {
+    .my-channels__help-grid {
+      grid-template-columns: 1fr;
+    }
+  }
 }
 
 nb-layout-column.chat-column {

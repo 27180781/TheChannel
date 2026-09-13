@@ -85,6 +85,42 @@ export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
   userInfo?: User;
   slugReady = false;
   noChannel = false;
+
+  // The "my channel" page: shown to a signed-in owner at /channel instead of
+  // redirecting them straight in, so they can find and share the direct link.
+  showChannelsList = false;
+  ownedChannels: string[] = [];
+  copiedSlug = '';
+  private copyResetTimer?: ReturnType<typeof setTimeout>;
+  readonly siteOrigin = window.location.origin;
+
+  /** The direct, shareable URL of a channel. */
+  channelUrl(slug: string): string {
+    return `${this.siteOrigin}/channel/${slug}`;
+  }
+
+  async copyChannelUrl(slug: string): Promise<void> {
+    try {
+      await navigator.clipboard?.writeText(this.channelUrl(slug));
+      this.copiedSlug = slug;
+    } catch {
+      // Insecure context or a browser that refuses the API — the URL is shown
+      // and selectable, so nothing else to do.
+      this.copiedSlug = '';
+    }
+    if (this.copyResetTimer) clearTimeout(this.copyResetTimer);
+    this.copyResetTimer = setTimeout(() => (this.copiedSlug = ''), 2500);
+  }
+
+  enterOwnedChannel(slug: string): void {
+    this.router.navigate(['/channel', slug]);
+  }
+
+  /** Switch this page to the create-a-new-channel flow. */
+  openCreateChannel(): void {
+    this.showChannelsList = false;
+    this.noChannel = true;
+  }
   private paramSub?: Subscription;
   /** Watches the fixed header's height; see ngAfterViewChecked. */
   private chromeObserver?: ResizeObserver;
@@ -103,6 +139,14 @@ export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
     { icon: 'edit-2-outline', title: 'בוחרים שם וכתובת', text: 'הכתובת נבדקת מול השרת בזמן אמת.' },
     { icon: 'flash-outline', title: 'פותחים בלחיצה', text: 'הערוץ נוצר מיד ואתם הבעלים שלו.' },
     { icon: 'paper-plane-outline', title: 'מתחילים לשדר', text: 'מפרסמים הודעה ראשונה ומזמינים קוראים.' },
+  ];
+
+  // Shown on the "my channel" page as a reminder of how to run the channel.
+  readonly channelHelp = [
+    { icon: 'share-outline', title: 'שיתוף הקישור', text: 'זה מה ששולחים לאנשים כדי שיצטרפו לערוץ.' },
+    { icon: 'paper-plane-outline', title: 'פרסום הודעה', text: 'תיבת הכתיבה נמצאת בתחתית מסך הערוץ.' },
+    { icon: 'people-outline', title: 'כותבים ומנהלים', text: 'מוסיפים דרך פאנל הניהול, במסך ההרשאות.' },
+    { icon: 'brush-outline', title: 'עיצוב הערוץ', text: 'שם, תיאור ולוגו — גם הם בפאנל הניהול.' },
   ];
 
   ngAfterViewChecked(): void {
@@ -138,11 +182,13 @@ export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
   ngOnDestroy(): void {
     this.chromeObserver?.disconnect();
     this.paramSub?.unsubscribe();
+    if (this.copyResetTimer) clearTimeout(this.copyResetTimer);
   }
 
   private async initChannel(slug: string | null): Promise<void> {
     this.slugReady = false;
     this.noChannel = false;
+    this.showChannelsList = false;
     // A flag raised for the previous channel must not follow us to the next one.
     this.channelStatus.reset();
     // Yield to Angular's change detection so the @if (slugReady) block
@@ -175,12 +221,18 @@ export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
         return;
       }
 
+      this.userInfo = user;
       const roles = user.channelRoles;
-      const firstSlug = roles ? Object.keys(roles)[0] : '';
-      if (firstSlug) {
-        this.router.navigate(['/channel', firstSlug], { replaceUrl: true });
+      const slugs = roles ? Object.keys(roles) : [];
+      if (slugs.length) {
+        // Show the "my channel" page rather than dropping the owner straight
+        // into the channel: it is where they find the direct link to share and
+        // a reminder of what to do next. Entering the channel is a click from
+        // here.
+        this.ownedChannels = slugs;
+        this.showChannelsList = true;
       } else {
-        this.userInfo = user;
+        // No channel yet — the onboarding + create-channel flow.
         this.noChannel = true;
       }
       return;

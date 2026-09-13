@@ -38,6 +38,77 @@
   </nb-layout>
 }
 
+@if (showChannelsList && !channelDisabled) {
+  <nb-layout>
+    <nb-layout-header fixed>
+      <div class="plain-header">
+        <button nbButton ghost status="basic" (click)="logout()">
+          <nb-icon icon="log-out-outline"></nb-icon>
+          התנתק
+        </button>
+        <span class="plain-header__brand">TheChannel</span>
+      </div>
+    </nb-layout-header>
+
+    <nb-layout-column>
+      <div class="my-channels">
+        <section class="my-channels__hero">
+          <h1 class="my-channels__title">
+            שלום{{ userInfo?.publicName ? ' ' + userInfo?.publicName : '' }}, הערוץ שלך
+          </h1>
+          <p class="my-channels__lead">
+            זה הקישור הישיר לערוץ — שלחו אותו למי שתרצו שיצטרף. לחצו על "כניסה לערוץ" כדי לשדר ולנהל.
+          </p>
+        </section>
+
+        @for (slug of ownedChannels; track slug) {
+          <nb-card class="my-channels__card">
+            <nb-card-body>
+              <div class="my-channels__slug" dir="ltr">{{ slug }}</div>
+
+              <label class="my-channels__url-label">הקישור הישיר</label>
+              <div class="my-channels__url-row">
+                <span class="my-channels__url" dir="ltr">{{ channelUrl(slug) }}</span>
+                <button nbButton status="basic" size="small" class="my-channels__copy"
+                        (click)="copyChannelUrl(slug)">
+                  <nb-icon [icon]="copiedSlug === slug ? 'checkmark-outline' : 'copy-outline'"></nb-icon>
+                  {{ copiedSlug === slug ? 'הועתק' : 'העתקה' }}
+                </button>
+              </div>
+
+              <button nbButton status="primary" size="large" class="my-channels__enter"
+                      (click)="enterOwnedChannel(slug)">
+                <nb-icon icon="arrow-forward-outline"></nb-icon>
+                כניסה לערוץ
+              </button>
+            </nb-card-body>
+          </nb-card>
+        }
+
+        <div class="my-channels__help">
+          <h2 class="my-channels__help-title">איך מנהלים את הערוץ</h2>
+          <div class="my-channels__help-grid">
+            @for (step of channelHelp; track step.title) {
+              <div class="my-channels__help-item">
+                <nb-icon [icon]="step.icon" class="my-channels__help-icon"></nb-icon>
+                <div>
+                  <h3 class="my-channels__help-item-title">{{ step.title }}</h3>
+                  <p class="my-channels__help-item-text">{{ step.text }}</p>
+                </div>
+              </div>
+            }
+          </div>
+        </div>
+
+        <button nbButton ghost status="primary" class="my-channels__new" (click)="openCreateChannel()">
+          <nb-icon icon="plus-outline"></nb-icon>
+          פתיחת ערוץ נוסף
+        </button>
+      </div>
+    </nb-layout-column>
+  </nb-layout>
+}
+
 @if (noChannel && !channelDisabled) {
   <nb-layout>
     <nb-layout-header fixed>
