@@ -353,12 +353,66 @@ func setGlobalSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	setGlobalConfigCache(newSettings.ToConfig())
+	notifyGlobalSettingsChanged()
 
 	res := Response{
 		Success: true,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(res)
+}
+
+// The global config is a per-process cache, and DEPLOY.md contemplates more
+// than one backend replica: a save on one of them used to leave the others
+// serving the old FCM credentials, title and analytics tag until restart.
+// Same mechanism as the privileges map — announce on pub/sub, refresh
+// periodically as the backstop.
+const (
+	globalSettingsReloadChannel   = "settings:reload"
+	globalSettingsRefreshInterval = 60 * time.Second
+)
+
+func reloadGlobalConfig() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	s, err := dbGetGlobalSettings(ctx)
+	if err != nil {
+		return err
+	}
+	setGlobalConfigCache(s.ToConfig())
+	return nil
+}
+
+func notifyGlobalSettingsChanged() {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := rdb.Publish(ctx, globalSettingsReloadChannel, "reload").Err(); err != nil {
+		log.Printf("settings: announce reload: %v\n", err)
+	}
+}
+
+func startGlobalSettingsRefresh() {
+	go func() {
+		ticker := time.NewTicker(globalSettingsRefreshInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := reloadGlobalConfig(); err != nil {
+				log.Printf("settings: periodic reload: %v\n", err)
+			}
+		}
+	}()
+	go func() {
+		for {
+			sub := rdb.Subscribe(context.Background(), globalSettingsReloadChannel)
+			for range sub.Channel() {
+				if err := reloadGlobalConfig(); err != nil {
+					log.Printf("settings: reload on announcement: %v\n", err)
+				}
+			}
+			sub.Close()
+			time.Sleep(5 * time.Second)
+		}
+	}()
 }
 
 // splitRegexRule splits a stored "<pattern>#<replacement>" rule at the first

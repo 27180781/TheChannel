@@ -74,7 +74,11 @@ func getMessages(w http.ResponseWriter, r *http.Request) {
 	// never be reused across identities.
 	w.Header().Set("Cache-Control", "private, no-cache")
 	w.Header().Set("Vary", "Cookie")
-	if lm := getLastModified(ctx, slug); lm != "" {
+	// No 304 while views are being counted: the short-circuit skips the query,
+	// and with it the per-message view increment, so repeat visitors to a
+	// quiet channel — the very population the counter is for — were never
+	// counted and kept seeing the numbers from their first visit.
+	if lm := getLastModified(ctx, slug); lm != "" && !countViews {
 		etag := `"` + lm + "-" + strconv.FormatBool(isAdmin) + "-" + strconv.FormatBool(countViews) + `"`
 		w.Header().Set("ETag", etag)
 		if r.Header.Get("If-None-Match") == etag {

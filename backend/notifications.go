@@ -155,6 +155,14 @@ func subscribeNotifications(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Every accepted token is a permanent entry in the channel's subscription
+	// set, only pruned once FCM rejects it on a later push — so without a
+	// limit one signed-in user could grow the set (and slow every post on
+	// the channel) without bound. A device re-registers rarely.
+	if !allowOrRetryAfter(w, subscribeLimiter(clientKey(r)), "too many subscription requests — please slow down") {
+		return
+	}
+
 	if err := addSubscription(slug, req.Token); err != nil {
 		http.Error(w, "Failed to subscribe to notifications", http.StatusInternalServerError)
 		return

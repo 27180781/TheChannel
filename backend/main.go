@@ -36,6 +36,7 @@ func main() {
 		panic(err)
 	}
 	startPrivilegesRefresh()
+	startGlobalSettingsRefresh()
 
 	// The session store is built before the migrations run: a misconfiguration
 	// here is fatal, and failing after a one-shot migration has been marked

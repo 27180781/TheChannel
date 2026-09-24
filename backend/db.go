@@ -164,16 +164,18 @@ func setMessage(ctx context.Context, slug string, m *Message, isUpdate bool) err
 		}
 	}
 
-	// Set message in hash
-	if err := rdb.HSet(ctx, messageKey, m).Err(); err != nil {
-		return err
-	}
-
-	// Add message timestamp to sorted set
-	if !isUpdate {
-		if err := rdb.ZAdd(ctx, fmt.Sprintf("channel:%s:m_times", slug), redis.Z{Score: float64(m.Timestamp.Unix()), Member: messageKey}).Err(); err != nil {
-			return err
+	// The hash and its index entry go in one transaction: written separately,
+	// a failure between the two left an orphan hash that no listing showed,
+	// no cleanup reached, and that still counted as existing for reactions
+	// and reports.
+	if _, err := rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		p.HSet(ctx, messageKey, m)
+		if !isUpdate {
+			p.ZAdd(ctx, fmt.Sprintf("channel:%s:m_times", slug), redis.Z{Score: float64(m.Timestamp.Unix()), Member: messageKey})
 		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	pushType := "new-message"
@@ -573,12 +575,19 @@ func getSubcriptionsList(slug string) ([]string, error) {
 	if slug != "" {
 		key = fmt.Sprintf("channel:%s:subscriptions", slug)
 	}
-	subscriptionsSet, err := rdb.SMembers(ctx, key).Result()
-	if err != nil {
+	// SSCAN in pages rather than one SMEMBERS: the set holds every device that
+	// ever subscribed to the channel, and a single reply carrying all of it
+	// blocked Redis for the duration on every post to a large channel.
+	var tokens []string
+	iter := rdb.SScan(ctx, key, 0, "", 1000).Iterator()
+	for iter.Next(ctx) {
+		tokens = append(tokens, iter.Val())
+	}
+	if err := iter.Err(); err != nil {
 		log.Printf("Failed to get subscriptions: %v\n", err)
 		return []string{}, err
 	}
-	return subscriptionsSet, nil
+	return tokens, nil
 }
 
 func getChannelDetails(ctx context.Context, slug string) (map[string]string, error) {

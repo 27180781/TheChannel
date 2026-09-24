@@ -78,6 +78,7 @@ func init() {
 			sweep(&supportSubmitLimiters)
 			sweep(&loginLimiters)
 			sweep(&importAuthLimiters)
+			sweep(&subscribeLimiters)
 		}
 	}()
 }
@@ -186,6 +187,18 @@ var (
 func importAuthLimiter(key string) *rate.Limiter {
 	return getLimiter(&importAuthLimiters, &importAuthMu, key, func() *rate.Limiter {
 		return rate.NewLimiter(rate.Every(6*time.Second), 10)
+	})
+}
+
+// subscribeLimiters throttles push-subscription registrations per client.
+var (
+	subscribeLimiters  sync.Map
+	subscribeLimiterMu sync.Mutex
+)
+
+func subscribeLimiter(key string) *rate.Limiter {
+	return getLimiter(&subscribeLimiters, &subscribeLimiterMu, key, func() *rate.Limiter {
+		return rate.NewLimiter(rate.Every(10*time.Second), 5)
 	})
 }
 
