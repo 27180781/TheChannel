@@ -132,6 +132,8 @@ func addMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
+	recordAuthorID(ctx, user)
+
 	message.Type = body.Type
 	message.Author = user.PublicName
 	message.AuthorId = user.ID

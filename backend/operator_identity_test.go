@@ -106,6 +106,9 @@ func requestAs(t *testing.T, sess Session, slug, method, target string, body io.
 	if err := session.Save(mr, mw); err != nil {
 		t.Fatalf("session save: %v", err)
 	}
+	// redistore keeps each session for 30 days under its default prefix.
+	sessionKey := "session_" + session.ID
+	t.Cleanup(func() { rdb.Del(context.Background(), sessionKey) })
 
 	r := httptest.NewRequest(method, target, body)
 	for _, c := range mw.Result().Cookies() {
@@ -294,6 +297,10 @@ func TestOperatorReportIsAnonymous(t *testing.T) {
 		}
 	}
 
+	// The report limiter is process-wide; a repeated run must not trip it.
+	reportLimiters.Delete(testOperatorEmail)
+	t.Cleanup(func() { reportLimiters.Delete(testOperatorEmail) })
+
 	r := requestAs(t, operator, slug, http.MethodPost, "/api/channel/"+slug+"/messages/report",
 		strings.NewReader(`{"messageId":1,"reason":"spam"}`), nil)
 	w := httptest.NewRecorder()
@@ -301,6 +308,17 @@ func TestOperatorReportIsAnonymous(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("reportMessage: status %d, body %q", w.Code, w.Body.String())
 	}
+	// Checked at rest, not only through getReports: the read path re-labels
+	// anything it recognises, which would hide a report stored with the
+	// operator's details.
+	stored, err := rdb.HGetAll(ctx, "channel:"+slug+":report:1").Result()
+	if err != nil {
+		t.Fatalf("stored report: %v", err)
+	}
+	if stored["reporterName"] != operatorName || stored["reportedEmail"] != "" || stored["reporterId"] != operatorAuthorId {
+		t.Errorf("operator report stored as %q/%q/%q", stored["reporterName"], stored["reportedEmail"], stored["reporterId"])
+	}
+	assertNoOperatorIdentity(t, "stored report", fmt.Sprint(stored))
 
 	legacy := &Report{MessageId: 2, Reason: "old", CreatedAt: time.Now(),
 		ReporterID: testOperatorID, ReportedEmail: testOperatorEmail, ReporterName: testOperatorName}
@@ -330,8 +348,8 @@ func TestOperatorReportIsAnonymous(t *testing.T) {
 }
 
 // A channel's owner screen lists who holds a role on it. The operator holds
-// one on every channel they created, and must not be listed to its co-owners;
-// the operator's own view of the list still shows everyone.
+// owner on every channel they created, and that row must not be listed to its
+// co-owners; the operator's own view of the list still shows everyone.
 func TestOwnerUserListHidesOperators(t *testing.T) {
 	useTestSessionStore(t)
 	const slug = "op-id-users"
@@ -354,5 +372,123 @@ func TestOwnerUserListHidesOperators(t *testing.T) {
 	}
 	if opView := list(operator); !strings.Contains(opView, testOperatorEmail) {
 		t.Errorf("the operator's own view should list everyone: %s", opView)
+	}
+}
+
+// A writer role an owner grants to the operator's email is the owner's own
+// doing: it must be listed like any other, or the row would vanish after the
+// save and confirm that the address they typed is the operator's.
+func TestOwnerSeesOperatorEmailTheyGranted(t *testing.T) {
+	useTestSessionStore(t)
+	const slug = "op-id-granted"
+	const other = "someone.else.granted@example.com"
+	_, owner := operatorFixture(t, slug, "owner.granted@example.com")
+	ctx := supportCtx(t)
+	t.Cleanup(func() {
+		cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		privilegesUsers.Delete(other)
+		dbUpdateUsersList(cctx, func(users []User) []User {
+			kept := users[:0]
+			for _, u := range users {
+				if u.Email != other {
+					kept = append(kept, u)
+				}
+			}
+			return kept
+		})
+	})
+
+	// This time the operator holds no role on the channel.
+	if err := dbUpdateUsersList(ctx, func(users []User) []User {
+		for i := range users {
+			if users[i].Email == testOperatorEmail {
+				delete(users[i].ChannelRoles, slug)
+			}
+		}
+		return users
+	}); err != nil {
+		t.Fatalf("drop operator role: %v", err)
+	}
+
+	r := requestAs(t, owner, slug, http.MethodPost, "/api/channel/"+slug+"/admin/users/set",
+		strings.NewReader(`{"users":[{"email":"`+testOperatorEmail+`","role":"writer"},{"email":"`+other+`","role":"writer"}]}`), nil)
+	w := httptest.NewRecorder()
+	setChannelUsers(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("setChannelUsers: status %d, body %q", w.Code, w.Body.String())
+	}
+
+	r = requestAs(t, owner, slug, http.MethodGet, "/api/channel/"+slug+"/admin/users/get", nil, nil)
+	w = httptest.NewRecorder()
+	getChannelUsers(w, r)
+	for _, email := range []string{testOperatorEmail, other} {
+		if !strings.Contains(w.Body.String(), email) {
+			t.Errorf("a role the owner granted to %s must be listed: %s", email, w.Body.String())
+		}
+	}
+}
+
+// A post written before its author's record learned their Google id must
+// still be attributable, or a later promotion to operator could not re-label
+// it. addMessage records the id as it posts.
+func TestAuthorIDIsRecordedWhenPosting(t *testing.T) {
+	useTestSessionStore(t)
+	const slug = "op-id-record"
+	_, _ = operatorFixture(t, slug, "owner.record@example.com")
+	const lateEmail, lateID = "late.writer@example.com", "200000000000000000001"
+	ctx := supportCtx(t)
+
+	// As dbAssignChannelRole or an owner's invitation leaves it: a role, no id.
+	late := User{Email: lateEmail, ChannelRoles: map[string]ChannelRole{slug: RoleWriter}}
+	privilegesUsers.Store(lateEmail, late)
+	if err := dbUpdateUsersList(ctx, func(users []User) []User { return append(users, late) }); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	t.Cleanup(func() {
+		cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		privilegesUsers.Delete(lateEmail)
+		dbUpdateUsersList(cctx, func(users []User) []User {
+			kept := users[:0]
+			for _, u := range users {
+				if u.Email != lateEmail {
+					kept = append(kept, u)
+				}
+			}
+			return kept
+		})
+	})
+
+	sess := Session{ID: lateID, Username: "Late Writer", Email: lateEmail, PublicName: "Late Writer",
+		ChannelRoles: late.ChannelRoles}
+	r := requestAs(t, sess, slug, http.MethodPost, "/api/channel/"+slug+"/admin/new",
+		strings.NewReader(`{"type":"md","text":"hello"}`), nil)
+	w := httptest.NewRecorder()
+	addMessage(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("addMessage: status %d, body %q", w.Code, w.Body.String())
+	}
+
+	if v, _ := privilegesUsers.Load(lateEmail); v.(User).ID != lateID {
+		t.Errorf("live record id = %q, want %q", v.(User).ID, lateID)
+	}
+	users, err := dbGetUsersList(ctx)
+	if err != nil {
+		t.Fatalf("users list: %v", err)
+	}
+	for _, u := range users {
+		if u.Email == lateEmail && u.ID != lateID {
+			t.Errorf("stored record id = %q, want %q", u.ID, lateID)
+		}
+	}
+
+	// Promoted later: the post is now recognised as an operator's.
+	v, _ := privilegesUsers.Load(lateEmail)
+	promoted := v.(User)
+	promoted.GlobalRole = RoleSuperAdmin
+	privilegesUsers.Store(lateEmail, promoted)
+	if !currentOperators().hasID(lateID) {
+		t.Error("a promoted author's posts must be recognisable as an operator's")
 	}
 }

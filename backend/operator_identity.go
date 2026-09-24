@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"log"
 	"strings"
 )
 
@@ -31,8 +33,8 @@ type operatorSet struct {
 // holds privileged users only, so a range is cheap; callers still take one
 // snapshot per request or event rather than one per record.
 //
-// An operator's id is their Google account id, filled in on first login. One
-// who has never logged in has no id and so cannot have written anything yet.
+// An operator's id is their Google account id. A record learns it at login, or
+// from recordAuthorID when a post is written before the record did.
 func currentOperators() operatorSet {
 	ops := operatorSet{ids: map[string]struct{}{}, emails: map[string]struct{}{}}
 	privilegesUsers.Range(func(_, v any) bool {
@@ -115,4 +117,45 @@ func (o operatorSet) anonymiseOperatorEvent(data string) string {
 		return data
 	}
 	return string(out)
+}
+
+// recordAuthorID makes sure the author's record carries the Google account id
+// their posts are signed with.
+//
+// A record created after the user's last login (self-service channel creation,
+// an owner's invitation) has no id until the next login, up to the 30-day
+// cookie lifetime away. A post written in that window carries an id no record
+// knows, so if its author is later made an operator, currentOperators could not
+// recognise it and the read paths would keep serving their Google id. Only
+// writes when the id is missing, so it costs one map lookup per post otherwise.
+func recordAuthorID(ctx context.Context, s Session) {
+	if s.ID == "" || s.Email == "" {
+		return
+	}
+	v, ok := privilegesUsers.Load(s.Email)
+	if !ok {
+		return
+	}
+	if u, ok := v.(User); !ok || u.ID != "" {
+		return
+	}
+	if err := dbUpdateUsersList(ctx, func(users []User) []User {
+		for i := range users {
+			if users[i].Email == s.Email && users[i].ID == "" {
+				users[i].ID = s.ID
+			}
+		}
+		return users
+	}); err != nil {
+		log.Printf("recordAuthorID: %s: %v\n", s.Email, err)
+		return
+	}
+	// Merge onto whatever entry is current, as getUser does, so a concurrent
+	// role rebuild is not overwritten with this snapshot.
+	if cur, ok := privilegesUsers.Load(s.Email); ok {
+		if c, ok := cur.(User); ok && c.ID == "" {
+			c.ID = s.ID
+			privilegesUsers.Store(s.Email, c)
+		}
+	}
 }

@@ -393,11 +393,16 @@ func setChannelUsersForSlug(w http.ResponseWriter, r *http.Request, slug string,
 // listChannelUsers writes the channel's user/role list. Shared by the
 // super-admin and owner get-users handlers.
 //
-// hideOperators drops super admins from the list. An operator holds an explicit
-// role on every channel they created themselves, and a co-owner reading that
-// list must not learn the operator's email. Hiding changes nothing about
-// access: a super admin reaches every channel through hasChannelRole anyway,
-// and a save from the owner screen only touches the rows it sends.
+// hideOperators drops an operator's owner row. An operator holds owner on every
+// channel they created themselves, and a co-owner reading that list must not
+// learn the operator's email. Only owner rows are hidden: an owner can never
+// grant owner, so such a row was never their own doing, whereas a writer or
+// moderator row on an operator's email is one an owner typed in and must stay
+// visible — hiding it too would make the row vanish after saving, which both
+// looks like a failed save and confirms that the address is the operator's.
+// Hiding changes nothing about access: a super admin reaches every channel
+// through hasChannelRole anyway, and an owner's save only touches the rows it
+// sends.
 func listChannelUsers(w http.ResponseWriter, slug string, hideOperators bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -417,7 +422,7 @@ func listChannelUsers(w http.ResponseWriter, slug string, hideOperators bool) {
 	// user management screens do not accept.
 	channelUsers := make([]ChannelUser, 0)
 	for _, u := range users {
-		if hideOperators && u.GlobalRole == RoleSuperAdmin {
+		if hideOperators && u.GlobalRole == RoleSuperAdmin && u.ChannelRoles[slug] == RoleOwner {
 			continue
 		}
 		if u.ChannelRoles != nil {
