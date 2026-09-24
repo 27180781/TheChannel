@@ -233,7 +233,8 @@ func getUserInfo(w http.ResponseWriter, r *http.Request) {
 func getUser(ctx context.Context, claims map[string]any) (*User, error) {
 	var user User
 
-	email := normEmail(func() string { e, _ := dyno.GetString(claims["email"]); return e }())
+	rawEmail, _ := dyno.GetString(claims["email"])
+	email := normEmail(rawEmail)
 	if email == "" {
 		return nil, errors.New("email not found in claims")
 	}

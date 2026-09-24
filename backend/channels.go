@@ -51,6 +51,12 @@ const channelCtxKey ctxKey = "channel"
 
 var slugRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9\-]{1,48}[a-z0-9]$`)
 
+// isPlausibleSlug is the lookup-side check (see channelMiddleware); slugRegex
+// is the creation-side one.
+func isPlausibleSlug(s string) bool {
+	return s != "" && len(s) <= 64 && !strings.ContainsAny(s, ":/\\ \t\r\n")
+}
+
 // defaultChannelFeatures is the single source of the toggles every new channel
 // starts with. Both creation paths (createChannel, approveChannelRequest) must
 // use it: requireFeature is only applied to toggles both paths default to true,
@@ -76,10 +82,13 @@ func channelMiddleware(next http.Handler) http.Handler {
 		slug := chi.URLParam(r, "slug")
 		ctx := r.Context()
 
-		// Every slug in the store matches this pattern, so anything else is a
-		// guaranteed miss; refusing it here keeps arbitrary path segments out
-		// of the Redis key lookups below.
-		if !slugRegex.MatchString(slug) {
+		// Refuse what can never be a channel before touching Redis. Keys are
+		// "channel:<slug>:<suffix>", so a slug carrying ':' (e.g.
+		// "x:messages:5") resolved the message hash itself as a phantom
+		// channel with every feature off. The check is deliberately looser
+		// than the creation regex so channels created before that regex
+		// existed stay reachable.
+		if !isPlausibleSlug(slug) {
 			http.Error(w, "Channel not found", http.StatusNotFound)
 			return
 		}
@@ -330,7 +339,7 @@ func updateChannelFeatures(w http.ResponseWriter, r *http.Request) {
 // URL, outside channelMiddleware, and used to write a features blob or a role
 // grant for a slug that did not exist — silently, with a success response.
 func requireExistingChannel(ctx context.Context, w http.ResponseWriter, slug string) bool {
-	if !slugRegex.MatchString(slug) {
+	if !isPlausibleSlug(slug) {
 		http.Error(w, "Channel not found", http.StatusNotFound)
 		return false
 	}

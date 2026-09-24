@@ -160,9 +160,9 @@ func reportLimiter(email string) *rate.Limiter {
 
 // loginLimiters throttles OAuth code exchanges per client. Each POST
 // /auth/login costs a round trip to Google and a Redis write, and it was the
-// only unauthenticated write path with no limit at all. Ten attempts at once,
-// then one every 3 seconds, is far above what a person retrying a failed
-// sign-in produces.
+// only unauthenticated write path with no limit at all. Twenty attempts at
+// once, then one every 2 seconds, is far above what people behind one shared
+// address produce by signing in (once per device per month).
 var (
 	loginLimiters  sync.Map
 	loginLimiterMu sync.Mutex
@@ -170,7 +170,7 @@ var (
 
 func loginLimiter(key string) *rate.Limiter {
 	return getLimiter(&loginLimiters, &loginLimiterMu, key, func() *rate.Limiter {
-		return rate.NewLimiter(rate.Every(3*time.Second), 10)
+		return rate.NewLimiter(rate.Every(2*time.Second), 20)
 	})
 }
 

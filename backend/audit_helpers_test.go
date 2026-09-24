@@ -152,3 +152,16 @@ func TestIsUploadRoute(t *testing.T) {
 		}
 	}
 }
+
+func TestIsPlausibleSlug(t *testing.T) {
+	for _, ok := range []string{"news", "Legacy_Channel", "a-b-c"} {
+		if !isPlausibleSlug(ok) {
+			t.Errorf("%q should be looked up", ok)
+		}
+	}
+	for _, bad := range []string{"", "x:messages:5", "a/b", "a b", strings.Repeat("a", 65)} {
+		if isPlausibleSlug(bad) {
+			t.Errorf("%q should be refused", bad)
+		}
+	}
+}

@@ -157,9 +157,6 @@ func addMessage(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(message)
 }
 
-// canModifyMessage reports whether the current session may edit or delete a
-// message written by authorId. Writers may only touch their own posts;
-// moderators (and above, including super admins) may touch any message.
 // sessionUserID is the Google subject of the signed-in user, or "" when there
 // is no session.
 func sessionUserID(r *http.Request) string {
@@ -171,6 +168,9 @@ func sessionUserID(r *http.Request) string {
 	return user.ID
 }
 
+// canModifyMessage reports whether the current session may edit or delete a
+// message written by authorId. Writers may only touch their own posts;
+// moderators (and above, including super admins) may touch any message.
 func canModifyMessage(r *http.Request, slug, authorId string) bool {
 	if hasChannelRole(r, slug, RoleModerator) {
 		return true
