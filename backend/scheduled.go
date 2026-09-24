@@ -95,6 +95,20 @@ func runScheduledMessages() {
 			continue
 		}
 
+		// The dispatcher is the one writer that never passes through
+		// channelMiddleware, so neither the super admin's kill switch nor the
+		// scheduled-messages feature toggle reached it: a disabled channel
+		// kept posting, firing its webhook and pushing to subscribers every
+		// minute. The pending list and the due-set entry are left untouched,
+		// so re-enabling the channel simply resumes it.
+		ctxCh, cancelCh := context.WithTimeout(context.Background(), 5*time.Second)
+		channel, cherr := dbGetChannel(ctxCh, slug)
+		cancelCh()
+		if cherr != nil || channel.Features.Disabled || !channel.Features.ScheduledMessages {
+			releaseScheduledLock(slug, token)
+			continue
+		}
+
 		ctxGet, cancelGet := context.WithTimeout(context.Background(), 5*time.Second)
 		list, err := dbGetScheduledMessages(ctxGet, slug)
 		cancelGet()
@@ -201,6 +215,12 @@ func updateScheduledMessages(w http.ResponseWriter, r *http.Request) {
 	for _, m := range messages {
 		if m.Timestamp.Unix() <= 0 {
 			http.Error(w, "scheduled message requires a timestamp", http.StatusBadRequest)
+			return
+		}
+		// Dispatch stores the text verbatim, so the cap the live write paths
+		// enforce has to hold here too.
+		if len(m.Text) > maxMessageTextLen {
+			http.Error(w, "text too long", http.StatusBadRequest)
 			return
 		}
 	}

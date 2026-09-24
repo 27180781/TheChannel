@@ -96,6 +96,12 @@ func getMessages(w http.ResponseWriter, r *http.Request) {
 	addViewsToMessages(ctx, slug, countViews, messages)
 }
 
+// maxMessageTextLen is the server-side ceiling on a post's markdown, shared by
+// every write path (composer, edit, import API, scheduled list) so no route can
+// store a body the others would refuse. The composer itself stops far earlier;
+// this only bounds what a hand-made request can push into every SSE client.
+const maxMessageTextLen = 100_000
+
 func addMessage(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -115,6 +121,10 @@ func addMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "error", http.StatusBadRequest)
 		return
 	}
+	if len(body.Text) > maxMessageTextLen {
+		http.Error(w, "text too long", http.StatusBadRequest)
+		return
+	}
 
 	if message.ID, err = getMessageNextId(ctx, slug); err != nil {
 		log.Printf("Failed to allocate message id: %v\n", err)
@@ -122,7 +132,7 @@ func addMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	message.Type = body.Type
-	message.Author = user.PublicName
+	message.Author = sessionDisplayName(user)
 	message.AuthorId = user.ID
 	message.Timestamp = time.Now()
 	message.Text = body.Text
@@ -146,6 +156,17 @@ func addMessage(w http.ResponseWriter, r *http.Request) {
 // canModifyMessage reports whether the current session may edit or delete a
 // message written by authorId. Writers may only touch their own posts;
 // moderators (and above, including super admins) may touch any message.
+// sessionUserID is the Google subject of the signed-in user, or "" when there
+// is no session.
+func sessionUserID(r *http.Request) string {
+	session, _ := store.Get(r, cookieName)
+	user, ok := session.Values["user"].(Session)
+	if !ok {
+		return ""
+	}
+	return user.ID
+}
+
 func canModifyMessage(r *http.Request, slug, authorId string) bool {
 	if hasChannelRole(r, slug, RoleModerator) {
 		return true
@@ -180,6 +201,10 @@ func updateMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "error", http.StatusBadRequest)
 		return
 	}
+	if len(body.Text) > maxMessageTextLen {
+		http.Error(w, "text too long", http.StatusBadRequest)
+		return
+	}
 
 	// The message must already exist: setMessage would otherwise happily create
 	// an unindexed hash from whatever ID the client sent.
@@ -192,6 +217,18 @@ func updateMessage(w http.ResponseWriter, r *http.Request) {
 	if !canModifyMessage(r, slug, stored["authorId"]) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
+	}
+
+	// Republishing a soft-deleted post is a moderation decision. The composer
+	// always sends deleted:false, so re-saving was enough for a writer to undo
+	// a moderator's takedown of their own message. A writer may still restore
+	// what they deleted themselves; deletedBy is empty on posts deleted before
+	// it was recorded, and those keep the old behaviour.
+	if stored["deleted"] == "1" && !body.Deleted && !hasChannelRole(r, slug, RoleModerator) {
+		if by := stored["deletedBy"]; by != "" && by != sessionUserID(r) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
 	}
 
 	// Only the body of the message is editable — identity, ordering and counters
@@ -249,7 +286,7 @@ func deleteMessage(w http.ResponseWriter, r *http.Request) {
 	idInt, _ := strconv.Atoi(id)
 	message := Message{ID: idInt, Deleted: true}
 
-	if err := funcDeleteMessage(ctx, slug, id); err != nil {
+	if err := funcDeleteMessage(ctx, slug, id, sessionUserID(r)); err != nil {
 		log.Printf("Failed to delete message: %v\n", err)
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
@@ -321,6 +358,16 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 	clientCtx := r.Context()
 	const heartbeatInterval = 25 * time.Second
 
+	// The server runs with no WriteTimeout (an SSE response never ends), so a
+	// peer that stops reading — a backgrounded mobile browser behind a proxy
+	// that has stopped draining — left this goroutine blocked inside a write
+	// until TCP itself gave up, some fifteen minutes later, holding a
+	// connection slot the whole time. A per-write deadline turns that into a
+	// write error, and the browser reconnects.
+	const sseWriteTimeout = 30 * time.Second
+	rc := http.NewResponseController(w)
+	armWrite := func() { _ = rc.SetWriteDeadline(time.Now().Add(sseWriteTimeout)) }
+
 	// Join the channel's shared reader BEFORE replaying history, so an event
 	// published during the replay is buffered rather than missed. The replay is
 	// then deduplicated against what the hub delivers, using the stream ids.
@@ -332,6 +379,7 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 		if !isWriter {
 			data = maskEventAuthor(data)
 		}
+		armWrite()
 		if _, err := fmt.Fprintf(w, "id: %s\ndata: %s\n\n", ev.id, data); err != nil {
 			return false
 		}
@@ -373,6 +421,7 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 			}
 
 		case <-heartbeat.C:
+			armWrite()
 			if _, err := fmt.Fprintf(w, "data: {\"type\": \"heartbeat\"}\n\n"); err != nil {
 				return
 			}

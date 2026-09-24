@@ -12,10 +12,10 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi"
@@ -199,6 +199,57 @@ func localBlobExists(hash string) (string, bool) {
 	return p, true
 }
 
+// contentDispositionAttachment builds the download header for a stored name.
+//
+// filename* is percent-encoded as RFC 5987 defines it. url.QueryEscape was used
+// before, and it writes a space as "+", which browsers do not decode in this
+// header: "דוח שנתי.pdf" was saved as "דוח+שנתי.pdf". A plain ASCII filename=
+// is kept alongside for the few clients that ignore filename*.
+func contentDispositionAttachment(name string) string {
+	return `attachment; filename="` + asciiFilename(name) + `"; filename*=UTF-8''` + rfc5987Encode(name)
+}
+
+// rfc5987Encode percent-encodes everything outside the attr-char set of
+// RFC 5987 §3.2.1, byte by byte, so multi-byte UTF-8 survives intact.
+func rfc5987Encode(s string) string {
+	const hex = "0123456789ABCDEF"
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9',
+			c == '!', c == '#', c == '$', c == '&', c == '+', c == '-', c == '.',
+			c == '^', c == '_', c == '`', c == '|', c == '~':
+			b.WriteByte(c)
+		default:
+			b.WriteByte('%')
+			b.WriteByte(hex[c>>4])
+			b.WriteByte(hex[c&0x0f])
+		}
+	}
+	return b.String()
+}
+
+// asciiFilename is the lossy fallback name: anything a quoted-string cannot
+// carry, or that is not printable ASCII, becomes "_". A name with nothing
+// printable left (a purely Hebrew one) gets a placeholder instead of "____".
+func asciiFilename(s string) string {
+	var b strings.Builder
+	kept := false
+	for _, r := range s {
+		if r >= 0x20 && r < 0x7f && r != '"' && r != '\\' {
+			b.WriteRune(r)
+			kept = kept || r != ' '
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	if !kept {
+		return "file"
+	}
+	return b.String()
+}
+
 func serveFile(w http.ResponseWriter, r *http.Request) {
 	fileId := chi.URLParam(r, "fileid")
 	if len(fileId) < 4 {
@@ -222,7 +273,7 @@ func serveFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Disposition", `attachment; filename*=UTF-8''`+url.QueryEscape(meta.Filename))
+	w.Header().Set("Content-Disposition", contentDispositionAttachment(meta.Filename))
 
 	if r2Enabled && len(meta.Hash) >= 4 {
 		key := r2ObjectKey(meta.Hash)

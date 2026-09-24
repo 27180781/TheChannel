@@ -21,11 +21,21 @@ func addNewPost(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	// Wrong keys are rationed per client and channel; a client that has used
+	// up its failures is refused before the key is even looked at, so the
+	// key cannot be guessed at network speed. Correct keys cost nothing.
+	authLimiter := importAuthLimiter(clientKey(r) + ":" + slug)
+	if authLimiter.Tokens() < 1 {
+		http.Error(w, "too many failed attempts — please wait", http.StatusTooManyRequests)
+		return
+	}
+
 	cfg := getChannelConfig(ctx, slug)
 	// Unauthenticated route: an unset key must fail closed, and the comparison
 	// against the configured secret must not vary with how much of it matched.
 	key := r.Header.Get("X-API-Key")
 	if cfg.ApiSecretKey == "" || subtle.ConstantTimeCompare([]byte(key), []byte(cfg.ApiSecretKey)) != 1 {
+		authLimiter.Allow()
 		http.Error(w, "error", http.StatusUnauthorized)
 		return
 	}
@@ -61,7 +71,7 @@ func addNewPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(body.Text) > 100_000 {
+	if len(body.Text) > maxMessageTextLen {
 		http.Error(w, "text too long", http.StatusBadRequest)
 		return
 	}
@@ -92,6 +102,16 @@ func addNewPost(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Failed to set new message: %v\n", err)
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
+	}
+
+	// Same fan-out as a post from the composer or the scheduler: the docs
+	// promise the webhook on every creation, and readers who subscribed to
+	// push expect one for content that appears in the feed. A backdated import
+	// is an archive being copied in, not news, so it fires the webhook but
+	// not a push.
+	go SendWebhook(context.Background(), slug, "create", &message)
+	if time.Since(message.Timestamp) < time.Hour {
+		go pushFcmMessage(slug, &message)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

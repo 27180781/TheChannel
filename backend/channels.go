@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi"
@@ -74,6 +75,14 @@ func channelMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		slug := chi.URLParam(r, "slug")
 		ctx := r.Context()
+
+		// Every slug in the store matches this pattern, so anything else is a
+		// guaranteed miss; refusing it here keeps arbitrary path segments out
+		// of the Redis key lookups below.
+		if !slugRegex.MatchString(slug) {
+			http.Error(w, "Channel not found", http.StatusNotFound)
+			return
+		}
 
 		channel, err := dbGetChannel(ctx, slug)
 		if err != nil {
@@ -190,6 +199,24 @@ func createChannel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid slug: use lowercase letters, numbers, hyphens (min 3 chars)", http.StatusBadRequest)
 		return
 	}
+	// The self-service path and the info editor both refuse a blank name; this
+	// path did not, and a nameless channel renders with an empty header and a
+	// "?" avatar. A mistyped owner email is worse: the role is granted to an
+	// identity nobody can sign in as, and the channel has no reachable owner.
+	req.Name = strings.TrimSpace(req.Name)
+	req.OwnerEmail = normEmail(req.OwnerEmail)
+	if req.Name == "" {
+		http.Error(w, "Channel name is required", http.StatusBadRequest)
+		return
+	}
+	if channelFieldTooLong(req.Name, maxChannelNameLen) {
+		http.Error(w, "Channel name is too long", http.StatusBadRequest)
+		return
+	}
+	if req.OwnerEmail != "" && !looksLikeEmail(req.OwnerEmail) {
+		http.Error(w, "Invalid owner email", http.StatusBadRequest)
+		return
+	}
 	// The reserved check lived only in the self-service path; a slug like
 	// "admin", "api" or "login" created here would shadow a real route and be
 	// unreachable at /<slug>. The admin paths must refuse them too.
@@ -278,6 +305,9 @@ func updateChannelFeatures(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	slug := chi.URLParam(r, "slug")
+	if !requireExistingChannel(ctx, w, slug) {
+		return
+	}
 
 	var features ChannelFeatures
 	if err := json.NewDecoder(r.Body).Decode(&features); err != nil {
@@ -293,6 +323,27 @@ func updateChannelFeatures(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(Response{Success: true})
+}
+
+// requireExistingChannel answers 404 and returns false when slug does not name
+// a channel. The super-admin write handlers take the slug straight from the
+// URL, outside channelMiddleware, and used to write a features blob or a role
+// grant for a slug that did not exist — silently, with a success response.
+func requireExistingChannel(ctx context.Context, w http.ResponseWriter, slug string) bool {
+	if !slugRegex.MatchString(slug) {
+		http.Error(w, "Channel not found", http.StatusNotFound)
+		return false
+	}
+	exists, err := dbChannelExists(ctx, slug)
+	if err != nil {
+		http.Error(w, "error", http.StatusInternalServerError)
+		return false
+	}
+	if !exists {
+		http.Error(w, "Channel not found", http.StatusNotFound)
+		return false
+	}
+	return true
 }
 
 // Super admin: get channel (including features)
@@ -322,12 +373,17 @@ type channelUserChange struct {
 // difference between them: a channel owner may not promote others to owner.
 func applyChannelRoleChanges(slug string, changes []channelUserChange, allowOwner bool) func([]User) []User {
 	return func(users []User) []User {
+		users = normalizeUsers(users)
 		userMap := make(map[string]int)
 		for i, u := range users {
 			userMap[u.Email] = i
 		}
 
 		for _, ru := range changes {
+			ru.Email = normEmail(ru.Email)
+			if ru.Email == "" {
+				continue
+			}
 			if !allowOwner && ru.Role == RoleOwner {
 				continue // owner cannot promote others to owner
 			}
@@ -424,7 +480,13 @@ func listChannelUsers(w http.ResponseWriter, slug string) {
 
 // Super admin: set channel users
 func superAdminSetChannelUsers(w http.ResponseWriter, r *http.Request) {
-	setChannelUsersForSlug(w, r, chi.URLParam(r, "slug"), true)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	slug := chi.URLParam(r, "slug")
+	if !requireExistingChannel(ctx, w, slug) {
+		return
+	}
+	setChannelUsersForSlug(w, r, slug, true)
 }
 
 // Super admin: get channel users

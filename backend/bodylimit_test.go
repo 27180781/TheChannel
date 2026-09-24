@@ -32,22 +32,26 @@ func TestLimitRequestBody(t *testing.T) {
 
 	cases := []struct {
 		name        string
+		path        string
 		contentType string
 		size        int
 		wantStatus  int
 	}{
-		{"small json passes", "application/json", 1024, http.StatusOK},
-		{"json just under the cap passes", "application/json", maxJSONRequestBody - 1024, http.StatusOK},
-		{"oversized json is refused", "application/json", maxJSONRequestBody + (1 << 20), http.StatusRequestEntityTooLarge},
+		{"small json passes", "/api/anything", "application/json", 1024, http.StatusOK},
+		{"json just under the cap passes", "/api/anything", "application/json", maxJSONRequestBody - 1024, http.StatusOK},
+		{"oversized json is refused", "/api/anything", "application/json", maxJSONRequestBody + (1 << 20), http.StatusRequestEntityTooLarge},
 		// uploadFile sets its own MaxBytesReader from the channel's configured
 		// limit, which is far above the JSON cap; capping it here would break
 		// every file upload.
-		{"multipart upload is exempt", "multipart/form-data; boundary=xyz", maxJSONRequestBody + (1 << 20), http.StatusOK},
+		{"multipart upload route is exempt", "/api/channel/x/admin/upload", "multipart/form-data; boundary=xyz", maxJSONRequestBody + (1 << 20), http.StatusOK},
+		// The exemption is by route, not by Content-Type: a client can label
+		// any body multipart, and the JSON handlers must stay capped regardless.
+		{"multipart content type on a json route is still capped", "/api/channel/x/admin/new", "multipart/form-data; boundary=xyz", maxJSONRequestBody + (1 << 20), http.StatusRequestEntityTooLarge},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/api/anything", strings.NewReader(strings.Repeat("a", c.size)))
+			req := httptest.NewRequest(http.MethodPost, c.path, strings.NewReader(strings.Repeat("a", c.size)))
 			req.Header.Set("Content-Type", c.contentType)
 			rec := httptest.NewRecorder()
 

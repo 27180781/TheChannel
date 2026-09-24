@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -15,10 +16,19 @@ const (
 	// open to every logged-in user, so without a cap one account can mint
 	// channels (and their Redis keyspace) without bound.
 	maxChannelsPerOwner = 5
-	// Field caps on the stored channel record.
-	maxChannelNameLen = 100
+	// Field caps on the stored channel record, in characters (the forms cap
+	// the same fields with maxlength, which also counts characters).
+	maxChannelNameLen = 80
 	maxChannelDescLen = 2000
 )
+
+// channelFieldTooLong counts characters, not bytes: the byte-length check it
+// replaces cut a Hebrew name off at half the advertised limit, since every
+// Hebrew letter is two bytes in UTF-8, while the form let the user type the
+// full 80 and then showed an unexplained error.
+func channelFieldTooLong(s string, maxRunes int) bool {
+	return utf8.RuneCountInString(s) > maxRunes
+}
 
 // reservedSlugs are the top-level frontend route paths (see
 // frontend/src/app/app.routes.ts) plus the prefixes the backend serves itself.
@@ -69,8 +79,9 @@ func countOwnedChannels(ctx context.Context, email string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	email = normEmail(email)
 	for _, u := range users {
-		if u.Email != email {
+		if normEmail(u.Email) != email {
 			continue
 		}
 		var n int
@@ -139,14 +150,20 @@ func createChannelSelfService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	body.Name = strings.TrimSpace(body.Name)
 	if body.Name == "" {
 		http.Error(w, "name is required", http.StatusBadRequest)
 		return
 	}
-	if len(body.Name) > maxChannelNameLen || len(body.Description) > maxChannelDescLen {
+	if channelFieldTooLong(body.Name, maxChannelNameLen) || channelFieldTooLong(body.Description, maxChannelDescLen) {
 		http.Error(w, "field too long", http.StatusBadRequest)
 		return
 	}
+
+	// Sessions minted before emails were normalised may still carry the
+	// address in Google's casing; every grant below must use the canonical
+	// form or the owner would not match their own channel.
+	ownerEmail := normEmail(s.Email)
 
 	reason, err := slugAvailability(ctx, body.Slug)
 	if err != nil {
@@ -175,7 +192,7 @@ func createChannelSelfService(w http.ResponseWriter, r *http.Request) {
 	//
 	// The lock is short-lived and owner-scoped, so it costs nothing to anyone
 	// else and cannot outlive a crashed request.
-	createLock := "channel_create:lock:" + strings.ToLower(s.Email)
+	createLock := "channel_create:lock:" + ownerEmail
 	gotLock, lockErr := rdb.SetNX(ctx, createLock, 1, 15*time.Second).Result()
 	if lockErr != nil {
 		http.Error(w, "error", http.StatusInternalServerError)
@@ -187,7 +204,7 @@ func createChannelSelfService(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rdb.Del(ctx, createLock)
 
-	owned, err := countOwnedChannels(ctx, s.Email)
+	owned, err := countOwnedChannels(ctx, ownerEmail)
 	if err != nil {
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
@@ -199,7 +216,7 @@ func createChannelSelfService(w http.ResponseWriter, r *http.Request) {
 
 	// Validation is done and nothing has been persisted yet, so this is the first
 	// point where the request actually costs a channel.
-	if !allowOrRetryAfter(w, channelCreateLimiter(s.Email), "too many requests — please try again later") {
+	if !allowOrRetryAfter(w, channelCreateLimiter(ownerEmail), "too many requests — please try again later") {
 		return
 	}
 
@@ -207,7 +224,7 @@ func createChannelSelfService(w http.ResponseWriter, r *http.Request) {
 		Slug:        body.Slug,
 		Name:        body.Name,
 		Description: body.Description,
-		OwnerEmail:  s.Email,
+		OwnerEmail:  ownerEmail,
 		CreatedAt:   time.Now(),
 		Features:    defaultChannelFeatures(),
 	}
@@ -223,8 +240,8 @@ func createChannelSelfService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := dbAssignChannelRole(ctx, s.Email, channel.Slug, RoleOwner); err != nil {
-		log.Printf("createChannelSelfService: %s created but owner role for %s not assigned: %v\n", channel.Slug, s.Email, err)
+	if err := dbAssignChannelRole(ctx, ownerEmail, channel.Slug, RoleOwner); err != nil {
+		log.Printf("createChannelSelfService: %s created but owner role for %s not assigned: %v\n", channel.Slug, ownerEmail, err)
 	}
 	if err := initializePrivilegeUsers(); err != nil {
 		log.Printf("initializePrivilegeUsers after createChannelSelfService(%s): %v", channel.Slug, err)
@@ -236,7 +253,7 @@ func createChannelSelfService(w http.ResponseWriter, r *http.Request) {
 	req := &ChannelRequest{
 		ID:           generatedRandomID(12),
 		Name:         sessionDisplayName(s),
-		Email:        s.Email,
+		Email:        ownerEmail,
 		DesiredSlug:  channel.Slug,
 		Description:  channel.Description,
 		Status:       RequestStatusApproved,

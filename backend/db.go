@@ -149,14 +149,17 @@ func getMessageNextId(ctx context.Context, slug string) (int, error) {
 func setMessage(ctx context.Context, slug string, m *Message, isUpdate bool) error {
 	messageKey := fmt.Sprintf("channel:%s:messages:%d", slug, m.ID)
 
-	// Load per-channel settings for regex replace
-	settings, err := dbGetSettings(ctx, slug)
-	if err == nil {
-		cfg := settings.ToConfig()
-		for _, regex := range cfg.RegexReplace {
-			if !strings.HasPrefix(m.Text, "[quote-embedded#]") {
-				t := regex.Pattern.ReplaceAllString(m.Text, regex.Replace)
-				m.Text = t
+	// The channel's regex replacements run once, when a message is first
+	// published. They must NOT run again on edit: the composer opens with the
+	// stored text — which already carries the replacement — so re-applying the
+	// same rule wrapped the markup a second time on every save (the documented
+	// "**$1**" headline rule turned "**title!**" into "****title!****").
+	if !isUpdate {
+		settings, err := dbGetSettings(ctx, slug)
+		if err == nil && !strings.HasPrefix(m.Text, "[quote-embedded#]") {
+			cfg := settings.ToConfig()
+			for _, regex := range cfg.RegexReplace {
+				m.Text = regex.Pattern.ReplaceAllString(m.Text, regex.Replace)
 			}
 		}
 	}
@@ -246,6 +249,11 @@ func setReaction(ctx context.Context, slug string, messageId int, emoji string, 
 
 	pushMessageData, _ := json.Marshal(pushMessage)
 	publishEvent(ctx, slug, pushMessageData)
+	// The reaction counts are part of every /messages response, whose ETag is
+	// derived from last_modified. Without this bump a reload after reacting
+	// revalidated to 304 and the browser showed its cached, pre-reaction
+	// counts until something else touched the channel.
+	touchLastModified(ctx, slug)
 
 	return nil
 }
@@ -469,9 +477,16 @@ func dbGetMessageFields(ctx context.Context, slug string, id string) (map[string
 	return fields, nil
 }
 
-func funcDeleteMessage(ctx context.Context, slug string, id string) error {
+func funcDeleteMessage(ctx context.Context, slug string, id string, deletedBy string) error {
 	msgKey := fmt.Sprintf("channel:%s:messages:%s", slug, id)
-	rdb.HSet(ctx, msgKey, "deleted", true)
+	// The write's error used to be discarded: on a Redis failure the delete
+	// event was still broadcast and the handler answered success, and the
+	// message came back on the next reload. deletedBy records who took the
+	// post down, so a writer cannot undo a moderator's takedown (see
+	// updateMessage).
+	if err := rdb.HSet(ctx, msgKey, "deleted", true, "deletedBy", deletedBy).Err(); err != nil {
+		return err
+	}
 
 	var m Message
 	idInt, _ := strconv.Atoi(id)
@@ -1173,7 +1188,9 @@ func dbListChannels(ctx context.Context) ([]*ChannelData, error) {
 		return nil, err
 	}
 
-	var channels []*ChannelData
+	// Never nil: an empty platform must list as [] and not as JSON null, which
+	// the super-admin screen does not treat as a list.
+	channels := make([]*ChannelData, 0, len(slugs))
 	for _, slug := range slugs {
 		ch, err := dbGetChannel(ctx, slug)
 		if err != nil {
@@ -1188,6 +1205,24 @@ func dbListChannels(ctx context.Context) ([]*ChannelData, error) {
 
 func dbDeleteChannel(ctx context.Context, slug string) error {
 	p := slug
+
+	// Step 0: revoke every per-channel role for this slug FIRST. This used to
+	// be the last step, after the keys were gone: if it failed (or the 60s
+	// budget ran out on a channel with many uploads), the channel was already
+	// deleted but the grants survived, and recreating the same slug handed the
+	// old grantees their access back. Revoking first means a failure further
+	// down leaves a channel that still exists and can simply be deleted again.
+	if err := dbUpdateUsersList(ctx, func(users []User) []User {
+		for i := range users {
+			delete(users[i].ChannelRoles, slug) // delete on a nil map is a no-op
+		}
+		return users
+	}); err != nil {
+		return fmt.Errorf("clear roles for %s: %w", slug, err)
+	}
+	if err := initializePrivilegeUsers(); err != nil {
+		log.Printf("initializePrivilegeUsers after dbDeleteChannel: %v\n", err)
+	}
 
 	// Step 1: collect all message keys and reaction keys from the sorted set (avoids SCAN)
 	messageKeys, _ := rdb.ZRange(ctx, fmt.Sprintf("channel:%s:m_times", p), 0, -1).Result()
@@ -1279,22 +1314,6 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 		return err
 	}
 
-	// Step 3: revoke every per-channel role for this slug, otherwise recreating
-	// the same slug would immediately hand the old grantees their access back.
-	// A failure here must surface to the caller — returning success while stale
-	// roles survive is the exact regression this step exists to prevent.
-	if err := dbUpdateUsersList(ctx, func(users []User) []User {
-		for i := range users {
-			delete(users[i].ChannelRoles, slug) // delete on a nil map is a no-op
-		}
-		return users
-	}); err != nil {
-		return fmt.Errorf("clear roles for %s: %w", slug, err)
-	}
-	if err := initializePrivilegeUsers(); err != nil {
-		log.Printf("initializePrivilegeUsers after dbDeleteChannel: %v\n", err)
-	}
-
 	return nil
 }
 
@@ -1313,9 +1332,10 @@ func dbSetChannelFeatures(ctx context.Context, slug string, features *ChannelFea
 }
 
 func dbAssignChannelRole(ctx context.Context, email, slug string, role ChannelRole) error {
+	email = normEmail(email)
 	return dbUpdateUsersList(ctx, func(users []User) []User {
 		for i, u := range users {
-			if u.Email == email {
+			if normEmail(u.Email) == email {
 				if users[i].ChannelRoles == nil {
 					users[i].ChannelRoles = make(map[string]ChannelRole)
 				}

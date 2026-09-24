@@ -128,12 +128,17 @@ func (s *Settings) ToConfig() *SettingConfig {
 			config.ApiSecretKey = setting.GetString()
 
 		case "regex-replace":
-			// The rule is encoded as "<pattern>#<replacement>" and the UI splits
-			// it on the FIRST '#', so splitting on every '#' here would silently
-			// drop any rule that legitimately contains one (e.g. a hashtag).
 			if r := setting.GetString(); r != "" {
-				if i := strings.Index(r, "#"); i >= 0 {
-					pat, rep := r[:i], r[i+1:]
+				pat, rep, ok := splitRegexRule(r)
+				switch {
+				case !ok:
+					log.Printf("regex-replace: rule %q has no '#' separator, ignored\n", r)
+				case pat == "":
+					// An empty pattern matches at every position, so the
+					// replacement would be inserted between every two
+					// characters of every message from then on.
+					log.Printf("regex-replace: rule %q has an empty pattern, ignored\n", r)
+				default:
 					if re, err := regexp.Compile(pat); err == nil {
 						config.RegexReplace = append(config.RegexReplace, &ReplaceRegex{
 							Pattern: re,
@@ -354,4 +359,25 @@ func setGlobalSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(res)
+}
+
+// splitRegexRule splits a stored "<pattern>#<replacement>" rule at the first
+// '#' that is not escaped as "\#".
+//
+// The separator is also an ordinary regex character, and a hashtag rule is
+// the obvious thing to write: "#(\S+)#**#$1**" split at its first '#' gave an
+// EMPTY pattern, which garbled every message posted afterwards (see ToConfig).
+// The settings form writes '\#' for a '#' inside the pattern, and RE2 reads
+// "\#" as a literal '#', so the escaped pattern compiles unchanged. The
+// replacement half may contain '#' freely.
+func splitRegexRule(rule string) (pattern, replacement string, ok bool) {
+	for i := 0; i < len(rule); i++ {
+		switch rule[i] {
+		case '\\':
+			i++ // whatever follows a backslash is escaped, including '#'
+		case '#':
+			return rule[:i], rule[i+1:], true
+		}
+	}
+	return "", "", false
 }

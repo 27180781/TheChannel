@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi"
 	"github.com/redis/go-redis/v9"
@@ -299,10 +300,17 @@ func clientKey(r *http.Request) string {
 // that is read back in full on each view, so length is enforced on write.
 func trimTo(s string, max int) string {
 	s = strings.TrimSpace(s)
-	if len(s) > max {
-		s = s[:max]
+	if len(s) <= max {
+		return s
 	}
-	return s
+	// Cut on a character boundary. A byte slice through a multi-byte rune —
+	// every Hebrew letter is two bytes — leaves invalid UTF-8 that the JSON
+	// encoder later shows the operator as U+FFFD.
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return strings.TrimSpace(s[:cut])
 }
 
 // looksLikeEmail is a shape check, not validation: the address is only ever

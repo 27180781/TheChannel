@@ -141,7 +141,7 @@ func sseUnsubscribe(hub *sseHub, sub *sseSubscriber) {
 // run is the single reader for one stream. It starts at the tip: viewers that
 // need earlier events replay them themselves before joining.
 func (h *sseHub) run(ctx context.Context) {
-	lastID := "$"
+	lastID := h.streamTip()
 	failures := 0
 
 	for {
@@ -185,6 +185,29 @@ func (h *sseHub) run(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// streamTip resolves the stream's current last id, so the reader has a fixed
+// starting point.
+//
+// Reading from "$" instead would mean "entries added after THIS call was
+// received", re-evaluated on every call: each time the block elapsed with
+// nothing new, the next XREAD started from a fresh now, and an entry appended
+// in the gap between the two calls — a round trip every five seconds — was
+// never delivered to anyone on this instance. Falls back to "$" only when the
+// tip cannot be read, which is the old behaviour rather than a replay of old
+// events to every viewer.
+func (h *sseHub) streamTip() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	msgs, err := rdbEvents.XRevRangeN(ctx, h.streamKey, "+", "-", 1).Result()
+	if err != nil {
+		return "$"
+	}
+	if len(msgs) == 0 {
+		return "0-0"
+	}
+	return msgs[0].ID
 }
 
 // broadcast delivers to every subscriber without ever blocking on one of them.

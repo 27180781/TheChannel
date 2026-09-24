@@ -69,6 +69,22 @@ func getChannelInfo(w http.ResponseWriter, r *http.Request) {
 // produces, e.g. /api/channel/<slug>/files/<id>), or an http(s) URL. Anything
 // carrying another scheme is rejected, since the value is reflected into an
 // <img src> for every visitor.
+// isSafeContactURL accepts an empty value (button hidden), an http(s) URL or a
+// mailto: address — the only schemes the header button opens. A bare
+// "example.com" is refused rather than stored: with no scheme the browser would
+// open it as a path under this site and the button would lead nowhere.
+func isSafeContactURL(u string) bool {
+	if u == "" {
+		return true
+	}
+	lower := strings.ToLower(u)
+	if strings.HasPrefix(lower, "mailto:") {
+		return len(u) > len("mailto:") && !strings.ContainsAny(u, " \t\r\n")
+	}
+	return (strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")) &&
+		!strings.ContainsAny(u, " \t\r\n\"'<>")
+}
+
 func isSafeLogoURL(u string) bool {
 	u = strings.TrimSpace(u)
 	if u == "" {
@@ -116,8 +132,20 @@ func editChannelInfo(w http.ResponseWriter, r *http.Request) {
 
 	// A channel must keep a name: refuse to blank it. Description, logo and
 	// contact can be cleared, and an omitted field is simply left as-is.
-	if req.Name != nil && strings.TrimSpace(*req.Name) == "" {
-		http.Error(w, "channel name cannot be empty", http.StatusBadRequest)
+	if req.Name != nil {
+		trimmed := strings.TrimSpace(*req.Name)
+		req.Name = &trimmed
+		if trimmed == "" {
+			http.Error(w, "channel name cannot be empty", http.StatusBadRequest)
+			return
+		}
+		if channelFieldTooLong(trimmed, maxChannelNameLen) {
+			http.Error(w, "channel name is too long", http.StatusBadRequest)
+			return
+		}
+	}
+	if req.Description != nil && channelFieldTooLong(*req.Description, maxChannelDescLen) {
+		http.Error(w, "description is too long", http.StatusBadRequest)
 		return
 	}
 	// The logo is reflected to every visitor as an <img src>. A relative path
@@ -126,6 +154,14 @@ func editChannelInfo(w http.ResponseWriter, r *http.Request) {
 	if req.LogoUrl != nil && !isSafeLogoURL(*req.LogoUrl) {
 		http.Error(w, "invalid logo URL", http.StatusBadRequest)
 		return
+	}
+	if req.ContactUs != nil {
+		trimmed := strings.TrimSpace(*req.ContactUs)
+		req.ContactUs = &trimmed
+		if !isSafeContactURL(trimmed) {
+			http.Error(w, "invalid contact URL", http.StatusBadRequest)
+			return
+		}
 	}
 
 	hashKey := "channel:" + slug

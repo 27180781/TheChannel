@@ -7,10 +7,12 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"firebase.google.com/go/v4/messaging"
 	"github.com/appleboy/go-fcm"
@@ -165,6 +167,44 @@ func subscribeNotifications(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+const (
+	maxPushTitleRunes = 100
+	maxPushBodyRunes  = 300
+)
+
+var (
+	// The composer's file markers, "[image-embedded#WxH](url)" and the
+	// "[quote-embedded#]" prefix: neither means anything in a notification.
+	pushEmbedMarker = regexp.MustCompile(`!?\[[a-z]+-embedded#[^\]]*\](\([^)]*\))?`)
+	// A markdown link or image: keep the label, drop the URL.
+	pushMarkdownLink = regexp.MustCompile(`!?\[([^\]]*)\]\([^)]*\)`)
+	pushWhitespace   = regexp.MustCompile(`\s+`)
+	pushEmphasis     = strings.NewReplacer("**", "", "__", "", "~~", "", "`", "")
+)
+
+// pushPreview reduces a post's markdown to the short plain text a notification
+// can carry. Two reasons this is not just m.Text:
+//   - the tray shows raw markup otherwise ("**", link URLs, embed markers);
+//   - a data payload over 4 KiB is refused by FCM with INVALID_ARGUMENT for
+//     every token in the batch — the same code a dead token gets — so one
+//     long post not only failed to deliver but got every subscriber pruned.
+func pushPreview(text string) string {
+	t := pushEmbedMarker.ReplaceAllString(text, "")
+	t = pushMarkdownLink.ReplaceAllString(t, "$1")
+	t = pushEmphasis.Replace(t)
+	t = strings.TrimSpace(pushWhitespace.ReplaceAllString(t, " "))
+	return truncateRunes(t, maxPushBodyRunes)
+}
+
+// truncateRunes cuts on a character boundary, never inside a multi-byte rune.
+func truncateRunes(s string, max int) string {
+	if utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	r := []rune(s)
+	return strings.TrimSpace(string(r[:max])) + "…"
+}
+
 // The FCM client owns an OAuth token source, so rebuilding one per push throws
 // away every cached token and mints fresh credentials for every message. Cache
 // it, keyed on the credential bytes so a settings change still takes effect.
@@ -256,8 +296,8 @@ func pushFcmMessage(slug string, m *Message) {
 		// project_domain is global, so it must be joined with the channel slug
 		// or every channel's notification opens the same page.
 		"url":   strings.TrimRight(cfg.ProjectDomain, "/") + "/channel/" + slug,
-		"title": title,
-		"body":  m.Text,
+		"title": truncateRunes(title, maxPushTitleRunes),
+		"body":  pushPreview(m.Text),
 	}
 
 	// The send loop gets its own budget: ctx above also covers the config and
@@ -285,14 +325,27 @@ func pushFcmMessage(slug string, m *Message) {
 		// unregistered/invalid tokens are removed — a transient failure
 		// (rate-limited, server error) is left in place to retry.
 		if r.FailureCount > 0 {
-			var dead []string
+			var dead, invalid []string
 			for i, resp := range r.Responses {
 				if resp.Success || i >= len(chunk) {
 					continue
 				}
-				if messaging.IsUnregistered(resp.Error) || messaging.IsInvalidArgument(resp.Error) {
+				switch {
+				case messaging.IsUnregistered(resp.Error):
 					dead = append(dead, chunk[i])
+				case messaging.IsInvalidArgument(resp.Error):
+					invalid = append(invalid, chunk[i])
 				}
+			}
+			// INVALID_ARGUMENT is also what FCM answers for a malformed
+			// *message* (oversized payload, bad field) — and then every token
+			// in the chunk fails with it at once. That is a bad send, not a
+			// batch of dead tokens: pruning them would silently unsubscribe
+			// the whole channel because of one long post.
+			if len(invalid) == len(chunk) && len(chunk) > 1 {
+				log.Printf("push to %s: every token rejected as INVALID_ARGUMENT, keeping subscriptions (payload problem?)\n", slug)
+			} else {
+				dead = append(dead, invalid...)
 			}
 			removeSubscriptions(slug, dead)
 		}
