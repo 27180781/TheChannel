@@ -15,8 +15,10 @@
           <br>
             <strong>דווח על ידי:</strong> {{report.reporterName}}
             <br>
-              <strong>דוא"ל:</strong> {{report.reportedEmail}}
-              <br>
+              @if (report.reportedEmail) {
+                <strong>דוא"ל:</strong> {{report.reportedEmail}}
+                <br>
+              }
                 <strong>סיבת דיווח:</strong><br> {{report.reason}}
                 <br>
                   @if (report.closed) {

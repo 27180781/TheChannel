@@ -392,7 +392,18 @@ func setChannelUsersForSlug(w http.ResponseWriter, r *http.Request, slug string,
 
 // listChannelUsers writes the channel's user/role list. Shared by the
 // super-admin and owner get-users handlers.
-func listChannelUsers(w http.ResponseWriter, slug string) {
+//
+// hideOperators drops an operator's owner row. An operator holds owner on every
+// channel they created themselves, and a co-owner reading that list must not
+// learn the operator's email. Only owner rows are hidden: an owner can never
+// grant owner, so such a row was never their own doing, whereas a writer or
+// moderator row on an operator's email is one an owner typed in and must stay
+// visible — hiding it too would make the row vanish after saving, which both
+// looks like a failed save and confirms that the address is the operator's.
+// Hiding changes nothing about access: a super admin reaches every channel
+// through hasChannelRole anyway, and an owner's save only touches the rows it
+// sends.
+func listChannelUsers(w http.ResponseWriter, slug string, hideOperators bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -411,6 +422,9 @@ func listChannelUsers(w http.ResponseWriter, slug string) {
 	// user management screens do not accept.
 	channelUsers := make([]ChannelUser, 0)
 	for _, u := range users {
+		if hideOperators && u.GlobalRole == RoleSuperAdmin && u.ChannelRoles[slug] == RoleOwner {
+			continue
+		}
 		if u.ChannelRoles != nil {
 			if role, exists := u.ChannelRoles[slug]; exists {
 				channelUsers = append(channelUsers, ChannelUser{Email: u.Email, Role: role})
@@ -429,12 +443,12 @@ func superAdminSetChannelUsers(w http.ResponseWriter, r *http.Request) {
 
 // Super admin: get channel users
 func superAdminGetChannelUsers(w http.ResponseWriter, r *http.Request) {
-	listChannelUsers(w, chi.URLParam(r, "slug"))
+	listChannelUsers(w, chi.URLParam(r, "slug"), false)
 }
 
 // Channel owner: get channel users (for this channel only)
 func getChannelUsers(w http.ResponseWriter, r *http.Request) {
-	listChannelUsers(w, channelSlugFromCtx(r))
+	listChannelUsers(w, channelSlugFromCtx(r), !isSuperAdmin(r))
 }
 
 // Channel owner: set channel users (cannot assign owner role)

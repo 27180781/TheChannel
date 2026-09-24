@@ -3,9 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/go-chi/chi"
 )
 
 func supportCtx(t *testing.T) context.Context {
@@ -74,6 +78,67 @@ func TestSupportPublicViewStripsAccessToken(t *testing.T) {
 	// omitempty: the field should be absent entirely, not present and empty.
 	if strings.Contains(string(data), "accessToken") {
 		t.Errorf("accessToken key should be omitted, got %s", data)
+	}
+}
+
+// An operator reply is served to the requester, so it must be signed by the
+// management and carry nothing of the operator's own identity. The handler must
+// not even look at the session for a name: whatever it would find there (display
+// name, Google username, email) is exactly what must stay hidden.
+func TestSupportAdminReplyIsSignedByManagement(t *testing.T) {
+	ctx := supportCtx(t)
+	newTestTicket(t, ctx, "sup-anon-op", "requester@example.com")
+
+	r := httptest.NewRequest(http.MethodPost, "/api/super-admin/support/tickets/sup-anon-op/reply",
+		strings.NewReader(`{"body":"תשובה מהמערכת"}`))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "sup-anon-op")
+	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+	w := httptest.NewRecorder()
+	adminReplySupportTicket(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("reply: status %d, body %q", w.Code, w.Body.String())
+	}
+
+	stored, err := dbGetSupportTicket(ctx, "sup-anon-op")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	last := stored.Messages[len(stored.Messages)-1]
+	if last.Author != "admin" || last.AuthorName != operatorName {
+		t.Errorf("stored operator reply = %+v, want author admin signed %q", last, operatorName)
+	}
+}
+
+// Replies written before operator replies were signed by the management still
+// hold the operator's name or email, and are served for the ticket's lifetime.
+// publicView is what every handler sends, so it must re-sign them — without
+// touching the requester's own name or the stored ticket.
+func TestSupportPublicViewHidesOperatorIdentity(t *testing.T) {
+	ctx := supportCtx(t)
+	ticket := newTestTicket(t, ctx, "sup-legacy-op", "requester@example.com")
+	const operator = "Real Operator op.private@gmail.com"
+	appendSupportMessage(ticket, "admin", operator, "תשובה", SupportStatusAnswered)
+
+	view := publicView(ticket)
+	if got := view.Messages[1].AuthorName; got != operatorName {
+		t.Errorf("operator reply shown as %q, want %q", got, operatorName)
+	}
+	if got := view.Messages[0].AuthorName; got != "בודק" {
+		t.Errorf("the requester's own name must be kept, got %q", got)
+	}
+	if ticket.Messages[1].AuthorName != operator {
+		t.Error("publicView must not rewrite the stored ticket")
+	}
+
+	data, err := json.Marshal(view)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, leak := range []string{"Real Operator", "op.private"} {
+		if strings.Contains(string(data), leak) {
+			t.Errorf("serialised ticket leaks the operator's identity (%q): %s", leak, data)
+		}
 	}
 }
 
