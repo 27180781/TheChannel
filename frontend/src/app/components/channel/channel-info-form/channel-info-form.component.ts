@@ -1,3 +1,4 @@
+import { uploadErrorMessage } from '../../../services/upload-error';
 import { Component, OnInit } from '@angular/core';
 import { NbCardModule, NbDialogRef, NbButtonModule, NbSpinnerModule, NbInputModule, NbToastrService, NbPopoverModule } from '@nebular/theme';
 import { FormsModule } from '@angular/forms';
@@ -109,11 +110,7 @@ export class ChannelInfoFormComponent implements OnInit {
           }
         },
         error: (error) => {
-          if (error.status === 413) {
-            this.toastrService.danger("", "קובץ גדול מדי");
-          } else {
-            this.toastrService.danger("", "שגיאה בהעלאת קובץ");
-          }
+          this.toastrService.danger("", uploadErrorMessage(error.status));
           attachment.uploading = false;
         },
       });

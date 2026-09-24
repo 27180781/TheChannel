@@ -1,3 +1,4 @@
+import { uploadErrorMessage } from '../../../../services/upload-error';
 import { Component, ElementRef, EventEmitter, OnDestroy, OnInit, Output, ViewChild } from '@angular/core';
 
 import { HttpEventType } from "@angular/common/http";
@@ -116,19 +117,26 @@ export class InputFormComponent implements OnInit, OnDestroy {
   onFileSelected(event: Event) {
     const input = event.target as HTMLInputElement;
     if (input.files) {
-      let newAttachment: Attachment = { file: input.files[0] };
-      let i = this.attachments.push(newAttachment) - 1;
+      // The picker allows several files; every one of them is attached.
+      // Only the first used to be, and the rest vanished without a word.
+      for (const file of Array.from(input.files)) {
+        const newAttachment: Attachment = { file };
+        const i = this.attachments.push(newAttachment) - 1;
 
-      let reader = new FileReader();
-      reader.readAsDataURL(newAttachment.file);
-      reader.onload = (event) => {
-        if (event.target) {
-          this.attachments[i].url = event.target.result as string;
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = (event) => {
+          if (event.target) {
+            this.attachments[i].url = event.target.result as string;
+          }
         }
-      }
 
-      this.uploadFile(this.attachments[i]);
+        this.uploadFile(this.attachments[i]);
+      }
     }
+    // Cleared so picking the same file again (after removing it) fires a
+    // change event; a browser only fires it when the selection differs.
+    input.value = '';
   }
 
   async uploadFile(attachment: Attachment) {
@@ -173,11 +181,7 @@ export class InputFormComponent implements OnInit, OnDestroy {
           }
         },
         error: (error) => {
-          if (error.status === 413) {
-            this.toastrService.danger("", "קובץ גדול מדי");
-          } else {
-            this.toastrService.danger("", "שגיאה בהעלאת קובץ");
-          }
+          this.toastrService.danger("", uploadErrorMessage(error.status));
           attachment.uploading = false;
           this.removeAttachment(attachment);
         }

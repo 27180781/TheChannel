@@ -301,7 +301,7 @@ func serveFile(w http.ResponseWriter, r *http.Request) {
 		}
 		// Private bucket: generate a pre-signed URL (1-hour TTL).
 		// The client fetches directly from R2 — backend is not in the data path.
-		presignedURL, err := r2PresignURL(ctx, key, time.Hour)
+		presignedURL, err := r2PresignURL(ctx, key, time.Hour, contentDispositionAttachment(meta.Filename))
 		if err == nil {
 			http.Redirect(w, r, presignedURL, http.StatusFound)
 			return
@@ -351,6 +351,27 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxMB<<20)
 
+	// Before the body is read: a channel that is already full (and cannot
+	// free space) used to ingest the whole file into memory, and spend one of
+	// the owner's TinyPNG compressions, only to answer 507 afterwards.
+	if storageAlreadyFull(ctx, slug) {
+		http.Error(w, "storage quota exceeded", http.StatusInsufficientStorage)
+		return
+	}
+
+	// Each upload is buffered whole (up to the channel's limit, at most 512 MB)
+	// and the per-user limiter allows a burst of ten, so ten concurrent uploads
+	// from one writer could take the whole backend past its memory. A small
+	// process-wide cap turns that into a 503 the client retries.
+	select {
+	case uploadSlots <- struct{}{}:
+		defer func() { <-uploadSlots }()
+	default:
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, "too many uploads in progress — please retry", http.StatusServiceUnavailable)
+		return
+	}
+
 	file, handler, err := r.FormFile("file")
 	if err != nil {
 		// The errors.As target must be a local: a package-level one is written
@@ -374,7 +395,10 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	t, _ := filetype.Match(fileBytes[:min(512, len(fileBytes))])
+	// Not just the first 512 bytes: Office documents are ZIP containers whose
+	// identifying entry sits past that, so a .docx/.xlsx was typed as a plain
+	// archive and served as application/zip.
+	t, _ := filetype.Match(fileBytes[:min(64<<10, len(fileBytes))])
 
 	// Compress images with TinyPNG if the channel has an API key configured
 	if cfg.TinyPngApiKey != "" {
@@ -485,8 +509,20 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 		}
 		destPath := filepath.Join(hashSubDir, fileHash)
 		if _, statErr := os.Stat(destPath); os.IsNotExist(statErr) {
-			if err := os.WriteFile(destPath, fileBytes, 0644); err != nil {
-				log.Printf("uploadFile: %s: writing %s for file %s (%d bytes) failed: %v\n", slug, destPath, id, fileSize, err)
+			// Written beside its final name and renamed into place: the path is
+			// content-addressed, and every later upload of the same bytes
+			// trusts whatever sits there. A process killed mid-write used to
+			// leave a truncated blob at the exact hash path, deduplicated
+			// against — and served — from then on.
+			tmpPath := destPath + ".tmp-" + id
+			if err := os.WriteFile(tmpPath, fileBytes, 0644); err != nil {
+				log.Printf("uploadFile: %s: writing %s for file %s (%d bytes) failed: %v\n", slug, tmpPath, id, fileSize, err)
+				http.Error(w, "error", http.StatusInternalServerError)
+				return
+			}
+			if err := os.Rename(tmpPath, destPath); err != nil {
+				os.Remove(tmpPath)
+				log.Printf("uploadFile: %s: moving %s into place for file %s failed: %v\n", slug, tmpPath, id, err)
 				http.Error(w, "error", http.StatusInternalServerError)
 				return
 			}
@@ -625,9 +661,22 @@ func reserveStorageQuota(ctx context.Context, slug string, newFileSize int64) er
 		return fmt.Errorf("storage quota exceeded")
 	}
 
+	// The channel's logo goes through the same upload path and is usually the
+	// oldest file a channel has, so it was the first thing evicted: the header
+	// showed a broken image and nothing told the owner. It stays.
+	logoID := ""
+	if details, derr := getChannelDetails(ctx, slug); derr == nil {
+		if u := details["logoUrl"]; u != "" {
+			logoID = path.Base(u)
+		}
+	}
+
 	for _, f := range files {
 		if needToFree <= 0 {
 			break
+		}
+		if f.ID == logoID {
+			continue
 		}
 		// Count what the delete actually released. Subtracting f.Size
 		// unconditionally meant a no-op still counted as freed space: two
@@ -798,4 +847,24 @@ func getFavicon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.ServeFile(w, r, filePath)
+}
+
+// uploadSlots bounds how many uploads are buffered at once (see uploadFile).
+var uploadSlots = make(chan struct{}, 4)
+
+// storageAlreadyFull reports whether the channel is at or over its quota with
+// no way to make room, so an upload can be refused before its body is read.
+// Errors read as "not full": the authoritative check is reserveStorageQuota,
+// which fails closed later.
+func storageAlreadyFull(ctx context.Context, slug string) bool {
+	quota, err := dbGetEffectiveStorageQuota(ctx, slug)
+	if err != nil || quota == 0 {
+		return false
+	}
+	used, err := dbGetChannelStorageUsed(ctx, slug)
+	if err != nil || used < quota {
+		return false
+	}
+	autoCleanup, err := dbGetChannelAutoCleanup(ctx, slug)
+	return err == nil && !autoCleanup
 }

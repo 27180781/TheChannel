@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -23,7 +24,16 @@ func initR2() {
 	accessKey := os.Getenv("R2_ACCESS_KEY_ID")
 	secretKey := os.Getenv("R2_SECRET_ACCESS_KEY")
 	r2Bucket = os.Getenv("R2_BUCKET_NAME")
-	r2PublicURL = os.Getenv("R2_PUBLIC_URL") // optional: https://pub-xxx.r2.dev
+	// Optional: https://pub-xxx.r2.dev. Trailing slashes are dropped because
+	// the key is appended with its own slash, and a doubled one addresses a
+	// different (leading-slash) object on S3-style stores. The sample.env
+	// placeholder is refused outright: copied as-is it redirected every file
+	// to a host that does not exist, with nothing in the logs.
+	r2PublicURL = strings.TrimRight(strings.TrimSpace(os.Getenv("R2_PUBLIC_URL")), "/")
+	if strings.Contains(r2PublicURL, "pub-xxxx") {
+		log.Printf("R2_PUBLIC_URL %q looks like the sample placeholder; ignoring it and using pre-signed URLs\n", r2PublicURL)
+		r2PublicURL = ""
+	}
 
 	if accountID == "" || accessKey == "" || secretKey == "" || r2Bucket == "" {
 		log.Println("R2 not configured, using local file storage")
@@ -90,12 +100,21 @@ func r2Download(ctx context.Context, key string) (io.ReadCloser, *string, error)
 
 // r2PresignURL generates a short-lived pre-signed URL for a private R2 object.
 // The client fetches the file directly from R2, bypassing the backend entirely.
-func r2PresignURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
+// r2PresignURL signs a GET for key. disposition, when set, is baked into the
+// signed URL as the Content-Disposition R2 will answer with: the header the
+// backend sets on its own 302 is discarded by the browser along with the
+// redirect, so without this a private-bucket download was saved under the
+// object's hash with no extension.
+func r2PresignURL(ctx context.Context, key string, ttl time.Duration, disposition string) (string, error) {
 	presignClient := s3.NewPresignClient(r2Client)
-	req, err := presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
+	in := &s3.GetObjectInput{
 		Bucket: aws.String(r2Bucket),
 		Key:    aws.String(key),
-	}, s3.WithPresignExpires(ttl))
+	}
+	if disposition != "" {
+		in.ResponseContentDisposition = aws.String(disposition)
+	}
+	req, err := presignClient.PresignGetObject(ctx, in, s3.WithPresignExpires(ttl))
 	if err != nil {
 		return "", err
 	}
