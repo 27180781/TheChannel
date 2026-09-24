@@ -271,7 +271,13 @@ export class SupportBoxComponent implements OnInit {
     switch (err?.status) {
       case 429: return 'נשלחו יותר מדי פניות בזמן קצר. נסה שוב בעוד מספר דקות.';
       case 400: return text || 'הפרטים שהוזנו אינם תקינים.';
-      case 409: return 'הפנייה נסגרה ולא ניתן להוסיף לה הודעות.';
+      case 409:
+        // Both a closed ticket and a full thread answer 409; the body tells
+        // them apart. A full thread used to read as "closed", which the
+        // requester took for the operator closing it.
+        return text.includes('message limit')
+          ? 'הפנייה הגיעה למספר ההודעות המרבי. לשאלה נוספת, פתח פנייה חדשה.'
+          : 'הפנייה נסגרה ולא ניתן להוסיף לה הודעות.';
       case 404: return 'הפנייה לא נמצאה.';
       default: return 'שגיאה בשליחה. נסה שוב.';
     }

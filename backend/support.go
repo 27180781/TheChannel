@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math/rand"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -284,33 +285,43 @@ func supportSubmitLimiter(key string) *rate.Limiter {
 
 // clientKey identifies the sender for rate limiting: session email when there
 // is one, otherwise the remote address. middleware.RealIP has already resolved
-// RemoteAddr from X-Forwarded-For.
+// RemoteAddr from X-Real-IP / X-Forwarded-For.
 func clientKey(r *http.Request) string {
 	if s, ok := sessionEmail(r); ok {
-		return "email:" + strings.ToLower(s.Email)
+		return "email:" + normEmail(s.Email)
 	}
-	host := r.RemoteAddr
-	if i := strings.LastIndex(host, ":"); i > 0 {
-		host = host[:i]
-	}
-	return "ip:" + host
+	return "ip:" + remoteHost(r.RemoteAddr)
 }
 
-// trimTo bounds a free-text field. Every one of these lands in a Redis value
-// that is read back in full on each view, so length is enforced on write.
+// remoteHost strips the port from a RemoteAddr. After RealIP the address has
+// no port at all, and a bare IPv6 address cut at its last colon lost its
+// final hextet, so every host in the same /112 shared one limiter.
+func remoteHost(addr string) string {
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	return strings.Trim(addr, "[]")
+}
+
+// trimTo bounds a free-text field to max characters. Every one of these lands
+// in a Redis value that is read back in full on each view, so length is
+// enforced on write. The limit counts characters, as the form's maxlength
+// does: counted in bytes, a 3,000-letter Hebrew message (two bytes a letter)
+// was silently cut in half, and a cut through a letter left invalid UTF-8
+// that the JSON encoder showed the operator as U+FFFD.
 func trimTo(s string, max int) string {
 	s = strings.TrimSpace(s)
-	if len(s) <= max {
+	if utf8.RuneCountInString(s) <= max {
 		return s
 	}
-	// Cut on a character boundary. A byte slice through a multi-byte rune —
-	// every Hebrew letter is two bytes — leaves invalid UTF-8 that the JSON
-	// encoder later shows the operator as U+FFFD.
-	cut := max
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
+	n := 0
+	for i := range s {
+		if n == max {
+			return strings.TrimSpace(s[:i])
+		}
+		n++
 	}
-	return strings.TrimSpace(s[:cut])
+	return s
 }
 
 // looksLikeEmail is a shape check, not validation: the address is only ever
@@ -405,6 +416,22 @@ func createSupportTicket(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"id": id, "accessToken": token})
 }
 
+// ticketTokenHeader carries the anonymous access token. It used to travel as
+// a ?token= query parameter, which the request logger writes to stdout on
+// every read and reply — so the only credential on an anonymous thread ended
+// up in the container logs for the thread's 180-day life.
+const ticketTokenHeader = "X-Ticket-Token"
+
+// ticketToken returns the caller's access token. The query form is still
+// read for clients loaded before the header existed; the SPA keeps running
+// for days in an open tab.
+func ticketToken(r *http.Request) string {
+	if t := r.Header.Get(ticketTokenHeader); t != "" {
+		return t
+	}
+	return r.URL.Query().Get("token")
+}
+
 // authoriseTicket resolves the ticket for a requester-side request and reports
 // whether this caller may see it. Two ways in: the session email matches, or
 // the access token does.
@@ -416,7 +443,7 @@ func authoriseTicket(ctx context.Context, r *http.Request, id string) (*SupportT
 	if s, ok := sessionEmail(r); ok && strings.EqualFold(s.Email, t.Email) {
 		return t, true
 	}
-	token := r.URL.Query().Get("token")
+	token := ticketToken(r)
 	// Constant time: this is the only credential guarding an anonymous thread.
 	if token != "" && subtle.ConstantTimeCompare([]byte(token), []byte(t.AccessToken)) == 1 {
 		return t, true
@@ -424,7 +451,7 @@ func authoriseTicket(ctx context.Context, r *http.Request, id string) (*SupportT
 	return nil, false
 }
 
-// GET /api/support/tickets/{id}?token=... — the requester's view of a thread.
+// GET /api/support/tickets/{id} (X-Ticket-Token) — the requester's view of a thread.
 func getSupportTicket(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
@@ -440,7 +467,7 @@ func getSupportTicket(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(publicView(t))
 }
 
-// POST /api/support/tickets/{id}/reply?token=... — the requester answers.
+// POST /api/support/tickets/{id}/reply (X-Ticket-Token) — the requester answers.
 func replySupportTicket(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()

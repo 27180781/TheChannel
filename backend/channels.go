@@ -325,7 +325,17 @@ func updateChannelFeatures(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	if err := dbSetChannelFeatures(ctx, slug, &features); err != nil {
+	// The two *LockedByAdmin mirrors are owned by the global ads/magnet lock
+	// lists and their sync, never by this form: it loads them and passes them
+	// back untouched, so a save made after the global lock changed used to
+	// replay the stale pair. They are kept from the stored record, and the
+	// write is atomic against the sync so neither side reverts the other.
+	err := dbUpdateChannelFeatures(ctx, slug, func(cur *ChannelFeatures) {
+		magnetLocked, adsLocked := cur.MagnetLockedByAdmin, cur.AdsLockedByAdmin
+		*cur = features
+		cur.MagnetLockedByAdmin, cur.AdsLockedByAdmin = magnetLocked, adsLocked
+	})
+	if err != nil {
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}

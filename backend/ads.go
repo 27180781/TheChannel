@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"slices"
+	"sync"
 	"time"
 )
 
@@ -100,25 +102,51 @@ func setGlobalAdsConfig(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(Response{Success: true})
 }
 
+// syncLockFlagsMu serialises the lock syncs. Two saves in quick succession
+// (lock, then unlock) used to run as two interleaving goroutines with
+// different snapshots, so the stale "locked" could land after the "unlocked"
+// and the channel stayed locked with nothing in the global list naming it.
+var syncLockFlagsMu sync.Mutex
+
 // syncLockFlags propagates a global lock config (LockAll + LockedChannels) into
 // the per-channel feature flag selected by get. Shared by the ads and magnet
 // syncs so a robustness fix applied to one can never leave the other drifting.
+//
+// Each channel's flag is updated atomically against the stored features
+// (dbUpdateChannelFeatures) rather than written back from the listing
+// snapshot, so a features save made while the sync runs — disabling the
+// channel, say — is not reverted by it. Failures are logged: a sync that died
+// half-way used to leave the remaining channels locked, silently, with the
+// admin shown a success.
 func syncLockFlags(lockAll bool, lockedChannels []string, get func(*ChannelFeatures) *bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	syncLockFlagsMu.Lock()
+	defer syncLockFlagsMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	channels, err := dbListChannels(ctx)
 	if err != nil {
+		log.Printf("syncLockFlags: listing channels failed, lock flags not synced: %v\n", err)
 		return
 	}
 
+	failed := 0
 	for _, ch := range channels {
 		shouldLock := lockAll || slices.Contains(lockedChannels, ch.Slug)
-		flag := get(&ch.Features)
-		if *flag != shouldLock {
-			*flag = shouldLock
-			dbSetChannelFeatures(ctx, ch.Slug, &ch.Features)
+		if *get(&ch.Features) == shouldLock {
+			continue
 		}
+		err := dbUpdateChannelFeatures(ctx, ch.Slug, func(f *ChannelFeatures) {
+			*get(f) = shouldLock
+		})
+		if err != nil {
+			failed++
+			log.Printf("syncLockFlags: %s: setting lock flag to %v failed: %v\n", ch.Slug, shouldLock, err)
+		}
+	}
+	if failed > 0 {
+		log.Printf("syncLockFlags: %d of %d channels not synced; saving the global config again retries\n", failed, len(channels))
 	}
 }
 

@@ -18,8 +18,9 @@
   width: 100%;
   min-height: 1px;
 
-  ::ng-deep .magnet-ad-content {
+  ::ng-deep .magnet-ad-frame {
     display: block;
     width: 100%;
+    border: 0;
   }
 }

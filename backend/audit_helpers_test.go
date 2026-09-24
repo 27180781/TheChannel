@@ -58,9 +58,13 @@ func TestContentDispositionAttachment(t *testing.T) {
 	}
 }
 
-func TestTrimToRuneBoundary(t *testing.T) {
-	// 5 Hebrew letters = 10 bytes; a cap of 7 bytes must not split a letter.
-	got := trimTo("אבגדה", 7)
+func TestTrimToCountsCharacters(t *testing.T) {
+	// 5 Hebrew letters = 10 bytes; the limit is in characters, like the
+	// form's maxlength, so all five fit under a cap of 5.
+	if got := trimTo("אבגדה", 5); got != "אבגדה" {
+		t.Errorf("got %q, want the whole string", got)
+	}
+	got := trimTo("אבגדה", 3)
 	if !utf8.ValidString(got) {
 		t.Fatalf("trimTo produced invalid UTF-8: %q", got)
 	}
@@ -72,6 +76,38 @@ func TestTrimToRuneBoundary(t *testing.T) {
 	}
 	if got := trimTo("abcdef", 3); got != "abc" {
 		t.Errorf("got %q", got)
+	}
+}
+
+func TestRemoteHost(t *testing.T) {
+	cases := map[string]string{
+		"1.2.3.4:5678":        "1.2.3.4",
+		"1.2.3.4":             "1.2.3.4",
+		"[2001:db8::1]:443":   "2001:db8::1",
+		"2001:db8::1":         "2001:db8::1",
+		"2001:db8::1:2:3:4:5": "2001:db8::1:2:3:4:5",
+		"[2001:db8::1]":       "2001:db8::1",
+	}
+	for in, want := range cases {
+		if got := remoteHost(in); got != want {
+			t.Errorf("remoteHost(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestIsHTTPURL(t *testing.T) {
+	ok := []string{"https://ads.example.com/banner.html", "http://a.b/c?d=1", "HTTPS://X.Y/"}
+	for _, u := range ok {
+		if !isHTTPURL(u) {
+			t.Errorf("isHTTPURL(%q) = false, want true", u)
+		}
+	}
+	bad := []string{"", "javascript:alert(1)", "javascript://x/%0aalert(1)", "data:text/html,hi",
+		"//evil.example/x", "https://", "ftp://a.b/c", "https://a.b/c d", "vbscript:x"}
+	for _, u := range bad {
+		if isHTTPURL(u) {
+			t.Errorf("isHTTPURL(%q) = true, want false", u)
+		}
 	}
 }
 

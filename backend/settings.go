@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -113,7 +114,14 @@ func (s *Settings) ToConfig() *SettingConfig {
 	for _, setting := range *s {
 		switch setting.Key {
 		case "ad-iframe-src":
-			config.AdSrc = setting.GetString()
+			// Only an http(s) URL may be framed. The value is bound to an
+			// <iframe src> by every viewer's browser, and a javascript: URL
+			// there runs in the app's own origin — with the viewer's session.
+			if v := strings.TrimSpace(setting.GetString()); isHTTPURL(v) {
+				config.AdSrc = v
+			} else if v != "" {
+				log.Printf("ad-iframe-src: %q is not an http(s) URL, ignored\n", v)
+			}
 
 		case "ad-iframe-width":
 			config.AdWidth = setting.GetInt()
@@ -253,6 +261,19 @@ func (s *Settings) ToConfig() *SettingConfig {
 	}
 
 	return config
+}
+
+// isHTTPURL reports whether u is an absolute http or https URL with a host.
+func isHTTPURL(u string) bool {
+	parsed, err := url.Parse(u)
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+		return !strings.ContainsAny(u, " \t\r\n\"'<>")
+	}
+	return false
 }
 
 func (s *Setting) GetBool() bool {

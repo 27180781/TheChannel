@@ -34,9 +34,31 @@ func sseConnectionsKey(slug string) string {
 	return fmt.Sprintf("channel:%s:sse_connections", slug)
 }
 
+// channelSSECountersMu orders counter creation against the refresher's
+// removal of idle counters. Without it the refresher could read a counter as
+// 0, a connect could then LoadOrStore that same counter, add 1 and publish
+// it, and the refresher would still withdraw the field and drop the counter:
+// a live connection counted nowhere, and its later disconnect taken off a
+// fresh counter that another connection had just created.
+var channelSSECountersMu sync.Mutex
+
 func getOrCreateChannelCounter(slug string) *atomic.Int64 {
+	channelSSECountersMu.Lock()
+	defer channelSSECountersMu.Unlock()
 	v, _ := channelSSEConnections.LoadOrStore(slug, &atomic.Int64{})
 	return v.(*atomic.Int64)
+}
+
+// forgetIdleChannelCounter drops the local counter for slug if it is still 0
+// once the refresher holds the creation lock; it reports whether it did.
+func forgetIdleChannelCounter(slug string, counter *atomic.Int64) bool {
+	channelSSECountersMu.Lock()
+	defer channelSSECountersMu.Unlock()
+	if counter.Load() > 0 {
+		return false
+	}
+	channelSSEConnections.Delete(slug)
+	return true
 }
 
 // publishLocalSSECount writes this instance's current count for slug.
@@ -82,15 +104,22 @@ func init() {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			channelSSEConnections.Range(func(key, value any) bool {
 				slug := key.(string)
-				count := value.(*atomic.Int64).Load()
-				if count <= 0 {
-					// Nothing connected here: withdraw our field and forget the
-					// slug. A racing increment re-publishes immediately after.
-					rdb.HDel(ctx, sseConnectionsKey(slug), sseInstanceID)
-					channelSSEConnections.Delete(slug)
+				counter := value.(*atomic.Int64)
+				if counter.Load() > 0 {
+					publishLocalSSECount(ctx, slug, counter.Load())
 					return true
 				}
-				publishLocalSSECount(ctx, slug, count)
+				// Nothing connected here: withdraw our field, then forget the
+				// slug — in that order, and only if the counter is still idle
+				// under the creation lock. A connect that lands between the
+				// two publishes its own count after the withdrawal and keeps
+				// the counter, so it is never lost.
+				rdb.HDel(ctx, sseConnectionsKey(slug), sseInstanceID)
+				if !forgetIdleChannelCounter(slug, counter) {
+					// A connect got in before the withdrawal and its publish
+					// may just have been wiped: publish the live count again.
+					publishLocalSSECount(ctx, slug, counter.Load())
+				}
 				return true
 			})
 			cancel()

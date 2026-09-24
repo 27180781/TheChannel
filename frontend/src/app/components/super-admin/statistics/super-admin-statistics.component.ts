@@ -42,7 +42,10 @@ export class SuperAdminStatisticsComponent implements OnInit {
   }
 
   resetStatistics() {
-    if (!confirm('האם אתה בטוח שברצונך לאפס את שיא החיבורים?')) return;
+    // The reset clears the recorded peak AND every channel's monthly
+    // connection-history series (the graphs on the owners' statistics
+    // screens). The prompt used to name only the peak.
+    if (!confirm('האם אתה בטוח שברצונך לאפס את הסטטיסטיקות? פעולה זו מוחקת את שיא החיבורים ואת היסטוריית החיבורים של כל הערוצים (הגרפים במסכי הסטטיסטיקה), ולא ניתן לשחזר אותה.')) return;
     this.resetting = true;
     this.superAdminService.resetStatistics()
       .then(() => this.toastr.success('', 'שיא החיבורים אופס בהצלחה'))
@@ -50,8 +53,24 @@ export class SuperAdminStatisticsComponent implements OnInit {
       .finally(() => this.resetting = false);
   }
 
+  /**
+   * The upstream response is nested (site, clicks, earnings objects). Only
+   * the top level used to be listed, so those rows read "[object Object]";
+   * nested values are flattened to dotted keys.
+   */
   getStatEntries(): { key: string; value: any }[] {
     if (!this.magnetStats || typeof this.magnetStats !== 'object') return [];
-    return Object.entries(this.magnetStats).map(([key, value]) => ({ key, value }));
+    const rows: { key: string; value: any }[] = [];
+    const walk = (value: any, prefix: string) => {
+      if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+        for (const [k, v] of Object.entries(value)) {
+          walk(v, prefix ? `${prefix}.${k}` : k);
+        }
+        return;
+      }
+      rows.push({ key: prefix, value: Array.isArray(value) ? JSON.stringify(value) : value });
+    };
+    walk(this.magnetStats, '');
+    return rows;
   }
 }

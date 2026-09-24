@@ -7,10 +7,10 @@
     <nb-card-body>
       <button nbButton status="danger" (click)="resetStatistics()" [disabled]="resetting">
         <nb-icon icon="refresh-outline"></nb-icon>
-        {{ resetting ? 'מאפס...' : 'איפוס שיא חיבורים' }}
+        {{ resetting ? 'מאפס...' : 'איפוס סטטיסטיקות חיבורים' }}
       </button>
       <p class="text-muted mt-2 mb-0">
-        <small>פעולה זו תאפס את שיא מספר החיבורים הו-זמניים שנרשם בשרת</small>
+        <small>פעולה זו מאפסת את שיא מספר החיבורים בו-זמנית וגם את היסטוריית החיבורים של כל הערוצים (הגרפים במסכי הסטטיסטיקה). לא ניתן לשחזר.</small>
       </p>
     </nb-card-body>
   </nb-card>

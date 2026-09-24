@@ -21,9 +21,15 @@ import (
 	"github.com/go-chi/chi"
 	"github.com/h2non/filetype"
 	"github.com/icza/dyno"
+	"github.com/redis/go-redis/v9"
 	"github.com/subosito/gozaru"
 	"gopkg.in/yaml.v3"
 )
+
+// errFileNotFound means no metadata exists for an id, in Redis or on disk.
+// It is distinct from a failed read: a caller that prunes an index entry
+// for a missing record must never do so on a transient Redis error.
+var errFileNotFound = errors.New("file not found")
 
 // compressWithTinyPng compresses an image using the TinyPNG API.
 // Returns the compressed bytes, or the original bytes if compression fails or is not applicable.
@@ -147,17 +153,20 @@ func dbGetFileMetadata(ctx context.Context, id string) (*FileMetadata, error) {
 		}
 		return &meta, nil
 	}
+	if err != redis.Nil {
+		return nil, err
+	}
 
 	// Fallback: read from YAML (legacy local files). The slicing below panics on
 	// short ids, and callers feed this ids parsed out of Redis index members, so
 	// malformed data must be an error rather than a crash.
 	if len(id) < 4 {
-		return nil, fmt.Errorf("file not found")
+		return nil, errFileNotFound
 	}
 	metadataFilePath := filepath.Join(rootUploadPath, id[:2], id[2:4], id+".yaml")
 	yamlData, err := os.ReadFile(metadataFilePath)
 	if err != nil {
-		return nil, fmt.Errorf("file not found")
+		return nil, errFileNotFound
 	}
 	var raw map[string]any
 	if err := yaml.Unmarshal(yamlData, &raw); err != nil {
@@ -563,7 +572,23 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 	// The reservation above already accounted for these bytes; incrementing
 	// again here would double-count every upload.
 	committed = true
-	dbAddChannelFile(ctx, slug, id, time.Now().Unix(), fileSize)
+
+	// The index entry is what auto-cleanup and channel deletion walk; a file
+	// whose ZADD failed (its error used to be dropped) stayed charged to the
+	// quota, held its hash reference and kept its blob, with nothing able to
+	// reclaim any of it. A fresh context: the upload's own may already be
+	// cancelled by a client that disconnected right after the blob landed,
+	// and that cancellation must not orphan the file either.
+	ictx, icancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer icancel()
+	if err := dbAddChannelFile(ictx, slug, id, time.Now().Unix(), fileSize); err != nil {
+		log.Printf("uploadFile: %s: indexing file %s failed, releasing it: %v\n", slug, id, err)
+		// Releases the quota bytes, the hash reference and (on the last
+		// reference) the blob, exactly as a delete would.
+		deleteFileByID(ictx, slug, id, false)
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
+	}
 
 	fileUrl := "/api/channel/" + slug + "/files/" + id
 
@@ -683,7 +708,11 @@ func reserveStorageQuota(ctx context.Context, slug string, newFileSize int64) er
 		// concurrent near-quota uploads read the same oldest-files list, and the
 		// one that lost every deletion claim still reached needToFree <= 0 and
 		// was admitted against bytes the other upload had freed for itself.
-		needToFree -= deleteFileByID(ctx, slug, f.ID, true)
+		freed := deleteFileByID(ctx, slug, f.ID, true)
+		needToFree -= freed
+		if freed == 0 {
+			pruneStaleFileIndexEntry(ctx, slug, f.ID, f.Size)
+		}
 	}
 
 	// Cleanup is best-effort: it walks at most the 200 oldest files, so it can
@@ -705,6 +734,26 @@ func reserveStorageQuota(ctx context.Context, slug string, newFileSize int64) er
 // no-ops — an unreadable record, one already deleted, or a claim lost to a
 // concurrent caller. Callers that are freeing space to make room must count
 // that return value rather than the size they hoped to free.
+// pruneStaleFileIndexEntry removes an index member whose file is gone or
+// already tombstoned. Nothing else ever did: deleteFileByID no-ops on such a
+// member without touching the index, so each one stayed among the oldest
+// entries for ever and shrank the 200-entry window auto-cleanup scans. Once
+// 200 of them accumulated every cleanup pass freed nothing and every upload on
+// the channel was refused, with thousands of newer, deletable files behind
+// them. A member whose delete is merely in flight elsewhere (metadata still
+// live) is left alone; that deleter removes it.
+func pruneStaleFileIndexEntry(ctx context.Context, slug, fileID string, size int64) {
+	meta, err := dbGetFileMetadata(ctx, fileID)
+	switch {
+	case errors.Is(err, errFileNotFound), err == nil && meta.Delete:
+		if rerr := dbRemoveChannelFile(ctx, slug, fileID, size); rerr != nil {
+			log.Printf("reserveStorageQuota: %s: pruning stale index entry %s failed: %v\n", slug, fileID, rerr)
+		}
+	case err != nil:
+		log.Printf("reserveStorageQuota: %s: reading metadata of %s failed: %v\n", slug, fileID, err)
+	}
+}
+
 func deleteFileByID(ctx context.Context, slug, fileID string, removeFromIndex bool) int64 {
 	meta, err := dbGetFileMetadata(ctx, fileID)
 	if err != nil || meta.Delete {

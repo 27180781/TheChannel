@@ -935,12 +935,20 @@ func dbGetPeakSSEConnections(ctx context.Context, slug string) (*PeakSSEConnecti
 		return nil, err
 	}
 
+	// No record (a new channel, or right after resetStatistics) is a zero
+	// value with a zero time. time.Unix(0, 0) here was a real 1970 timestamp,
+	// which the statistics page rendered as a peak of 0 users on 01/01/1970.
 	var peak PeakSSEConnections
+	if len(p) == 0 {
+		return &peak, nil
+	}
 	vel, _ := dyno.GetInteger(p["value"])
 	timestamp, _ := dyno.GetInteger(p["timestamp"])
 
 	peak.Value = vel
-	peak.Timestamp = time.Unix(timestamp, 0)
+	if timestamp > 0 {
+		peak.Timestamp = time.Unix(timestamp, 0)
+	}
 
 	return &peak, nil
 }
@@ -1048,10 +1056,15 @@ func dbSaveScheduledMessages(ctx context.Context, slug string, messages *[]Messa
 			earliest = ts
 		}
 	}
+	// The index write must be reported: the list is already saved, so a lost
+	// ZADD strands a due message that the scheduler never wakes for, while the
+	// writer was told the save succeeded.
 	if earliest > 0 {
-		rdb.ZAdd(ctx, "scheduled:due_channels", redis.Z{Score: earliest, Member: slug})
-	} else {
-		rdb.ZRem(ctx, "scheduled:due_channels", slug)
+		if err := rdb.ZAdd(ctx, "scheduled:due_channels", redis.Z{Score: earliest, Member: slug}).Err(); err != nil {
+			return fmt.Errorf("index scheduled messages of %s: %w", slug, err)
+		}
+	} else if err := rdb.ZRem(ctx, "scheduled:due_channels", slug).Err(); err != nil {
+		return fmt.Errorf("unindex scheduled messages of %s: %w", slug, err)
 	}
 
 	return nil
@@ -1150,6 +1163,19 @@ func dbGetChannel(ctx context.Context, slug string) (*ChannelData, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	featuresKey := fmt.Sprintf("channel:%s:features", slug)
+	featuresJSON, err := rdb.Get(ctx, featuresKey).Result()
+	if err != nil && err != redis.Nil {
+		return nil, fmt.Errorf("load features for %s: %w", slug, err)
+	}
+	return channelFromRecords(slug, h, featuresJSON, err == nil)
+}
+
+// channelFromRecords assembles a ChannelData from its two Redis records, so
+// the single-channel read and the pipelined list read cannot drift apart.
+// hasFeatures is false when the features key does not exist.
+func channelFromRecords(slug string, h map[string]string, featuresJSON string, hasFeatures bool) (*ChannelData, error) {
 	if len(h) == 0 {
 		return nil, redis.Nil
 	}
@@ -1170,17 +1196,11 @@ func dbGetChannel(ctx context.Context, slug string) (*ChannelData, error) {
 		channel.CreatedAt = t
 	}
 
-	// Load features. A failed read must surface rather than silently serving a
+	// A failed features read must surface rather than silently serving a
 	// zero-valued ChannelFeatures: RequireAuth/RequireAuthFiles defaulting to
 	// false on a transient error would fail open on an auth toggle. Only a
-	// genuinely absent key (redis.Nil) keeps the zero value.
-	featuresKey := fmt.Sprintf("channel:%s:features", slug)
-	featuresJSON, err := rdb.Get(ctx, featuresKey).Result()
-	if err != nil {
-		if err != redis.Nil {
-			return nil, fmt.Errorf("load features for %s: %w", slug, err)
-		}
-	} else {
+	// genuinely absent key keeps the zero value.
+	if hasFeatures {
 		var features ChannelFeatures
 		if err := json.Unmarshal([]byte(featuresJSON), &features); err != nil {
 			return nil, fmt.Errorf("unmarshal features for %s: %w", slug, err)
@@ -1191,6 +1211,10 @@ func dbGetChannel(ctx context.Context, slug string) (*ChannelData, error) {
 	return channel, nil
 }
 
+// dbListChannelsBatch bounds one pipeline so a platform with tens of
+// thousands of channels never builds a single multi-megabyte reply.
+const dbListChannelsBatch = 500
+
 func dbListChannels(ctx context.Context) ([]*ChannelData, error) {
 	slugs, err := rdb.ZRange(ctx, "channels:list", 0, -1).Result()
 	if err != nil {
@@ -1200,13 +1224,46 @@ func dbListChannels(ctx context.Context) ([]*ChannelData, error) {
 	// Never nil: an empty platform must list as [] and not as JSON null, which
 	// the super-admin screen does not treat as a list.
 	channels := make([]*ChannelData, 0, len(slugs))
-	for _, slug := range slugs {
-		ch, err := dbGetChannel(ctx, slug)
-		if err != nil {
-			log.Printf("Failed to get channel %s: %v\n", slug, err)
-			continue
+
+	// Pipelined: the two records per channel used to be read one channel at a
+	// time, so the super-admin list, the statistics reset and the ads/magnet
+	// lock sync all cost two round trips per channel and ran out of their
+	// handler budgets somewhere in the low thousands of channels.
+	for start := 0; start < len(slugs); start += dbListChannelsBatch {
+		end := min(start+dbListChannelsBatch, len(slugs))
+		batch := slugs[start:end]
+
+		pipe := rdb.Pipeline()
+		hashes := make([]*redis.MapStringStringCmd, len(batch))
+		features := make([]*redis.StringCmd, len(batch))
+		for i, slug := range batch {
+			hashes[i] = pipe.HGetAll(ctx, fmt.Sprintf("channel:%s", slug))
+			features[i] = pipe.Get(ctx, fmt.Sprintf("channel:%s:features", slug))
 		}
-		channels = append(channels, ch)
+		// Exec reports the first failed command, and a missing features key
+		// is a redis.Nil "failure" here; only a real error aborts the list.
+		if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+			return nil, err
+		}
+
+		for i, slug := range batch {
+			h, err := hashes[i].Result()
+			if err != nil {
+				log.Printf("Failed to get channel %s: %v\n", slug, err)
+				continue
+			}
+			featuresJSON, err := features[i].Result()
+			if err != nil && err != redis.Nil {
+				log.Printf("Failed to get channel %s: load features: %v\n", slug, err)
+				continue
+			}
+			ch, err := channelFromRecords(slug, h, featuresJSON, err == nil)
+			if err != nil {
+				log.Printf("Failed to get channel %s: %v\n", slug, err)
+				continue
+			}
+			channels = append(channels, ch)
+		}
 	}
 
 	return channels, nil
@@ -1233,8 +1290,16 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 		log.Printf("initializePrivilegeUsers after dbDeleteChannel: %v\n", err)
 	}
 
-	// Step 1: collect all message keys and reaction keys from the sorted set (avoids SCAN)
-	messageKeys, _ := rdb.ZRange(ctx, fmt.Sprintf("channel:%s:m_times", p), 0, -1).Result()
+	// Step 1: collect all message keys and reaction keys from the sorted set
+	// (avoids SCAN). Every index read below must succeed before anything is
+	// deleted: an ignored error left the slice empty, Step 2 then dropped the
+	// index itself, and every message, reaction, report hash and — worst —
+	// every file blob and hash refcount it pointed at was orphaned for good,
+	// while the handler still reported success.
+	messageKeys, err := rdb.ZRange(ctx, fmt.Sprintf("channel:%s:m_times", p), 0, -1).Result()
+	if err != nil {
+		return fmt.Errorf("list messages of %s: %w", slug, err)
+	}
 	reactionKeys := make([]string, 0, len(messageKeys))
 	reporterKeys := make([]string, 0, len(messageKeys))
 	for _, mk := range messageKeys {
@@ -1254,7 +1319,10 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 	// context expires or the process dies mid-delete. The per-file index removal
 	// is skipped instead (removeFromIndex=false) to keep the loop O(N); the set
 	// itself is dropped with the fixed keys below once the loop completes.
-	fileMembers, _ := rdb.ZRange(ctx, channelFilesKey(p), 0, -1).Result()
+	fileMembers, err := rdb.ZRange(ctx, channelFilesKey(p), 0, -1).Result()
+	if err != nil {
+		return fmt.Errorf("list files of %s: %w", slug, err)
+	}
 	fileKeys := make([]string, 0, len(fileMembers))
 	for _, m := range fileMembers {
 		if err := ctx.Err(); err != nil {
@@ -1271,7 +1339,10 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 	}
 
 	// Step 1c: collect the individual report hashes referenced by the reports index
-	reportKeys, _ := rdb.ZRange(ctx, fmt.Sprintf("channel:%s:reports:list", p), 0, -1).Result()
+	reportKeys, err := rdb.ZRange(ctx, fmt.Sprintf("channel:%s:reports:list", p), 0, -1).Result()
+	if err != nil {
+		return fmt.Errorf("list reports of %s: %w", slug, err)
+	}
 
 	// Step 1d: monthly SSE statistics keys have no index; enumerate the possible
 	// month/year combinations instead of running a SCAN across the keyspace.
@@ -1338,6 +1409,46 @@ func dbSetChannelFeatures(ctx context.Context, slug string, features *ChannelFea
 	}
 
 	return nil
+}
+
+// dbUpdateChannelFeatures applies mutate to the channel's stored features
+// under WATCH/MULTI, retrying when another writer got in between. The
+// features blob is one JSON string with several independent writers (the
+// super-admin features form, the ads and magnet lock syncs), and a blind
+// read-modify-SET from any of them replayed a stale snapshot over the others':
+// a channel disabled while a lock sync was running came back enabled.
+func dbUpdateChannelFeatures(ctx context.Context, slug string, mutate func(*ChannelFeatures)) error {
+	featuresKey := fmt.Sprintf("channel:%s:features", slug)
+	const maxRetries = 10
+	for i := 0; i < maxRetries; i++ {
+		err := rdb.Watch(ctx, func(tx *redis.Tx) error {
+			var features ChannelFeatures
+			raw, err := tx.Get(ctx, featuresKey).Result()
+			if err != nil && err != redis.Nil {
+				return err
+			}
+			if err == nil {
+				if err := json.Unmarshal([]byte(raw), &features); err != nil {
+					return fmt.Errorf("unmarshal features for %s: %w", slug, err)
+				}
+			}
+			mutate(&features)
+			out, err := json.Marshal(&features)
+			if err != nil {
+				return fmt.Errorf("failed to marshal features: %v", err)
+			}
+			_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+				pipe.Set(ctx, featuresKey, out, 0)
+				return nil
+			})
+			return err
+		}, featuresKey)
+		if err == redis.TxFailedErr {
+			continue
+		}
+		return err
+	}
+	return fmt.Errorf("update features for %s: too many concurrent writers", slug)
 }
 
 func dbAssignChannelRole(ctx context.Context, email, slug string, role ChannelRole) error {
