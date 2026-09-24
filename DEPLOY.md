@@ -135,6 +135,7 @@ still served from disk, so switching R2 on cannot break historical images.
 | `MIGRATION_APPLY_AUTH_FLAGS` | unset | `1` makes the features backfill honour leftover `require_auth`, `require_auth_for_view_files` and `count_views` settings values. Off by default because those keys are no longer in the owner UI, so applying them would restrict channels in a way their owners cannot see or undo. |
 | `ALLOW_LEGACY_UNSCOPED_FILES` | unset | `true` lets file records with no owning channel be served from any channel. This reopens a cross-tenant read path and exists only as a temporary escape hatch during a backfill. |
 | `PPROF_ADDR` | unset | e.g. `localhost:6060` to enable the Go profiler. Never expose it publicly. |
+| `WEBHOOK_ALLOW_PRIVATE` | unset | `1` lets channel webhooks target private/internal addresses (RFC 1918, loopback, link-local). Off by default so a channel owner cannot point the server at services on your internal network; turn it on only when the webhook consumer itself lives there. A refused target is logged as `webhook: refusing to connect to non-public address`. |
 
 ---
 
