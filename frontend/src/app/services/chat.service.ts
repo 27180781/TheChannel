@@ -93,8 +93,8 @@ export class ChatService {
   get reportsEnabled(): boolean { return this.isFeatureEnabled('reports'); }
   get scheduledMessagesEnabled(): boolean { return this.isFeatureEnabled('scheduledMessages'); }
 
-  editChannelInfo(name: string, description: string, logoUrl: string): Observable<ResponseResult> {
-    return this.http.post<ResponseResult>(`/api/channel/${this.slug}/admin/edit-channel-info`, { name, description, logoUrl });
+  editChannelInfo(name: string, description: string, logoUrl: string, contactUs: string): Observable<ResponseResult> {
+    return this.http.post<ResponseResult>(`/api/channel/${this.slug}/admin/edit-channel-info`, { name, description, logoUrl, contactUs });
   }
 
   getMessages(offset: number, limit: number, direction: string): Observable<ChatResponse> {

@@ -135,6 +135,11 @@ export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
     return this.channelStatus.disabledSlug();
   }
 
+  /** Slug that answered 404 on /info — no such channel. Null otherwise. */
+  get channelNotFound(): string | null {
+    return this.channelStatus.notFoundSlug();
+  }
+
   readonly onboardingSteps = [
     { icon: 'edit-2-outline', title: 'בוחרים שם וכתובת', text: 'הכתובת נבדקת מול השרת בזמן אמת.' },
     { icon: 'flash-outline', title: 'פותחים בלחיצה', text: 'הערוץ נוצר מיד ואתם הבעלים שלו.' },

@@ -37,15 +37,35 @@ export class ChannelInfoFormComponent implements OnInit {
   isSending: boolean = false;
 
   editChannelInfo() {
+    if (!this.channel.name?.trim()) {
+      this.toastrService.warning("", "יש להזין שם לערוץ");
+      return;
+    }
     this.isSending = true;
-    this.chatService.editChannelInfo(this.channel.name || '', this.channel.description || '', this.channel.logoUrl || '').subscribe({
+    this.chatService.editChannelInfo(
+      this.channel.name.trim(),
+      this.channel.description || '',
+      this.channel.logoUrl || '',
+      (this.channel.contact_us || '').trim(),
+    ).subscribe({
       next: () => {
         this.isSending = false;
         this.toastrService.success("", "עריכת פרטי ערוץ בוצעה בהצלחה");
         this.chatService.updateChannelInfo();
       },
-      error: () => {
+      error: (err) => {
         this.isSending = false;
+        // The server refuses a contact link that is not http(s)/mailto — say
+        // which field, rather than a generic failure.
+        const text = typeof err?.error === 'string' ? err.error : '';
+        if (err?.status === 400 && text.includes('contact')) {
+          this.toastrService.danger("", "קישור צור קשר חייב להתחיל ב-https://‎ או ב-mailto:");
+          return;
+        }
+        if (err?.status === 400 && text.includes('too long')) {
+          this.toastrService.danger("", "השם או התיאור ארוכים מדי (עד 80 תווים לשם ועד 2000 לתיאור)");
+          return;
+        }
         this.toastrService.danger("", "עריכת פרטי ערוץ נכשלה");
       }
     });

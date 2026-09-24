@@ -84,14 +84,14 @@ export class SettingsComponent implements OnInit {
     for (const s of settings) {
       if (s.key === 'regex-replace') {
         const raw = String(s.value ?? '');
-        if (raw.includes('#')) {
-          const idx = raw.indexOf('#');
+        const idx = regexRuleSeparator(raw);
+        if (idx >= 0) {
           this.regexRules.push({
-            pattern: raw.substring(0, idx),
+            pattern: unescapeRuleHash(raw.substring(0, idx)),
             replace: raw.substring(idx + 1),
           });
         } else if (raw) {
-          this.regexRules.push({ pattern: raw, replace: '' });
+          this.regexRules.push({ pattern: unescapeRuleHash(raw), replace: '' });
         }
         continue;
       }
@@ -164,7 +164,7 @@ export class SettingsComponent implements OnInit {
     for (const r of this.regexRules) {
       const p = (r.pattern || '').trim();
       if (!p) continue;
-      out.push({ key: 'regex-replace', value: `${p}#${r.replace ?? ''}` as any });
+      out.push({ key: 'regex-replace', value: `${escapeRuleHash(p)}#${r.replace ?? ''}` as any });
     }
 
     for (const e of this.extraSettings) {
@@ -184,4 +184,34 @@ export class SettingsComponent implements OnInit {
       .catch(() => this.tostService.danger('', 'שגיאה בשמירת השינויים'))
       .finally(() => this.setInProgress = false);
   }
+}
+
+/**
+ * A rule is stored as "<pattern>#<replacement>", and '#' is also an ordinary
+ * regex character (a hashtag rule is the obvious case). Splitting at the first
+ * bare '#' turned "#(\S+)#**#$1**" into an EMPTY pattern, which the server then
+ * applied between every two characters of every message. So a '#' inside the
+ * pattern is stored escaped as "\#" — which the regex engine reads as a
+ * literal '#' — and the separator is the first '#' that is not escaped.
+ * The helpers below mirror splitRegexRule in the backend.
+ */
+function regexRuleSeparator(raw: string): number {
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] === '\\') { i++; continue; }
+    if (raw[i] === '#') return i;
+  }
+  return -1;
+}
+
+function escapeRuleHash(pattern: string): string {
+  let out = '';
+  for (let i = 0; i < pattern.length; i++) {
+    if (pattern[i] === '\\' && i + 1 < pattern.length) { out += pattern[i] + pattern[i + 1]; i++; continue; }
+    out += pattern[i] === '#' ? '\\#' : pattern[i];
+  }
+  return out;
+}
+
+function unescapeRuleHash(pattern: string): string {
+  return pattern.replace(/\\#/g, '#');
 }

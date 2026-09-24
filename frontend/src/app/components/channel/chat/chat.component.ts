@@ -289,9 +289,20 @@ export class ChatComponent implements OnInit, OnDestroy {
             const index = this.messages.findIndex(m => m.id === message.message.id);
             if (index !== -1) {
               this.messages[index] = message.message;
-            } else {
-              // TOTO: Find the closest message to attach the retrieved message to
-              //  const closestIndex = this.messages.reduce
+            } else if (!message.message.deleted && this.messages.length) {
+              // Not in the list: this is a message that was deleted (readers
+              // drop deleted messages, see 'delete-message') and has now been
+              // republished. Put it back where its id falls, if that is
+              // inside the loaded window; anything older is fetched with the
+              // history as usual.
+              const edited = message.message;
+              const when = (m: any) => new Date(m.timestamp).getTime();
+              const oldestLoaded = when(this.messages[this.messages.length - 1]);
+              if (when(edited) >= oldestLoaded || !this.hasOldMessages) {
+                const at = this.messages.findIndex(m => when(m) < when(edited));
+                this.messages.splice(at === -1 ? this.messages.length : at, 0, edited);
+                this.rebuildItems();
+              }
             }
           });
           break;
@@ -480,7 +491,13 @@ export class ChatComponent implements OnInit, OnDestroy {
           resetList ? this.messages = response : this.messages.push(...response);
           this.hasOldMessages = response.length >= this.limit;
         }
-        this.offset = Math.min(...this.messages.map(m => m.id!));
+        // The server pages by position in the time-ordered index, resuming
+        // after the given id — and the list is kept in that same order. The
+        // cursor is therefore the LAST loaded message, not the smallest id:
+        // ids and timestamps diverge once posts are imported with their
+        // original (older) dates, and paging from the smallest id then
+        // re-fetched the same window over and over, duplicating it.
+        this.offset = this.messages.length ? this.messages[this.messages.length - 1].id! : 0;
         this.rebuildItems();
         setTimeout(() => {
           opt.messageId && this.scrollToId({ messageId: opt.messageId, smooth: false, mark: opt.mark });

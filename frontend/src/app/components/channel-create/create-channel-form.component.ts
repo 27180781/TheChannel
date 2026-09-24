@@ -245,6 +245,15 @@ export class CreateChannelFormComponent implements OnInit, OnDestroy {
         this.formError = 'נשלחו יותר מדי בקשות בזמן קצר. המתן מספר דקות ונסה שוב.';
         return;
       case 400:
+        // Plain-text reasons from the server, in the user's language.
+        if (text.includes('too long')) {
+          this.formError = 'השם או התיאור ארוכים מדי (עד 80 תווים לשם ועד 2000 לתיאור).';
+          return;
+        }
+        if (text.includes('name is required')) {
+          this.formError = 'יש להזין שם לערוץ.';
+          return;
+        }
         this.formError = text || 'הפרטים שהוזנו אינם תקינים.';
         return;
       case 401:

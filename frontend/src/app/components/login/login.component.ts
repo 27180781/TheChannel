@@ -38,6 +38,14 @@ export class LoginComponent implements OnInit {
     this.checkUserInfo = false;
 
     this._route.queryParams.subscribe(params => {
+      if (params['code'] && params['state'] !== localStorage.getItem('google_oauth_state')) {
+        // Google sent us back but the anti-CSRF state does not match what this
+        // browser stored (storage cleared, a second tab, a replayed link).
+        // Previously this fell through silently and the page just showed the
+        // login button again, as if nothing had happened.
+        this.status = 'failed';
+        return;
+      }
       if (params['code'] && params['state'] === localStorage.getItem('google_oauth_state')) {
         this.code = params['code'];
         this.checkUserInfo = true;
