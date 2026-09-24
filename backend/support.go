@@ -34,12 +34,6 @@ const (
 	maxSupportEmailLen   = 254
 )
 
-// supportOperatorName is the only name a reply from the operator is ever shown
-// under. Every operator reply is signed by "the management", never by a person:
-// the operator's session identity (display name, Google username, email) must
-// not reach the requester, and that includes the JSON the page does not render.
-const supportOperatorName = "ניהול"
-
 type SupportStatus string
 
 const (
@@ -267,7 +261,7 @@ func dbListSupportTickets(ctx context.Context, indexKey string) ([]*SupportTicke
 // token is the only credential on an anonymous thread, so it must never travel
 // back out in a response body.
 //
-// It also re-signs every operator reply as supportOperatorName. New replies are
+// It also re-signs every operator reply as operatorName. New replies are
 // stored that way already; this covers the ones written before, which carry
 // the operator's own display name or email and are still served for as long
 // as the ticket lives.
@@ -280,7 +274,7 @@ func publicView(t *SupportTicket) SupportTicket {
 	copy(c.Messages, t.Messages)
 	for i := range c.Messages {
 		if c.Messages[i].Author == "admin" {
-			c.Messages[i].AuthorName = supportOperatorName
+			c.Messages[i].AuthorName = operatorName
 		}
 	}
 	return c
@@ -560,7 +554,7 @@ func adminReplySupportTicket(w http.ResponseWriter, r *http.Request) {
 		//
 		// Signed as the management and never from the session: this record is
 		// served to the requester, so whoever answered must not be named in it.
-		appendSupportMessage(cur, "admin", supportOperatorName, body, SupportStatusAnswered)
+		appendSupportMessage(cur, "admin", operatorName, body, SupportStatusAnswered)
 		return nil
 	})
 	if err != nil {

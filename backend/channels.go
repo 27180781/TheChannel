@@ -392,7 +392,13 @@ func setChannelUsersForSlug(w http.ResponseWriter, r *http.Request, slug string,
 
 // listChannelUsers writes the channel's user/role list. Shared by the
 // super-admin and owner get-users handlers.
-func listChannelUsers(w http.ResponseWriter, slug string) {
+//
+// hideOperators drops super admins from the list. An operator holds an explicit
+// role on every channel they created themselves, and a co-owner reading that
+// list must not learn the operator's email. Hiding changes nothing about
+// access: a super admin reaches every channel through hasChannelRole anyway,
+// and a save from the owner screen only touches the rows it sends.
+func listChannelUsers(w http.ResponseWriter, slug string, hideOperators bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -411,6 +417,9 @@ func listChannelUsers(w http.ResponseWriter, slug string) {
 	// user management screens do not accept.
 	channelUsers := make([]ChannelUser, 0)
 	for _, u := range users {
+		if hideOperators && u.GlobalRole == RoleSuperAdmin {
+			continue
+		}
 		if u.ChannelRoles != nil {
 			if role, exists := u.ChannelRoles[slug]; exists {
 				channelUsers = append(channelUsers, ChannelUser{Email: u.Email, Role: role})
@@ -429,12 +438,12 @@ func superAdminSetChannelUsers(w http.ResponseWriter, r *http.Request) {
 
 // Super admin: get channel users
 func superAdminGetChannelUsers(w http.ResponseWriter, r *http.Request) {
-	listChannelUsers(w, chi.URLParam(r, "slug"))
+	listChannelUsers(w, chi.URLParam(r, "slug"), false)
 }
 
 // Channel owner: get channel users (for this channel only)
 func getChannelUsers(w http.ResponseWriter, r *http.Request) {
-	listChannelUsers(w, channelSlugFromCtx(r))
+	listChannelUsers(w, channelSlugFromCtx(r), !isSuperAdmin(r))
 }
 
 // Channel owner: set channel users (cannot assign owner role)

@@ -105,8 +105,8 @@ func TestSupportAdminReplyIsSignedByManagement(t *testing.T) {
 		t.Fatalf("get: %v", err)
 	}
 	last := stored.Messages[len(stored.Messages)-1]
-	if last.Author != "admin" || last.AuthorName != supportOperatorName {
-		t.Errorf("stored operator reply = %+v, want author admin signed %q", last, supportOperatorName)
+	if last.Author != "admin" || last.AuthorName != operatorName {
+		t.Errorf("stored operator reply = %+v, want author admin signed %q", last, operatorName)
 	}
 }
 
@@ -121,8 +121,8 @@ func TestSupportPublicViewHidesOperatorIdentity(t *testing.T) {
 	appendSupportMessage(ticket, "admin", operator, "תשובה", SupportStatusAnswered)
 
 	view := publicView(ticket)
-	if got := view.Messages[1].AuthorName; got != supportOperatorName {
-		t.Errorf("operator reply shown as %q, want %q", got, supportOperatorName)
+	if got := view.Messages[1].AuthorName; got != operatorName {
+		t.Errorf("operator reply shown as %q, want %q", got, operatorName)
 	}
 	if got := view.Messages[0].AuthorName; got != "בודק" {
 		t.Errorf("the requester's own name must be kept, got %q", got)
