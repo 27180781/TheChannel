@@ -34,6 +34,12 @@ const (
 	maxSupportEmailLen   = 254
 )
 
+// supportOperatorName is the only name a reply from the operator is ever shown
+// under. Every operator reply is signed by "the management", never by a person:
+// the operator's session identity (display name, Google username, email) must
+// not reach the requester, and that includes the JSON the page does not render.
+const supportOperatorName = "ניהול"
+
 type SupportStatus string
 
 const (
@@ -260,9 +266,23 @@ func dbListSupportTickets(ctx context.Context, indexKey string) ([]*SupportTicke
 // publicView strips the access token before a ticket is sent anywhere. The
 // token is the only credential on an anonymous thread, so it must never travel
 // back out in a response body.
+//
+// It also re-signs every operator reply as supportOperatorName. New replies are
+// stored that way already; this covers the ones written before, which carry
+// the operator's own display name or email and are still served for as long
+// as the ticket lives.
 func publicView(t *SupportTicket) SupportTicket {
 	c := *t
 	c.AccessToken = ""
+	// A fresh slice: the struct copy above shares the original's backing array,
+	// and the stored ticket must come out of this unchanged.
+	c.Messages = make([]SupportMessage, len(t.Messages))
+	copy(c.Messages, t.Messages)
+	for i := range c.Messages {
+		if c.Messages[i].Author == "admin" {
+			c.Messages[i].AuthorName = supportOperatorName
+		}
+	}
 	return c
 }
 
@@ -530,10 +550,6 @@ func adminReplySupportTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	name := "הנהלת המערכת"
-	if s, ok := sessionEmail(r); ok {
-		name = sessionDisplayName(s)
-	}
 	updated, err := dbUpdateSupportTicket(ctx, t.ID, func(cur *SupportTicket) error {
 		if len(cur.Messages) >= maxSupportMessages {
 			return errThreadFull
@@ -541,7 +557,10 @@ func adminReplySupportTicket(w http.ResponseWriter, r *http.Request) {
 		// An operator reply reopens a closed ticket: answering it is a
 		// deliberate act, and leaving it closed would silently discard the
 		// reply from the requester's view.
-		appendSupportMessage(cur, "admin", name, body, SupportStatusAnswered)
+		//
+		// Signed as the management and never from the session: this record is
+		// served to the requester, so whoever answered must not be named in it.
+		appendSupportMessage(cur, "admin", supportOperatorName, body, SupportStatusAnswered)
 		return nil
 	})
 	if err != nil {
