@@ -23,6 +23,8 @@ export class SuperAdminStatisticsComponent implements OnInit {
   magnetStats: any = null;
   loadingStats = true;
   resetting = false;
+  /** Shown in the magnet card instead of the generic "no data" line. */
+  magnetError = '';
 
   constructor(
     private superAdminService: SuperAdminService,
@@ -35,9 +37,22 @@ export class SuperAdminStatisticsComponent implements OnInit {
 
   loadMagnetStats() {
     this.loadingStats = true;
+    this.magnetError = '';
     this.superAdminService.getMagnetStats()
       .then(stats => this.magnetStats = stats)
-      .catch(() => this.toastr.warning('', 'לא ניתן לטעון סטטיסטיקות מגנט'))
+      .catch(err => {
+        // A missing key is the normal state of a platform that never used
+        // Magnet, not an outage: the backend answers 400 with a precise
+        // {"error":"missing_api_key"} body, which used to be collapsed into the
+        // same warning toast as an upstream failure on every visit.
+        const body = err?.error;
+        const code = typeof body === 'string' ? body : (body?.error ?? '');
+        if (err?.status === 400 && String(code).includes('missing_api_key')) {
+          this.magnetError = 'מפתח ה-API של מגנט לא הוגדר';
+          return;
+        }
+        this.toastr.warning('', 'לא ניתן לטעון סטטיסטיקות מגנט');
+      })
       .finally(() => this.loadingStats = false);
   }
 
@@ -48,7 +63,7 @@ export class SuperAdminStatisticsComponent implements OnInit {
     if (!confirm('האם אתה בטוח שברצונך לאפס את הסטטיסטיקות? פעולה זו מוחקת את שיא החיבורים ואת היסטוריית החיבורים של כל הערוצים (הגרפים במסכי הסטטיסטיקה), ולא ניתן לשחזר אותה.')) return;
     this.resetting = true;
     this.superAdminService.resetStatistics()
-      .then(() => this.toastr.success('', 'שיא החיבורים אופס בהצלחה'))
+      .then(() => this.toastr.success('', 'סטטיסטיקות החיבורים אופסו בהצלחה'))
       .catch(() => this.toastr.danger('', 'שגיאה באיפוס הסטטיסטיקות'))
       .finally(() => this.resetting = false);
   }

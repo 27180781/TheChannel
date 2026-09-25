@@ -1,8 +1,8 @@
-import { Component, Input, OnInit } from '@angular/core';
+import { Component, HostBinding, Input, OnInit, Optional } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import {
-  NbAlertModule, NbButtonModule, NbCardModule, NbFormFieldModule,
+  NbAlertModule, NbButtonModule, NbCardModule, NbDialogRef, NbFormFieldModule,
   NbIconModule, NbInputModule, NbSpinnerModule, NbToastrService,
 } from '@nebular/theme';
 import { SupportService, SupportTicket } from '../../services/support.service';
@@ -29,9 +29,16 @@ import { SupportService, SupportTicket } from '../../services/support.service';
   ],
   template: `
     <nb-card class="support-box">
-      <nb-card-header>
-        <h5 class="mb-0">{{ title }}</h5>
-        @if (subtitle) { <p class="support-sub">{{ subtitle }}</p> }
+      <nb-card-header class="support-head">
+        <div>
+          <h5 class="mb-0">{{ title }}</h5>
+          @if (subtitle) { <p class="support-sub">{{ subtitle }}</p> }
+        </div>
+        @if (dialogMode) {
+          <button nbButton ghost size="small" type="button" title="סגור" (click)="close()">
+            <nb-icon icon="close-outline"></nb-icon>
+          </button>
+        }
       </nb-card-header>
 
       <nb-card-body>
@@ -123,6 +130,12 @@ import { SupportService, SupportTicket } from '../../services/support.service';
   styles: [`
     .support-box { margin-bottom: 1rem; }
     .support-sub { margin: 0.25rem 0 0; font-size: 0.85rem; color: var(--text-hint-color); }
+    .support-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; }
+    /* Opened as its own dialog (header menu): without a width the overlay
+       sizes the card to its content, and without a height cap a long thread
+       runs past a phone screen with nothing behind it that can scroll. */
+    :host(.support-dialog) { display: block; width: min(640px, 95vw);
+                             max-height: 85vh; max-height: 85dvh; overflow-y: auto; }
 
     .ticket { border-bottom: 1px solid var(--divider-color); padding: 0.5rem 0; }
     .ticket:last-child { border-bottom: 0; }
@@ -153,6 +166,15 @@ export class SupportBoxComponent implements OnInit {
   @Input() channelSlug = '';
   /** Drives which fields are asked for; the server decides identity regardless. */
   @Input() signedIn = false;
+  /**
+   * Set by the caller that opens the box as its own dialog (the header menu).
+   * Not derived from the injected NbDialogRef: the admin panel is itself a
+   * dialog, so a ref is in scope when the box is only a tab inside it — and
+   * closing that ref would close the whole panel.
+   */
+  @Input() dialogMode = false;
+
+  @HostBinding('class.support-dialog') get isDialog(): boolean { return this.dialogMode; }
 
   subject = '';
   body = '';
@@ -171,7 +193,12 @@ export class SupportBoxComponent implements OnInit {
   constructor(
     private support: SupportService,
     private toastr: NbToastrService,
+    @Optional() private dialogRef: NbDialogRef<SupportBoxComponent> | null,
   ) {}
+
+  close(): void {
+    if (this.dialogMode) this.dialogRef?.close();
+  }
 
   ngOnInit(): void {
     this.loadTickets();
@@ -267,10 +294,27 @@ export class SupportBoxComponent implements OnInit {
   }
 
   private errorText(err: any): string {
+    // The server's bodies are English one-liners meant for its logs; they are
+    // only ever matched on here, never shown in the Hebrew form.
     const text = typeof err?.error === 'string' && err.error ? err.error : '';
     switch (err?.status) {
       case 429: return 'נשלחו יותר מדי פניות בזמן קצר. נסה שוב בעוד מספר דקות.';
-      case 400: return text || 'הפרטים שהוזנו אינם תקינים.';
+      case 400:
+        // A signed-in box hides the email field, so once the session has lapsed
+        // (cookie expired, logged out in another tab) the server's "email
+        // required" cannot be satisfied from here — only a fresh sign-in can.
+        if (text.includes('email')) {
+          return this.signedIn
+            ? 'ההתחברות פגה. יש להתחבר מחדש ולשלוח את הפנייה שוב.'
+            : 'יש להזין כתובת אימייל תקינה.';
+        }
+        if (text.includes('subject and body')) return 'יש למלא נושא ותוכן.';
+        if (text.includes('message body')) return 'יש להזין תוכן להודעה.';
+        return 'הפרטים שהוזנו אינם תקינים.';
+      case 401:
+        return this.signedIn
+          ? 'ההתחברות פגה. יש להתחבר מחדש ולנסות שוב.'
+          : 'אין הרשאה לבצע פעולה זו.';
       case 409:
         // Both a closed ticket and a full thread answer 409; the body tells
         // them apart. A full thread used to read as "closed", which the

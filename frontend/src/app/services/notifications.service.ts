@@ -43,15 +43,24 @@ export class NotificationsService {
     if (!this.slugService.slug) return;
     if (this.initialized) return;
 
-    await firstValueFrom(this.http.get<NotificationsConfig>(`/api/channel/${this.slugService.slug}/notifications-config`))
-      .then((config) => {
-        this.config = config;
-      });
+    // Nobody awaits init() and reset() cannot cancel a request already in
+    // flight: switching channels while the previous channel's config was
+    // loading used to store that config (and initialized=true) for the new
+    // channel, whose own init() then returned early — the bell of channel A
+    // on channel B, subscribing the device to A. Same guard as chat.service.
+    const requestedSlug = this.slugService.slug;
+    const config = await firstValueFrom(this.http.get<NotificationsConfig>(`/api/channel/${requestedSlug}/notifications-config`));
+    if (requestedSlug !== this.slugService.slug) return;
+    this.config = config;
 
     if (!this.config) return;
 
     if (this.config.enableNotifications) {
-      if (!this.config.firebaseConfig) return;
+      // The server always emits a firebaseConfig object, with empty strings
+      // when the operator never entered the FCM keys, so testing for the
+      // object itself never fired: initializeApp({apiKey: ''}) succeeded,
+      // the bell appeared, and every tap failed in getToken with no VAPID.
+      if (!this.config.firebaseConfig?.apiKey || !this.config.vapid) return;
 
       // Safari on iOS outside a home-screen app, and any browser without
       // service workers or the Push API, has no Messaging at all: getMessaging()
@@ -59,6 +68,8 @@ export class NotificationsService {
       // unhandled rejection on every channel load. Ask first, and keep the bell
       // hidden where it could never work.
       if (!(await isSupported().catch(() => false))) return;
+      // Another await — the channel may have changed meanwhile.
+      if (requestedSlug !== this.slugService.slug) return;
 
       try {
         // initializeApp() refuses a second default app with different options;

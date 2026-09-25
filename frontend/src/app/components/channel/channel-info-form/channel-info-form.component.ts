@@ -42,6 +42,13 @@ export class ChannelInfoFormComponent implements OnInit {
       this.toastrService.warning("", "יש להזין שם לערוץ");
       return;
     }
+    // While the logo upload is in flight logoUrl still holds the data: preview,
+    // which the server rejects (400 'invalid logo URL') with no hint which
+    // field is wrong — wait for the server-issued URL instead of posting it.
+    if (this.attachment?.uploading) {
+      this.toastrService.warning("", "הלוגו עדיין בהעלאה, המתינו לסיום ונסו שוב");
+      return;
+    }
     this.isSending = true;
     this.chatService.editChannelInfo(
       this.channel.name.trim(),
@@ -67,6 +74,12 @@ export class ChannelInfoFormComponent implements OnInit {
           this.toastrService.danger("", "השם או התיאור ארוכים מדי (עד 80 תווים לשם ועד 2000 לתיאור)");
           return;
         }
+        // 'invalid logo URL': a data: preview or a non-http(s) address reached
+        // the save — picking the logo again is the only way out.
+        if (err?.status === 400 && text.includes('logo')) {
+          this.toastrService.danger("", "כתובת הלוגו אינה תקינה, בחרו את הלוגו מחדש");
+          return;
+        }
         this.toastrService.danger("", "עריכת פרטי ערוץ נכשלה");
       }
     });
@@ -77,6 +90,10 @@ export class ChannelInfoFormComponent implements OnInit {
 
     if (input.files) {
       this.attachment = { file: input.files[0] }
+      // Kept so a failed upload can put the previous logo back: the data: URL
+      // preview set below is only ever replaced on success, and leaving it in
+      // place made every later save of this dialog fail on 'invalid logo URL'.
+      const previousLogoUrl = this.channel.logoUrl;
       const reader = new FileReader();
       reader.readAsDataURL(this.attachment.file);
       reader.onload = (event) => {
@@ -85,11 +102,11 @@ export class ChannelInfoFormComponent implements OnInit {
         }
       }
 
-      this.uploadFile(this.attachment);
+      this.uploadFile(this.attachment, previousLogoUrl);
     }
   }
 
-  async uploadFile(attachment: Attachment) {
+  async uploadFile(attachment: Attachment, previousLogoUrl?: string) {
     try {
       const formData = new FormData();
       if (!attachment.file) return;
@@ -112,6 +129,8 @@ export class ChannelInfoFormComponent implements OnInit {
         error: (error) => {
           this.toastrService.danger("", uploadErrorMessage(error.status));
           attachment.uploading = false;
+          // Drop the data: preview — only a server URL may reach the save.
+          this.channel.logoUrl = previousLogoUrl;
         },
       });
 

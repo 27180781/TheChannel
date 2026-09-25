@@ -101,12 +101,18 @@ export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
 
   async copyChannelUrl(slug: string): Promise<void> {
     try {
-      await navigator.clipboard?.writeText(this.channelUrl(slug));
+      // `navigator.clipboard?.writeText(...)` resolved to undefined in an
+      // insecure context (plain-HTTP deployment), so the button flipped to
+      // "הועתק" with nothing copied. Fail explicitly instead, like copyUrl()
+      // in the create form does.
+      if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+      await navigator.clipboard.writeText(this.channelUrl(slug));
       this.copiedSlug = slug;
     } catch {
       // Insecure context or a browser that refuses the API — the URL is shown
-      // and selectable, so nothing else to do.
+      // and selectable, so say so rather than claim success.
       this.copiedSlug = '';
+      this.toastr.warning('', 'ההעתקה האוטומטית נחסמה בדפדפן — סמנו את הקישור והעתיקו אותו ידנית');
     }
     if (this.copyResetTimer) clearTimeout(this.copyResetTimer);
     this.copyResetTimer = setTimeout(() => (this.copiedSlug = ''), 2500);

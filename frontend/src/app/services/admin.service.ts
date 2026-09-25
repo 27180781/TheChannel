@@ -132,23 +132,42 @@ export class AdminService {
     // the messages already scheduled. A failed load rejects instead of saving.
     const list = this.schedulingMessages ?? await this.fetchScheduledMessages();
     this.schedulingMessages = list;
-    list.unshift(message);
-    return this.updateSchedulingMessages();
+    return this.commitSchedulingMessages([message, ...list]);
   }
 
   editScheduledMessage(message: ChatMessage): Promise<ResponseResult> {
-    if (message.id === undefined || !this.schedulingMessages) return Promise.reject('Message ID is undefined');
-    this.schedulingMessages[message.id] = message;
-    return this.updateSchedulingMessages();
+    const list = this.schedulingMessages;
+    if (!list || !this.isScheduledIndex(message.id, list)) return Promise.reject('Message ID is undefined');
+    const next = list.slice();
+    next[message.id] = message;
+    return this.commitSchedulingMessages(next);
   }
 
   deleteScheduledMessage(id: number | undefined): Promise<ResponseResult> {
-    if (id === undefined || !this.schedulingMessages) return Promise.reject('Message ID is undefined');
-    this.schedulingMessages.splice(id, 1);
-    return this.updateSchedulingMessages();
+    const list = this.schedulingMessages;
+    if (!list || !this.isScheduledIndex(id, list)) return Promise.reject('Message ID is undefined');
+    return this.commitSchedulingMessages(list.filter((_, i) => i !== id));
   }
 
-  private updateSchedulingMessages(): Promise<ResponseResult> {
-    return firstValueFrom(this.http.post<ResponseResult>(`/api/channel/${this.slug}/admin/scheduled-messages/update`, this.schedulingMessages ?? []));
+  /**
+   * A scheduled message's id is its index in the list (the feed stamps it on
+   * edit). Anything else is refused: a LIVE message's id written at that
+   * index used to punch hundreds of null holes into a short array, the POST
+   * came back 400, and the corrupted list stayed on screen until reload.
+   */
+  private isScheduledIndex(id: number | undefined, list: ChatMessage[]): id is number {
+    return Number.isInteger(id) && (id as number) >= 0 && (id as number) < list.length;
+  }
+
+  /**
+   * Copy, post, then commit. The list is shared with the feed's scheduled
+   * section, so mutating it before the POST left every viewer of it with a
+   * list the server had rejected. Callers refresh the feed through
+   * reloadSchedulingMessage() once this resolves.
+   */
+  private async commitSchedulingMessages(next: ChatMessage[]): Promise<ResponseResult> {
+    const res = await firstValueFrom(this.http.post<ResponseResult>(`/api/channel/${this.slug}/admin/scheduled-messages/update`, next));
+    this.schedulingMessages = next;
+    return res;
   }
 }

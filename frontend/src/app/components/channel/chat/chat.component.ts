@@ -1,5 +1,6 @@
 
 import { Component, OnInit, NgZone, OnDestroy, HostListener } from '@angular/core';
+import { HttpErrorResponse } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
 import {
   NbBadgeModule,
@@ -22,12 +23,16 @@ import { User } from '../../../models/user.model';
 import { AdminService } from '../../../services/admin.service';
 import { MagnetAdsService } from '../../../services/magnet-ads.service';
 import { SlugService } from '../../../services/slug.service';
+import { ChannelStatusService } from '../../../services/channel-status.service';
 
 type LoadMsgOpt = {
   scrollDown?: boolean;
   messageId?: number;
   mark?: boolean;
   resetList?: boolean;
+  // Targeted load whose outcome the caller inspects itself: no scroll and no
+  // "not found" toast afterwards.
+  quiet?: boolean;
 }
 
 type ScrollOpt = {
@@ -57,6 +62,10 @@ type ScrollOpt = {
 export class ChatComponent implements OnInit, OnDestroy {
   private eventSource!: EventSource;
   private sseEverConnected = false;
+  // Id of the last stream entry received, for the manual reconnects below:
+  // only the browser's own retry sends Last-Event-ID, a fresh EventSource
+  // starts at the tip and silently loses whatever was published in between.
+  private lastEventId = '';
   messages: ChatMessage[] = [];
   adSlotsAfter: Set<number> = new Set();
   scheduledMessages!: ChatMessage[];
@@ -88,6 +97,7 @@ export class ChatComponent implements OnInit, OnDestroy {
     private notificationService: NotificationsService,
     private magnetAds: MagnetAdsService,
     private slugService: SlugService,
+    private channelStatus: ChannelStatusService,
     private zone: NgZone,
     private router: ActivatedRoute,
   ) { }
@@ -134,15 +144,38 @@ export class ChatComponent implements OnInit, OnDestroy {
     }
   }
 
-  scrollToId(opt: ScrollOpt) {
-    const element = document.getElementById(opt.messageId.toString());
+  scrollToId(opt: ScrollOpt, attempt: number = 0) {
+    const id = opt.messageId;
+    // Number() of a non-numeric quote id is NaN, which used to reach
+    // loadMessages as a target no page could ever contain.
+    if (!Number.isInteger(id) || id <= 0) {
+      this.notifyMessageNotFound();
+      return;
+    }
+    const element = document.getElementById(id.toString());
     if (element) {
       element.scrollIntoView({ behavior: opt.smooth ? 'smooth' : 'instant', block: 'center' });
       this.removeMsgMarked();
       opt.mark && element.classList.add('mark_message');
-    } else {
-      this.loadMessages({ scrollDown: false, messageId: opt.messageId, mark: opt.mark });
+      return;
     }
+    if (this.messages.some(m => m.id === id)) {
+      // Loaded but not painted yet (change detection is still pending right
+      // after a load resolves). Wait for the DOM instead of fetching: another
+      // page would only move the window away from a message already here.
+      if (attempt < 10) setTimeout(() => this.scrollToId(opt, attempt + 1), 50);
+      return;
+    }
+    // Outside the loaded window: ONE targeted load, after which loadMessages
+    // either scrolls or gives up. It used to call back here after every
+    // response, and this branch fetched again, so a target that never arrives
+    // (a deleted message a reader cannot see, a stale quote or last-read id)
+    // crawled the whole history page by page.
+    this.loadMessages({ scrollDown: false, messageId: id, mark: opt.mark });
+  }
+
+  private notifyMessageNotFound() {
+    this.toastrService.warning('', 'ההודעה לא נמצאה (ייתכן שנמחקה)');
   }
 
   private removeMsgMarked() {
@@ -194,7 +227,7 @@ export class ChatComponent implements OnInit, OnDestroy {
    * failed and left the feed empty, it shows a retry affordance instead of a
    * silent empty channel.
    */
-  private revealAfterInitialLoad(): void {
+  private async revealAfterInitialLoad(): Promise<void> {
     if (!this.lastLoadOk && !this.messages.length) {
       // Failed load, not an empty channel: surface it so the user can retry.
       this.initialLoadFailed = true;
@@ -209,20 +242,37 @@ export class ChatComponent implements OnInit, OnDestroy {
     const lastMsgId = this.messages[0]?.id;
     if (!lastMsgId) { this.isVisible = true; return; }
 
-    if (lastReadMsg && lastReadMsg < lastMsgId) {
+    // A stored id must be a real message id older than the tip; anything else
+    // (NaN from a hand-edited value, 0 from a missing key) is a first visit.
+    const wantsLastRead = Number.isInteger(lastReadMsg) && lastReadMsg > 0 && lastReadMsg < lastMsgId;
+    let lastReadLoaded = wantsLastRead && this.messages.some(m => m.id === lastReadMsg);
+    if (wantsLastRead && !lastReadLoaded) {
+      // Either more than a page unread, or a stale id (deleted since, or a
+      // reset history). ONE load positioned around the id — the same jump
+      // scrollToId uses — tells them apart; the old fallback paged through
+      // the entire history looking for it on every visit.
+      await this.loadMessages({ scrollDown: false, messageId: lastReadMsg, quiet: true });
+      lastReadLoaded = this.messages.some(m => m.id === lastReadMsg);
+    }
+
+    if (lastReadLoaded) {
       // Set the indicator BEFORE revealing the list so the line renders
       // at the right position on first paint — no visible jump.
       this.lastReadMessageId = lastReadMsg;
       this.scrollToId({ messageId: lastReadMsg, smooth: false, mark: false });
-      // Wait one frame for scrollToId to finish (it may need to load more messages),
-      // then reveal. setLastReadMessage only after the user has actually seen the
-      // position — so a refresh still brings them back.
+      // The message is loaded; scrollToId only has to wait for it to paint.
+      // Reveal after that, and setLastReadMessage only once the user has
+      // actually seen the position — so a refresh still brings them back.
       setTimeout(() => {
         this.isVisible = true;
         this.setLastReadMessage(lastMsgId.toString());
       }, 350);
     } else {
-      this.scrollToBottom(false);
+      // Not there: back to the tip (the jump above may have paged away from
+      // it, which scrollToBottom reloads) and the stale key is overwritten
+      // with the current tip, like a first visit.
+      this.lastReadMessageId = 0;
+      await this.scrollToBottom(false);
       this.isVisible = true;
       this.setLastReadMessage(lastMsgId.toString());
     }
@@ -233,7 +283,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
 
   private initializeMessageListener() {
-    this.eventSource = this.chatService.sseListener();
+    this.eventSource = this.chatService.sseListener(this.lastEventId);
 
     this.eventSource.onopen = () => {
       if (this.sseEverConnected) {
@@ -252,9 +302,16 @@ export class ChatComponent implements OnInit, OnDestroy {
 
     this.eventSource.onmessage = (event) => {
       this.lastHeartbeat = Date.now();
+      if (event.lastEventId) this.lastEventId = event.lastEventId;
 
       const message = JSON.parse(event.data);
       switch (message.type) {
+        case 'channel-deleted':
+          // Published right before the channel is removed; every request to
+          // it answers 404 from here on. Without this the page kept looking
+          // live, and the heartbeat watchdog reconnected to a 404 forever.
+          this.onChannelGone();
+          break;
         case 'new-message':
           if (this.hasNewMessages) break;
           if (this.messages.some(m => m.id === message.message.id)) break; // dedup after reconnect
@@ -263,7 +320,7 @@ export class ChatComponent implements OnInit, OnDestroy {
             this.rebuildItems();
             this.thereNewMessages = !this.isAtBottom() && message.message.authorId !== this.userInfo?.id;
             this.setLastReadMessage(message.message.id!.toString());
-            if (this.hasWriteRole() && this.scheduledMessages && message.message.author === "Scheduled") {
+            if (this.hasWriteRole() && this.scheduledMessages && this.cameFromScheduler(message.message)) {
               this.loadScheduledMessages(true);
             }
           });
@@ -289,16 +346,21 @@ export class ChatComponent implements OnInit, OnDestroy {
             const index = this.messages.findIndex(m => m.id === message.message.id);
             if (index !== -1) {
               this.messages[index] = message.message;
-            } else if (!message.message.deleted && this.messages.length) {
+            } else if (!message.message.deleted) {
               // Not in the list: this is a message that was deleted (readers
               // drop deleted messages, see 'delete-message') and has now been
-              // republished. Put it back where its id falls, if that is
-              // inside the loaded window; anything older is fetched with the
-              // history as usual.
-              const edited = message.message;
-              const when = (m: any) => new Date(m.timestamp).getTime();
-              const oldestLoaded = when(this.messages[this.messages.length - 1]);
-              if (when(edited) >= oldestLoaded || !this.hasOldMessages) {
+              // republished. Put it back where it falls in the loaded window
+              // — the list is in the server's time order, not id order, so
+              // the timestamp is the key. Beyond an end of the window that
+              // still has pages to load it is left to those pages; inserting
+              // it there would place it next to a gap.
+              const edited: ChatMessage = message.message;
+              const when = (m: ChatMessage) => new Date(m.timestamp!).getTime();
+              const newest = this.messages[0];
+              const oldest = this.messages[this.messages.length - 1];
+              const beyondNewest = !!newest && when(edited) > when(newest) && this.hasNewMessages;
+              const beyondOldest = !!oldest && when(edited) < when(oldest) && this.hasOldMessages;
+              if (!beyondNewest && !beyondOldest) {
                 const at = this.messages.findIndex(m => when(m) < when(edited));
                 this.messages.splice(at === -1 ? this.messages.length : at, 0, edited);
                 this.rebuildItems();
@@ -325,6 +387,29 @@ export class ChatComponent implements OnInit, OnDestroy {
     this.schedulingSub?.unsubscribe();
     clearTimeout(this.fragmentTimer);
     this.fragmentSub?.unsubscribe();
+  }
+
+  /**
+   * The channel no longer exists (a channel-deleted event, or a 404 from a
+   * message route — the slug middleware answers 404 before any of them runs).
+   * Stop the stream and its watchdog so nothing keeps reconnecting, and raise
+   * the not-found flag the channel page already renders for a wrong address.
+   */
+  private onChannelGone() {
+    this.subLastHeartbeat?.unsubscribe();
+    this.chatService.sseClose();
+    this.zone.run(() => this.channelStatus.markNotFound(this.slugService.slug));
+  }
+
+  // The scheduler used to post under the literal author "Scheduled"; it now
+  // posts under the scheduler's own display name, so the author alone no
+  // longer tells a dispatched scheduled message from a regular one. A
+  // pending entry whose time had come by the new message's timestamp does.
+  private cameFromScheduler(incoming: ChatMessage): boolean {
+    if (incoming.author === 'Scheduled') return true;
+    if (!this.scheduledMessages?.length) return false;
+    const at = new Date(incoming.timestamp!).getTime();
+    return this.scheduledMessages.some(s => new Date(s.timestamp!).getTime() <= at);
   }
 
   private rebuildItems() {
@@ -379,8 +464,9 @@ export class ChatComponent implements OnInit, OnDestroy {
           this.thereNewMessages = true;
         }
       });
-    } catch {
-      // Best-effort; will retry on the next reconnect
+    } catch (error) {
+      if (error instanceof HttpErrorResponse && error.status === 404) this.onChannelGone();
+      // Otherwise best-effort; will retry on the next reconnect
     }
   }
 
@@ -437,7 +523,13 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
 
   async loadMessages(opt: LoadMsgOpt = {}) {
-    if (this.isLoading || (opt.scrollDown && !this.hasNewMessages) || (!opt.scrollDown && !this.hasOldMessages)) return;
+    if (this.isLoading) return;
+    // The "nothing further" flags describe the ends of the current window; a
+    // targeted load (messageId) positions its own page and may go either way,
+    // and a reset starts over from the tip regardless of where the window was
+    // (after a jump that landed near the channel's first message, the "no
+    // older" flag used to refuse the very reload that scrollToBottom needs).
+    if (!opt.messageId && !opt.resetList && (opt.scrollDown ? !this.hasNewMessages : !this.hasOldMessages)) return;
 
     // Reset before the attempt; the catch flips it. Read after the call to tell
     // an empty feed caused by a failed request from a genuinely empty channel.
@@ -455,10 +547,16 @@ export class ChatComponent implements OnInit, OnDestroy {
     } else {
       if (opt.messageId) {
         if (opt.messageId > maxId + this.limit) {
+          // Newer than the next page up. An asc page starts AFTER the offset
+          // key in the time index, so a start above the target (id + 10, as
+          // this used to do) returned a page that could not contain it — and
+          // when that id did not exist yet the Lua found no rank and began at
+          // the channel's very first message. Ten below puts the target
+          // around the tenth row.
           resetList = true;
           this.hasNewMessages = true;
           this.hasOldMessages = true;
-          startId = opt.messageId + 10;
+          startId = Math.max(0, opt.messageId - 10);
           direction = "asc";
           opt.scrollDown = true;
         } else if (opt.messageId > maxId) {
@@ -499,11 +597,21 @@ export class ChatComponent implements OnInit, OnDestroy {
         // re-fetched the same window over and over, duplicating it.
         this.offset = this.messages.length ? this.messages[this.messages.length - 1].id! : 0;
         this.rebuildItems();
-        setTimeout(() => {
-          opt.messageId && this.scrollToId({ messageId: opt.messageId, smooth: false, mark: opt.mark });
-        }, 300);
+        if (opt.messageId && !opt.quiet) {
+          const target = opt.messageId;
+          if (this.messages.some(m => m.id === target)) {
+            setTimeout(() => this.scrollToId({ messageId: target, smooth: false, mark: opt.mark }), 300);
+          } else {
+            // The one page positioned around it did not hold it: it is gone
+            // (deleted, or moved in time by an import). Stop here — this is
+            // where the old code asked scrollToId again, which fetched the
+            // next page, and the next, through the entire history.
+            this.notifyMessageNotFound();
+          }
+        }
       }
     } catch (error) {
+      if (error instanceof HttpErrorResponse && error.status === 404) this.onChannelGone();
       console.error('שגיאה בטעינת הודעות:', error);
       this.lastLoadOk = false;
     } finally {

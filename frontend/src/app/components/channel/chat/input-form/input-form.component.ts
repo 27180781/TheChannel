@@ -99,6 +99,12 @@ export class InputFormComponent implements OnInit, OnDestroy {
       }
       if (edit.isScheduling) {
         this.schedulingMessage = edit.message?.timestamp;
+      } else if (!edit.new) {
+        // Editing a LIVE message: a schedule time picked earlier must not
+        // survive, or send takes the scheduling branch with a live message
+        // id and writes it into the scheduled list at that index. (A quote —
+        // edit.new — only adds text, so a chosen time is kept there.)
+        this.schedulingMessage = undefined;
       }
       if (edit.new) {
         this.input = this.input ? `${this.input}\n${edit.message.text}` : edit.message.text || '';
@@ -208,14 +214,15 @@ export class InputFormComponent implements OnInit, OnDestroy {
         return;
       }
 
+      const scheduled = !!this.schedulingMessage;
       let result: boolean;
-      result = this.schedulingMessage ? await this.saveSchedulingMessage() : this.message ? await this.updateMessage() : await this.sendNewMessage();
+      result = scheduled ? await this.saveSchedulingMessage() : this.message ? await this.updateMessage() : await this.sendNewMessage();
 
       if (!result) {
         throw new Error();
       }
 
-      this.toastrService.success("", "הודעה פורסמה בהצלחה");
+      this.toastrService.success("", scheduled ? "ההודעה תוזמנה בהצלחה" : "הודעה פורסמה בהצלחה");
       this.clearInputs();
     } catch (error) {
       this.toastrService.danger("", "שגיאה בפרסום הודעה");
@@ -226,12 +233,16 @@ export class InputFormComponent implements OnInit, OnDestroy {
 
   async updateMessage(): Promise<boolean> {
     if (!this.message) return false;
-    this.message.text = this.input;
-    this.message.deleted = false;
-    this.message.is_ads = this.isAds;
+    // Posted as a copy: this.message IS the feed's object, and writing the edit
+    // into it before the request meant a rejected save (403/500) still showed
+    // the unsaved text and an un-deleted state until reload. The feed is
+    // updated by the 'edit-message' SSE event, which carries the saved message.
+    //
     // A rejected save must leave the composer untouched — reporting success here
     // would clear the textarea and lose whatever the user just wrote.
-    const res = await firstValueFrom(this.adminService.editMessage(this.message));
+    const res = await firstValueFrom(this.adminService.editMessage({
+      ...this.message, text: this.input, deleted: false, is_ads: this.isAds,
+    }));
     if (!res?.success) return false;
     this.cancelUpdateMessage();
     return true;
@@ -253,11 +264,12 @@ export class InputFormComponent implements OnInit, OnDestroy {
 
     try {
       if (this.message) {
-        this.message.text = this.input;
-        this.message.is_ads = this.isAds;
-        this.message.timestamp = this.schedulingMessage;
-
-        await this.adminService.editScheduledMessage(this.message);
+        // A copy, for the same reason as updateMessage: this.message is the
+        // scheduled list's own entry, and the service only commits the new
+        // list once the server accepted it.
+        await this.adminService.editScheduledMessage({
+          ...this.message, text: this.input, is_ads: this.isAds, timestamp: this.schedulingMessage,
+        });
       } else {
         await this.adminService.setScheduledMessage(m);
       }
@@ -341,6 +353,11 @@ export class InputFormComponent implements OnInit, OnDestroy {
     if (!items) return;
     for (let i = 0; i < items.length; i++) {
       if (items[i].type.startsWith('image/')) {
+        // The attach button is hidden when the channel has uploads off; a
+        // pasted picture bypassed that and earned a 403 from the server. The
+        // paste is left alone so whatever text the clipboard also carries
+        // still lands in the textarea.
+        if (!this.chatService.fileUploadsEnabled) continue;
         const file = items[i].getAsFile();
         if (!file) continue;
         event.preventDefault();

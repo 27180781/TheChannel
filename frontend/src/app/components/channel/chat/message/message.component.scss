@@ -45,6 +45,43 @@ nb-icon {
     transform: translateY(-5px);
   }
 
+  // Sizing of the media embeds the renderers in markdown.config.ts emit. It was
+  // inline style on those elements; the feed sanitizer now strips every style
+  // attribute (a writer's raw-HTML style could overlay the whole page), so the
+  // renderers' own styling has to be classes — the ones on its allow-list.
+  markdown .embed-box {
+    max-width: 300px;
+    height: auto;
+  }
+
+  markdown .embed-video {
+    width: 100%;
+    height: auto;
+  }
+
+  markdown .embed-youtube {
+    position: relative;
+  }
+
+  markdown .embed-youtube-icon {
+    position: absolute;
+    place-self: anchor-center;
+    color: red;
+    font-size: 70px;
+  }
+
+  // Wraps each picture/video an anonymous viewer may not see, under the
+  // "log in to view" overlay. The minimum size keeps the overlay readable
+  // over an image that never loads (the server answers 401) and so has no
+  // box of its own.
+  .auth-overlay-wrapper {
+    position: relative;
+    display: inline-block;
+    max-width: 100%;
+    min-width: 200px;
+    min-height: 120px;
+  }
+
   i {
     cursor: pointer;
   }

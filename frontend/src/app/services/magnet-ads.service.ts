@@ -10,6 +10,12 @@ export interface MagnetSettings {
   minTimeSeconds: number;
   perSeconds: number;
   minMessagesSinceLast: number;
+  /**
+   * True when the super admin locked magnet ads (globally or for this
+   * channel): the values above are then the global ones and the channel's own
+   * settings are ignored. Optional — an older backend omits it.
+   */
+  locked?: boolean;
 }
 
 @Injectable({ providedIn: 'root' })

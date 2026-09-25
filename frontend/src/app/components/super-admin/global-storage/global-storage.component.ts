@@ -30,17 +30,33 @@ import { SuperAdminService } from '../../../services/super-admin.service';
                   placeholder="נפח ברירת מחדל (GB)">
           </nb-form-field>
           <span class="text-muted">GB לכל ערוץ</span>
-          <button nbButton status="primary" (click)="save()" [disabled]="saving">
+          <button nbButton status="primary" (click)="save()" [disabled]="saving || quotaInvalid">
             {{ saving ? 'שומר...' : 'שמור' }}
           </button>
         </div>
+        @if (quotaInvalid) {
+          <p class="text-danger mt-2 mb-0"><small>יש להזין נפח ברירת מחדל של 1 GB לפחות.</small></p>
+        }
       </nb-card-body>
     </nb-card>
   `
 })
 export class GlobalStorageComponent implements OnInit {
-  defaultQuotaGb = 5;
+  // null when the number input is cleared (ngModel posts null, which the
+  // server reads as 0).
+  defaultQuotaGb: number | null = 5;
   saving = false;
+
+  /**
+   * A stored 0 is not "use the default": the upload path treats an effective
+   * quota of 0 as unlimited, so an empty or 0 field silently lifted every
+   * channel's limit. min="1" on the input is only a hint.
+   */
+  get quotaInvalid(): boolean {
+    const gb = Number(this.defaultQuotaGb);
+    return this.defaultQuotaGb === null || this.defaultQuotaGb === undefined
+      || !Number.isFinite(gb) || gb < 1;
+  }
 
   constructor(
     private superAdminService: SuperAdminService,
@@ -57,9 +73,10 @@ export class GlobalStorageComponent implements OnInit {
   }
 
   async save() {
+    if (this.quotaInvalid) return;
     this.saving = true;
     try {
-      await this.superAdminService.setGlobalStorageConfig(this.defaultQuotaGb);
+      await this.superAdminService.setGlobalStorageConfig(Number(this.defaultQuotaGb));
       this.toastr.success('הגדרות אחסון נשמרו', 'אחסון');
     } catch {
       this.toastr.danger('שגיאה בשמירה', 'שגיאה');

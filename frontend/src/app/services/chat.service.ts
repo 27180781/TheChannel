@@ -136,12 +136,19 @@ export class ChatService {
     return firstValueFrom(this.http.post<ResponseResult>(`/api/channel/${this.slug}/messages/report`, { messageId, reason }));
   }
 
-  sseListener(): EventSource {
+  /**
+   * `lastEventId` is the id of the last stream entry the caller received. Only
+   * the browser's own retry sends it as Last-Event-ID; an EventSource created
+   * here starts at the tip, so the caller hands it over and the server resumes
+   * from `?last_id=` whenever the header is absent.
+   */
+  sseListener(lastEventId: string = ''): EventSource {
     if (this.eventSource) {
       this.eventSource.close();
     }
 
-    this.eventSource = new EventSource(`/api/channel/${this.slug}/events`);
+    const url = `/api/channel/${this.slug}/events`;
+    this.eventSource = new EventSource(lastEventId ? `${url}?last_id=${encodeURIComponent(lastEventId)}` : url);
 
     this.eventSource.onopen = () => {
       console.log('Connection opened');

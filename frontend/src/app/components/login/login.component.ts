@@ -38,6 +38,15 @@ export class LoginComponent implements OnInit {
     this.checkUserInfo = false;
 
     this._route.queryParams.subscribe(params => {
+      if (params['error']) {
+        // Google sends the user back with error=access_denied when they cancel
+        // the consent screen (and other error codes for a misconfigured app).
+        // Only params['code'] used to be inspected, so this showed the login
+        // button again as if nothing had happened.
+        this.clearOauthState();
+        this.status = 'failed';
+        return;
+      }
       if (params['code'] && params['state'] !== localStorage.getItem('google_oauth_state')) {
         // Google sent us back but the anti-CSRF state does not match what this
         // browser stored (storage cleared, a second tab, a replayed link).
@@ -49,6 +58,11 @@ export class LoginComponent implements OnInit {
       if (params['code'] && params['state'] === localStorage.getItem('google_oauth_state')) {
         this.code = params['code'];
         this.checkUserInfo = true;
+        // The state is single-use: once the code is consumed the callback URL
+        // must stop matching, otherwise the Back button (after a logout) lands
+        // on this history entry and re-posts the already-spent code, which the
+        // server rejects with 500 and the user sees a failure they did not cause.
+        this.clearOauthState();
         this._authService.login(this.code).then(async () => {
           await this._authService.loadUserInfo();
           this.redirectAfterLogin();
@@ -62,16 +76,36 @@ export class LoginComponent implements OnInit {
     });
   }
 
+  private clearOauthState() {
+    try {
+      localStorage.removeItem('google_oauth_state');
+    } catch {
+      // Storage unavailable — nothing was stored to begin with.
+    }
+  }
+
   private redirectAfterLogin() {
+    // Consumed for every role, before any early return: the super-admin branch
+    // used to return first, leaving the stored URL behind for the next
+    // (non-admin) login on the same browser, which was then dropped into a
+    // channel it never asked for.
+    const returnUrl = localStorage.getItem('returnUrl');
+    localStorage.removeItem('returnUrl');
+    const hasReturnUrl = !!returnUrl && !returnUrl.startsWith('/login');
+
     if (this._authService.userInfo?.globalRole === 'super_admin') {
-      this.router.navigate(['/super-admin']);
+      // A super admin who signed in from a channel page wants that page back,
+      // not the panel; the panel is only the default.
+      if (hasReturnUrl) {
+        this.router.navigateByUrl(returnUrl!);
+      } else {
+        this.router.navigate(['/super-admin']);
+      }
       return;
     }
 
-    const returnUrl = localStorage.getItem('returnUrl');
-    localStorage.removeItem('returnUrl');
-    if (returnUrl && !returnUrl.startsWith('/login')) {
-      this.router.navigateByUrl(returnUrl);
+    if (hasReturnUrl) {
+      this.router.navigateByUrl(returnUrl!);
       return;
     }
 

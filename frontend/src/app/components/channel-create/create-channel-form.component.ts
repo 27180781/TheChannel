@@ -11,7 +11,7 @@ import {
 } from '@nebular/theme';
 import { GuideComponent } from '../admin/guide/guide.component';
 import { Subject, Subscription, of } from 'rxjs';
-import { catchError, debounceTime, distinctUntilChanged, switchMap } from 'rxjs/operators';
+import { catchError, debounceTime, map, switchMap } from 'rxjs/operators';
 import {
   ChannelService,
   SLUG_PATTERN,
@@ -123,15 +123,23 @@ export class CreateChannelFormComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
+    // No distinctUntilChanged here: queueSlugCheck() flips the field to
+    // 'checking' on every keystroke, and dropping a re-check of the last
+    // checked slug (type a letter and backspace it within the debounce) left
+    // the spinner on forever. The debounce already coalesces bursts and
+    // switchMap cancels a stale request.
     this.slugSub = this.slugChecks$.pipe(
       debounceTime(400),
-      distinctUntilChanged(),
       switchMap(slug => this.channelService.checkSlugAvailability(slug).pipe(
         // A failed check must not wedge the field in "checking" forever; treat
         // it as "no opinion" and let the server have the last word on submit.
         catchError(() => of<SlugAvailability | null>(null)),
+        map(result => ({ slug, result })),
       )),
-    ).subscribe(result => {
+    ).subscribe(({ slug, result }) => {
+      // The field may have been cleared or made invalid while the request was
+      // in flight; that state was set by queueSlugCheck() and must stand.
+      if (slug !== this.slug) return;
       if (!result) {
         this.slugState = 'empty';
         this.slugMessage = '';
@@ -233,6 +241,15 @@ export class CreateChannelFormComponent implements OnInit, OnDestroy {
 
     switch (err?.status) {
       case 409:
+        // The server answers 409 for two unrelated things: 'slug already
+        // taken' and the per-account creation lock ('another channel is
+        // already being created for this account', e.g. a second tab or a
+        // retry within its window). The lock is not the slug's fault, so it
+        // must not tell the user to pick another one.
+        if (text.includes('already being created')) {
+          this.formError = 'יצירת ערוץ אחר עדיין בתהליך, נסו שוב בעוד רגע';
+          return;
+        }
         // Inline on the slug field — that is the field they have to change.
         this.slugState = 'unavailable';
         this.slugMessage = 'ה-slug תפוס, בחר אחר';

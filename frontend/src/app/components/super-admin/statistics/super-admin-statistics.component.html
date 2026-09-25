@@ -29,6 +29,8 @@
     <nb-card-body>
       @if (loadingStats) {
         <p class="text-center">טוען...</p>
+      } @else if (magnetError) {
+        <p class="text-center text-muted">{{ magnetError }}</p>
       } @else if (!magnetStats) {
         <p class="text-center text-muted">אין נתונים זמינים</p>
       } @else {
