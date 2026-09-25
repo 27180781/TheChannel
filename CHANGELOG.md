@@ -106,7 +106,19 @@ A single Go backend instance and a single Redis/Kvrocks instance serve **all cha
 /auth/google
 /auth/login
 /auth/logout
-/api/user-info
+/favicon.ico, /assets/favicon.ico
+/firebase-messaging-sw.js
+
+(login required, global)
+  GET  /api/user-info
+  POST /api/channels/create          self-service channel creation
+  GET  /api/channels/slug-available
+
+/api/support/*  (no login; an anonymous thread is guarded by its token)
+  POST /tickets
+  GET  /tickets/{id}
+  POST /tickets/{id}/reply
+  GET  /my-tickets                   (login required)
 
 /api/super-admin/*  (login + requireSuperAdmin)
   GET  /channels
@@ -130,6 +142,12 @@ A single Go backend instance and a single Redis/Kvrocks instance serve **all cha
   GET  /storage/config
   POST /storage/config
   POST /statistics/reset
+  GET  /support/tickets
+  POST /support/tickets/{id}/reply
+  POST /support/tickets/{id}/status
+  GET  /channel-requests
+  POST /channel-requests/{id}/approve
+  POST /channel-requests/{id}/reject
 
 /api/channel/{slug}/import/post  (API key auth)
 
@@ -138,7 +156,6 @@ A single Go backend instance and a single Redis/Kvrocks instance serve **all cha
   GET  /messages
   GET  /events
   GET  /files/{fileid}
-  POST /files
   GET  /emojis/list
   GET  /notifications-config
   GET  /ads/settings
@@ -149,20 +166,30 @@ A single Go backend instance and a single Redis/Kvrocks instance serve **all cha
     POST /messages/report
     GET  /user-info
 
-  /admin/*  (channel owner+)
-    PUT  /info
-    POST /messages
-    PUT  /messages/{id}
-    DELETE /messages/{id}
-    POST /emojis
-    GET/POST /settings
-    GET/POST /users
-    GET/PUT  /storage
-    POST /storage/auto-cleanup
-    GET/PUT  /scheduled-messages
-    GET  /statistics
-    GET/POST /reports
+  /admin/*  (channel role: writer < moderator < owner; a higher tier includes the lower)
+    writer:
+      POST   /new
+      POST   /edit-message
+      DELETE /delete-message/{id}
+      POST   /upload
+      GET    /scheduled-messages/get
+      POST   /scheduled-messages/update
+    moderator:
+      POST /edit-channel-info
+      GET  /statistics
+      POST /set-emojis
+      GET  /reports/get
+      POST /reports/set
+    owner:
+      GET  /settings/get
+      POST /settings/set
+      GET  /users/get
+      POST /users/set
+      GET  /storage
+      POST /storage/auto-cleanup
 ```
+
+`backend/main.go` is the authoritative route table; the block above mirrors it.
 
 ### Frontend
 
@@ -216,10 +243,10 @@ A single Go backend instance and a single Redis/Kvrocks instance serve **all cha
 - Super admin sets a **global default quota** (default: 5 GB per channel)
 - Super admin can **override per-channel** from the channels list → "אחסון"
 - Channel owners see **usage bar** with color-coded status:
-  - Green (`ok`): < 80% used
-  - Orange (`warning`): 80–90% used
-  - Red (`critical`): > 90% used
-- **Auto-cleanup toggle**: When enabled, automatically deletes oldest files to reach 80% usage before new uploads, ensuring uploads always succeed
+  - Green (`ok`): below 80% used
+  - Orange (`warning`): 80% up to, not including, 90%
+  - Red (`critical`): 90% and above
+- **Auto-cleanup toggle**: When enabled, an upload that would exceed the quota first deletes the channel's oldest files (at most the 200 oldest, never the current logo), aiming for 80% usage; if that does not free enough space the upload is still refused with `storage quota exceeded`
 - File deduplication: identical files (same SHA-256 hash) share one physical copy; storage only freed when last reference is removed
 
 ### 5. Cloudflare R2 Storage
@@ -248,11 +275,15 @@ Add to your `.env` / CapRover environment:
 
 ```
 # Cloudflare R2
-R2_ACCOUNT_ID=your_account_id
-R2_ACCESS_KEY_ID=your_access_key_id
-R2_SECRET_ACCESS_KEY=your_secret_access_key
-R2_BUCKET_NAME=your_bucket_name
-R2_PUBLIC_URL=https://pub-xxxx.r2.dev   # optional, for direct CDN links
+# Leave all four unset to keep files on local disk; a value starting with
+# "your_" is treated as unset. No inline comments: env-file loaders keep them
+# as part of the value.
+R2_ACCOUNT_ID=
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+R2_BUCKET_NAME=
+# optional, for direct CDN links
+R2_PUBLIC_URL=
 ```
 
 ---
