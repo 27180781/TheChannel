@@ -1,6 +1,6 @@
 import { Hooks, Token, Tokens, TokensList } from "marked";
 import { MarkdownModuleConfig, MARKED_EXTENSIONS, MARKED_OPTIONS, MarkedRenderer } from "ngx-markdown";
-import DOMPurify from "dompurify";
+import DOMPurify, { UponSanitizeAttributeHookEvent } from "dompurify";
 
 /**
  * Embed token: `[image-embedded#](url)`, optionally carrying the media's pixel
@@ -15,6 +15,20 @@ import DOMPurify from "dompurify";
 const matchCustomEmbedRegEx = /^\[(video|audio|image|quote)-embedded#(\d+x\d+)?]\((.*?)\)/;
 
 /**
+ * The quote token is matched on its own, before the generic pattern, and runs
+ * to the last ')' on its line. The generic pattern is non-greedy, so a quoted
+ * text that itself contained ')' — "(ראו למטה)" — ended the token at that
+ * first ')' and the remainder of the quote leaked into the message as plain
+ * text. The composer always terminates a quote token with a newline
+ * (message.component.ts quoteMessage), so nothing else shares its line.
+ */
+// Greedy to the last ')' so a quoted text with parentheses is not cut, but
+// only when the token ends the line (the composer always terminates it with a
+// newline); a legacy message with reply text on the same line falls back to
+// the non-greedy generic pattern below, or that text would be swallowed.
+const matchQuoteEmbedRegEx = /^\[quote-embedded#]\(([^\n]*)\)[ \t]*(?=\n|$)/;
+
+/**
  * The embed token's opening bracket, without the payload — for callers that
  * only need to know a message *is* an embed and of which kind (capture group 1).
  *
@@ -25,8 +39,18 @@ const matchCustomEmbedRegEx = /^\[(video|audio|image|quote)-embedded#(\d+x\d+)?]
  */
 export const EMBED_PREFIX_REGEX = /^\[(video|audio|image|quote)-embedded#(?:\d+x\d+)?]/;
 
-//https://regexr.com/3dj5t
-const matchYoutubeRegEx = /^((?:https?:)?\/\/)?((?:www|m)\.)?((?:youtube\.com|youtu.be))(\/(?:[\w\-]+\?v=|embed\/|v\/)?)(?<id>[\w\-]+)(\S+)?$/;
+/**
+ * Only the URL forms that carry a video id: watch?v=, embed/, v/, shorts/ and
+ * youtu.be/, each followed by the 11-character id. The previous pattern
+ * (regexr.com/3dj5t) made the path segment optional, so youtube.com/shorts/ID,
+ * /playlist?list=… and /channel/UC… all matched with "shorts", "playlist" or
+ * "channel" captured as the id — a broken thumbnail and a player that could
+ * not play. Its trailing `$` (no `m` flag) also meant a URL followed by a line
+ * break and more text was never embedded at all; the lookahead accepts any
+ * whitespace, so the `breaks: true` line break no longer defeats it. The
+ * scheme stays optional, as before, so a bare www.youtube.com/… still embeds.
+ */
+const matchYoutubeRegEx = /^(?:(?:https?:)?\/\/)?(?:(?:www|m)\.)?(?:youtube\.com\/(?:watch\?(?:[^\s#]*&)?v=|embed\/|v\/|shorts\/)|youtu\.be\/)(?<id>[\w-]{11})(?:[^\s]*)?(?=\s|$)/;
 
 /**
  * Every image the feed renders goes out with native lazy loading: messages
@@ -96,9 +120,24 @@ function escapeHtml(value: unknown): string {
  * browser but not to a naive prefix test.
  */
 function safeUrl(value: unknown): string {
+  return cleanUrl(value, /^https?$/i);
+}
+
+/**
+ * The same, for an anchor's href, where mailto: and tel: are honoured as well.
+ * GFM autolinks turn office@example.com into a mailto: link, and safeUrl's
+ * http(s)-only rule blanked that href: the address rendered as a link that
+ * went nowhere. src attributes keep the strict rule — the browser would only
+ * ever be asked to *fetch* a src, and there is nothing to fetch from mailto:.
+ */
+function safeHref(value: unknown): string {
+  return cleanUrl(value, /^(https?|mailto|tel)$/i);
+}
+
+function cleanUrl(value: unknown, allowedSchemes: RegExp): string {
   const url = String(value ?? '').replace(/[\u0000-\u001F\u007F]/g, '').trim();
   const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(url);
-  if (scheme && !/^https?$/i.test(scheme[1])) return '';
+  if (scheme && !allowedSchemes.test(scheme[1])) return '';
   return escapeHtml(url);
 }
 
@@ -106,28 +145,26 @@ const customEmbedExtension = {
   extensions: [{
     name: 'custom_embed',
     level: 'inline',
-    start: (src: string) => src.match(matchCustomEmbedRegEx)?.index ?? src.match(matchYoutubeRegEx)?.index,
+    start: (src: string) => src.match(matchQuoteEmbedRegEx)?.index ?? src.match(matchCustomEmbedRegEx)?.index ?? src.match(matchYoutubeRegEx)?.index,
     tokenizer: (src: string, tokens: Token[] | TokensList) => {
+
+      const quote = src.match(matchQuoteEmbedRegEx);
+      if (quote) {
+        const s = quote[1].split(/@(.*)/);
+        return {
+          type: 'custom_embed',
+          raw: quote[0],
+          meta: { type: 'quote', id: s[0], url: s[1] },
+        };
+      }
 
       let match = src.match(matchCustomEmbedRegEx);
       if (match) {
-        switch (match[1]) {
-          case 'quote':
-            const s = match[3].split(/@(.*)/);
-            return {
-              type: 'custom_embed',
-              raw: match[0],
-              meta: { type: 'quote', id: s[0], url: s[1] },
-            };
-
-          default:
-            return {
-              type: 'custom_embed',
-              raw: match[0],
-              meta: { type: match[1], url: match[3], size: match[2] },
-            };
-        }
-
+        return {
+          type: 'custom_embed',
+          raw: match[0],
+          meta: { type: match[1], url: match[3], size: match[2] },
+        };
       }
 
       match = src.match(matchYoutubeRegEx);
@@ -143,6 +180,10 @@ const customEmbedExtension = {
     },
     renderer: (token: Tokens.Generic) => {
       const { type, url, id, size } = token['meta'];
+      // No inline style anywhere below: the sanitizer strips every `style`
+      // attribute (see sanitizeFeedHtml), so the embeds' own sizing lives in
+      // the embed-* classes, defined in message.component.scss and listed in
+      // FEED_CLASSES.
       switch (type) {
         case 'video':
           // metadata, not auto: enough for the poster frame and duration
@@ -150,16 +191,16 @@ const customEmbedExtension = {
           // The size token is not emitted for video, so this is inert today;
           // it costs nothing and lets a recorded size reserve the player box
           // if the upload path ever measures video too.
-          return `<div style="max-width: 300px; height: auto;"><video controls preload="metadata" style="width: 100%; height: auto;"${sizeAttrs(size)}><source src="${safeUrl(url)}" type="video/mp4"></video></div>`;
+          return `<div class="embed-box"><video controls preload="metadata" class="embed-video"${sizeAttrs(size)}><source src="${safeUrl(url)}" type="video/mp4"></video></div>`;
         case 'audio':
           return `<div><audio src="${safeUrl(url)}" controls preload="metadata"></audio></div>`;
         case 'image':
           // The real size when the upload path recorded it, so the box
           // reserves the right height; the old flat width="300" otherwise.
-          return `<div style="max-width: 300px; height: auto;"><img src="${safeUrl(url)}"${LAZY_IMG_ATTRS} class="img-fluid"${sizeAttrs(size) || ' width="300"'}></div>`;
+          return `<div class="embed-box"><img src="${safeUrl(url)}"${LAZY_IMG_ATTRS} class="img-fluid"${sizeAttrs(size) || ' width="300"'}></div>`;
         case 'youtube':
-          return `<div style="position: relative; max-width: 300px; height: auto;"><img youtubeid="${escapeHtml(id)}" src="https://ytimg.googleusercontent.com/vi/${encodeURIComponent(String(id))}/hqdefault.jpg"${LAZY_IMG_ATTRS} class="img-fluid" width="300" height="225"><i
-          class="bi bi-youtube" youtubeid="${escapeHtml(id)}" style="position: absolute; place-self: anchor-center; color: red; font-size: 70px;"></i></div>`;
+          return `<div class="embed-box embed-youtube"><img youtubeid="${escapeHtml(id)}" src="https://ytimg.googleusercontent.com/vi/${encodeURIComponent(String(id))}/hqdefault.jpg"${LAZY_IMG_ATTRS} class="img-fluid" width="300" height="225"><i
+          class="bi bi-youtube embed-youtube-icon" youtubeid="${escapeHtml(id)}"></i></div>`;
         case 'quote':
           return `<blockquote class="quote" quote-id="${escapeHtml(id)}"><p>${escapeHtml(url)}</p></blockquote>`;
         default:
@@ -175,7 +216,12 @@ const renderer = new MarkedRenderer();
 renderer.link = ({ href, text }) => {
   // Overriding marked's link renderer also discards its escaping and its
   // cleanUrl scheme check, so both have to be reapplied here.
-  return `<a target="_blank" rel="noopener noreferrer" href="${safeUrl(href)}">${escapeHtml(text)}</a>`;
+  const url = safeHref(href);
+  // mailto:/tel: hand off to the mail or phone app; opened in a new tab they
+  // leave an empty tab behind. Everything else — including uploaded files at
+  // /api/... — still opens in a new tab so the reader keeps their place.
+  const target = /^(mailto|tel):/i.test(url) ? '' : ' target="_blank" rel="noopener noreferrer"';
+  return `<a${target} href="${url}">${escapeHtml(text)}</a>`;
 }
 
 // Plain markdown images (![alt](url)) bypass the custom_embed extension, so
@@ -208,19 +254,53 @@ renderer.image = ({ href, title, text }) => {
  * DOMPurify allows `data:` URIs on media tags (img/video/audio/source)
  * independent of ALLOWED_URI_REGEXP, as a legitimate way to inline images. The
  * feed never inlines media that way — every image is a relative /api/... URL or
- * an https thumbnail — so this hook strips any src/href that is not http(s),
- * mailto, or relative. A `data:text/html` src on an img is inert on its own (an
+ * an https thumbnail — so this hook strips any src that is not http(s) or
+ * relative, and any href that is not that, mailto: or tel: (the schemes
+ * safeHref honours). A `data:text/html` src on an img is inert on its own (an
  * img never runs its src as a document), but removing it leaves no room for
  * doubt and matches the backend's own scheme allow-list.
  */
+const URL_ATTR_SCHEMES: ReadonlyArray<[string, RegExp]> = [
+  ['src', /^https?$/i],
+  ['href', /^(https?|mailto|tel)$/i],
+];
+
 DOMPurify.addHook('afterSanitizeAttributes', (node: Element) => {
-  for (const attr of ['src', 'href']) {
+  for (const [attr, allowed] of URL_ATTR_SCHEMES) {
     const value = node.getAttribute?.(attr);
     if (value === null || value === undefined) continue;
     const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(value.trim());
-    if (scheme && !/^(https?|mailto)$/i.test(scheme[1])) {
+    if (scheme && !allowed.test(scheme[1])) {
       node.removeAttribute(attr);
     }
+  }
+});
+
+/**
+ * The only classes the feed's own markup uses: what the renderers above emit,
+ * plus the `language-*` marker marked puts on fenced code for Prism.
+ *
+ * bootstrap.min.css is loaded globally, so a `class` attribute in raw HTML
+ * handed a writer the whole layout toolkit: `<div class="position-fixed top-0
+ * start-0 vw-100 vh-100 bg-white z-3">` covered the page for every viewer, and
+ * a `style` attribute did the same with no framework at all — a phishing
+ * overlay in a message. `style` is therefore forbidden outright in
+ * sanitizeFeedHtml, and a `class` attribute survives only when every one of
+ * its tokens is on this list; otherwise the attribute is dropped and the
+ * element itself (the `<u>`, `<b>`, `<br>` older messages carry) stays as it
+ * was.
+ */
+const FEED_CLASSES: ReadonlySet<string> = new Set([
+  'img-fluid', 'quote', 'bi', 'bi-youtube',
+  'embed-box', 'embed-video', 'embed-youtube', 'embed-youtube-icon',
+]);
+const FEED_CLASS_PATTERN = /^language-[\w-]+$/;
+
+DOMPurify.addHook('uponSanitizeAttribute', (_node: Element, data: UponSanitizeAttributeHookEvent) => {
+  if (data.attrName !== 'class') return;
+  const tokens = data.attrValue.split(/\s+/).filter(Boolean);
+  if (!tokens.every(t => FEED_CLASSES.has(t) || FEED_CLASS_PATTERN.test(t))) {
+    data.keepAttr = false;
   }
 });
 
@@ -234,11 +314,15 @@ function sanitizeFeedHtml(html: string): string {
     // Event handlers and dangerous URL schemes are removed by DOMPurify
     // regardless of this list.
     FORBID_TAGS: ['style', 'iframe', 'form', 'input', 'button', 'object', 'embed', 'svg', 'math', 'link', 'meta', 'base'],
+    // Inline style is a page-wide overlay waiting to happen (see FEED_CLASSES);
+    // nothing the feed renders needs it.
+    FORBID_ATTR: ['style'],
     // Only the schemes the feed actually uses: https/http (youtube, external
-    // links), mailto, and relative URLs (uploaded files are /api/channel/...).
-    // This also removes the inert-but-pointless data: image case, matching the
-    // backend's own safeUrl scheme allow-list.
-    ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i,
+    // links), mailto and tel (autolinked addresses and numbers), and relative
+    // URLs (uploaded files are /api/channel/...). This also removes the
+    // inert-but-pointless data: image case, matching the backend's own safeUrl
+    // scheme allow-list.
+    ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|tel:|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i,
   }) as unknown as string;
 }
 

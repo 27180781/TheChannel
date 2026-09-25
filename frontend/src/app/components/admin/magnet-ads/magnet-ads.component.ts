@@ -2,6 +2,7 @@ import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import {
+  NbAlertModule,
   NbButtonModule,
   NbCardModule,
   NbIconModule,
@@ -12,6 +13,7 @@ import {
 } from '@nebular/theme';
 import { AdminService } from '../../../services/admin.service';
 import { AuthService } from '../../../services/auth.service';
+import { MagnetAdsService } from '../../../services/magnet-ads.service';
 import { SuperAdminService } from '../../../services/super-admin.service';
 import { Setting } from '../../../models/setting.model';
 import { toBool } from '../settings/settings.schema';
@@ -49,6 +51,7 @@ const MAGNET_KEYS = [
   imports: [
     CommonModule,
     FormsModule,
+    NbAlertModule,
     NbCardModule,
     NbButtonModule,
     NbIconModule,
@@ -70,6 +73,14 @@ export class MagnetAdsComponent implements OnInit {
 
   otherSettings: Setting[] = [];
   inProgress = false;
+  // Save stays disabled until the server copy arrived: settings/set replaces
+  // the whole blob (no merge), so a save after a failed load dropped every
+  // non-magnet key (api_secret_key, webhook_*, regex rules) along with it.
+  loaded = false;
+  loadFailed = false;
+  // Super-admin lock on this area: the form still saves, but the public
+  // endpoint serves the global config and everything saved here is ignored.
+  locked = false;
 
   stats: MagnetStatsResponse | null = null;
   statsLoading = false;
@@ -80,6 +91,7 @@ export class MagnetAdsComponent implements OnInit {
     private adminService: AdminService,
     private authService: AuthService,
     private superAdminService: SuperAdminService,
+    private magnetAdsService: MagnetAdsService,
     private toast: NbToastrService,
   ) {}
 
@@ -87,10 +99,33 @@ export class MagnetAdsComponent implements OnInit {
     return this.authService.userInfo?.globalRole === 'super_admin';
   }
 
+  // Magnet returns a bare domain; bound to href as-is it resolved relative to
+  // the admin page (/channel/<slug>/<domain>) and 404'd inside the app.
+  siteUrl(domain: string | undefined): string {
+    const d = (domain || '').trim();
+    if (!d) return '';
+    return /^https?:\/\//i.test(d) ? d : `https://${d}`;
+  }
+
   ngOnInit(): void {
+    this.loadSettings();
+    // The public magnet endpoint is the only place the lock is visible to an
+    // owner; forced so a stale cached answer from before the lock is not used.
+    this.magnetAdsService.loadSettings(true)
+      .then(s => this.locked = !!s?.locked);
+  }
+
+  loadSettings() {
+    this.loadFailed = false;
     this.adminService.getSettings()
-      .then(settings => this.load(settings || []))
-      .catch(() => this.toast.danger('', 'אין הרשאה לצפות בהגדרות'));
+      .then(settings => {
+        this.load(settings || []);
+        this.loaded = true;
+      })
+      .catch(() => {
+        this.loadFailed = true;
+        this.toast.danger('', 'אין הרשאה לצפות בהגדרות');
+      });
   }
 
   private load(settings: Setting[]) {
@@ -136,6 +171,7 @@ export class MagnetAdsComponent implements OnInit {
   }
 
   save() {
+    if (!this.loaded) return;
     this.inProgress = true;
     const out: Setting[] = [...this.otherSettings];
 

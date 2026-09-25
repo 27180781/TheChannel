@@ -1,5 +1,11 @@
 <div class="magnet-page">
 
+  @if (locked) {
+    <nb-alert status="warning" class="mb-3">
+      ההגדרות בתחום זה נעולות על ידי הנהלת המערכת — השינויים כאן לא ישפיעו על הערוץ
+    </nb-alert>
+  }
+
   <nb-card>
     <nb-card-header class="card-header">
       <nb-icon icon="pricetags-outline"></nb-icon>
@@ -117,7 +123,7 @@
 
     <nb-card-body>
       <p class="intro">
-        נתונים אלו מתקבלים ישירות ממגנט בזמן אמת לפי המפתח שמוגדר למעלה.
+        נתונים אלו מתקבלים ישירות ממגנט בזמן אמת לפי מפתח ה-API הגלובלי שמוגדר בפאנל מנהל-על ← פרסומות מגנט.
         רק הקלקות מאושרות לתשלום נספרות. הסכומים נטו, ללא מע"מ, בש"ח.
         "היום" מתחיל מ-00:00 שעון ישראל. "שבוע"/"חודש" = 7/30 ימים אחורה.
         מגנט שומר תוצאות במטמון לכ-30 שניות.
@@ -151,7 +157,7 @@
         @if (stats.site?.domain) {
           <div class="stats-site">
             <span class="bold">אתר:</span>
-            <a [href]="stats.site?.domain" target="_blank" rel="noopener">{{ stats.site?.domain }}</a>
+            <a [href]="siteUrl(stats.site?.domain)" target="_blank" rel="noopener">{{ stats.site?.domain }}</a>
           </div>
         }
 
@@ -199,11 +205,18 @@
   </nb-card>
   }
 
-  <div class="save-bar">
-    <button nbButton status="primary" (click)="save()" [disabled]="inProgress">
+  <div class="save-bar align-items-center gap-2 flex-wrap">
+    <button nbButton status="primary" (click)="save()" [disabled]="inProgress || locked || !loaded">
       <nb-icon icon="save-outline"></nb-icon>
       {{ inProgress ? 'שומר...' : 'שמור הגדרות מגנט' }}
     </button>
+    @if (loadFailed) {
+      <span class="text-muted">טעינת ההגדרות נכשלה, לא ניתן לשמור</span>
+      <button nbButton status="basic" size="small" ghost (click)="loadSettings()">
+        <nb-icon icon="refresh-outline"></nb-icon>
+        נסו שוב
+      </button>
+    }
   </div>
 
 </div>

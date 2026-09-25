@@ -14,6 +14,12 @@
           <p class="category-description">{{ cat.description }}</p>
         }
 
+        @if (cat.id === 'ads' && adsLocked) {
+          <nb-alert status="warning" class="mb-3">
+            ההגדרות בתחום זה נעולות על ידי הנהלת המערכת — השינויים כאן לא ישפיעו על הערוץ
+          </nb-alert>
+        }
+
         @for (field of cat.fields; track field.key) {
           @if (isFieldVisible(field)) {
             <div class="setting-field" [class.is-toggle]="field.type === 'boolean'">
@@ -50,6 +56,7 @@
                       fullWidth
                       type="number"
                       [id]="'f-' + field.key"
+                      [disabled]="isFieldLocked(field)"
                       [(ngModel)]="values[field.key]"
                       [placeholder]="field.placeholder || ''">
                   }
@@ -69,6 +76,7 @@
                       fullWidth
                       type="text"
                       [id]="'f-' + field.key"
+                      [disabled]="isFieldLocked(field)"
                       [(ngModel)]="values[field.key]"
                       [placeholder]="field.placeholder || ''">
                   }
@@ -160,10 +168,17 @@
     </nb-accordion-item>
   </nb-accordion>
 
-  <div class="save-bar">
-    <button nbButton status="primary" size="medium" (click)="saveSettings()" [disabled]="setInProgress">
+  <div class="save-bar align-items-center gap-2 flex-wrap">
+    <button nbButton status="primary" size="medium" (click)="saveSettings()" [disabled]="setInProgress || !loaded">
       <nb-icon icon="save-outline"></nb-icon>
       {{ setInProgress ? 'שומר...' : 'שמור שינויים' }}
     </button>
+    @if (loadFailed) {
+      <span class="text-muted">טעינת ההגדרות נכשלה, לא ניתן לשמור</span>
+      <button nbButton status="basic" size="small" ghost (click)="loadSettings()">
+        <nb-icon icon="refresh-outline"></nb-icon>
+        נסו שוב
+      </button>
+    }
   </div>
 </div>

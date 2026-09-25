@@ -21,11 +21,12 @@ func newTestTicket(t *testing.T, ctx context.Context, id, email string) *Support
 	t.Helper()
 	now := time.Now()
 	ticket := &SupportTicket{
-		ID:      id,
-		Subject: "נושא",
-		Name:    "בודק",
-		Email:   email,
-		Status:  SupportStatusOpen,
+		ID:            id,
+		Subject:       "נושא",
+		Name:          "בודק",
+		Email:         email,
+		Authenticated: true,
+		Status:        SupportStatusOpen,
 		Messages: []SupportMessage{
 			{Author: "user", AuthorName: "בודק", Body: "גוף ההודעה", CreatedAt: now},
 		},
@@ -136,6 +137,44 @@ func TestSupportUserIndexIsolatesUsers(t *testing.T) {
 	}
 	if len(tickets) != 1 {
 		t.Errorf("expected exactly the caller's ticket, got %d", len(tickets))
+	}
+}
+
+// An anonymous ticket carries whatever address the visitor typed, so it must
+// never be listed under that address: otherwise anyone could plant a thread in
+// a user's "my tickets" and, holding the access token, read the replies.
+func TestSupportAnonymousTicketIsNotIndexedByEmail(t *testing.T) {
+	ctx := supportCtx(t)
+	victim := "victim@example.com"
+	newTestTicket(t, ctx, "sup-victim", victim)
+
+	fresh := &SupportTicket{
+		ID: "sup-anon-2", Subject: "נושא", Name: "אורח", Email: victim,
+		Status: SupportStatusOpen, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		Messages: []SupportMessage{{Author: "user", Body: "x", CreatedAt: time.Now()}},
+	}
+	if err := dbSaveSupportTicket(ctx, fresh); err != nil {
+		t.Fatalf("save fresh anonymous ticket: %v", err)
+	}
+	t.Cleanup(func() {
+		cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		rdb.Del(cctx, supportTicketKey("sup-anon-2"))
+		rdb.ZRem(cctx, supportTicketIndexKey, "sup-anon-2")
+		rdb.ZRem(cctx, supportUserIndexKey(victim), "sup-anon-2")
+	})
+
+	tickets, err := dbListSupportTickets(ctx, supportUserIndexKey(victim))
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, tk := range tickets {
+		if tk.ID == "sup-anon-2" {
+			t.Fatal("an anonymous ticket was listed under the typed email")
+		}
+	}
+	if len(tickets) != 1 || tickets[0].ID != "sup-victim" {
+		t.Errorf("expected only the signed-in user's ticket, got %d", len(tickets))
 	}
 }
 

@@ -148,12 +148,27 @@ export const LEGACY_SETTING_KEYS = [
   'contact_us',
 ];
 
+// Keys owned by the magnet-ads tab. They live on the same channel settings list,
+// so the settings tab used to show them as raw "advanced" rows — including the
+// whole <script> snippet in a one-line input — and tidying them there broke the
+// magnet tab. They are hidden here and written back verbatim on save.
+export const PASSTHROUGH_SETTING_KEYS = [
+  'magnet_enabled',
+  'magnet_snippet',
+  'magnet_mode',
+  'magnet_per_messages',
+  'magnet_min_time_seconds',
+  'magnet_per_seconds',
+  'magnet_min_messages_since',
+];
+
 export function getAllKnownKeys(): Set<string> {
   const keys = new Set<string>();
   for (const cat of SETTINGS_SCHEMA) {
     for (const f of cat.fields) keys.add(f.key);
   }
   for (const k of LEGACY_SETTING_KEYS) keys.add(k);
+  for (const k of PASSTHROUGH_SETTING_KEYS) keys.add(k);
   keys.add('regex-replace');
   return keys;
 }

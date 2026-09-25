@@ -35,10 +35,17 @@
     </div>
   </nb-card-body>
 
-  <nb-card-footer>
-    <button nbButton status="primary" (click)="save()" [disabled]="saving">
+  <nb-card-footer class="d-flex align-items-center gap-2 flex-wrap">
+    <button nbButton status="primary" (click)="save()" [disabled]="saving || !loaded">
       <nb-icon icon="save-outline"></nb-icon>
       {{ saving ? 'שומר...' : 'שמור תכונות' }}
     </button>
+    @if (loadFailed) {
+      <span class="text-muted">התכונות לא נטענו מהשרת, לכן לא ניתן לשמור.</span>
+      <button nbButton status="basic" size="small" ghost (click)="loadFeatures()">
+        <nb-icon icon="refresh-outline"></nb-icon>
+        נסו שוב
+      </button>
+    }
   </nb-card-footer>
 </nb-card>

@@ -22,7 +22,11 @@
             </tr>
           </thead>
           <tbody>
-            @for (user of users; track user.id) {
+            <!-- Tracked by email: id stays "" for every user granted a role
+                 before their first login, and two such rows made the id key
+                 a duplicate (NG0955) on every render. Emails are normalised
+                 and unique in this list. -->
+            @for (user of users; track user.email) {
               <tr>
                 <td>{{ user.email }}</td>
                 <td>{{ user.username }}</td>

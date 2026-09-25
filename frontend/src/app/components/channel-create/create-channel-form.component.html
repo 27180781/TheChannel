@@ -111,7 +111,7 @@
         <div class="create-form__field">
           <label class="create-form__label" for="cc-description">תיאור הערוץ</label>
           <textarea nbInput fullWidth id="cc-description" name="description" rows="3"
-                    [(ngModel)]="description"
+                    [(ngModel)]="description" maxlength="2000"
                     placeholder="על מה הערוץ שלך? מספיקות שתי שורות."></textarea>
         </div>
 

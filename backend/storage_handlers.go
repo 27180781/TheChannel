@@ -151,10 +151,13 @@ func setSuperAdminStorageConfig(w http.ResponseWriter, r *http.Request) {
 
 	// A negative quota would make every upload fail the used+size <= quota test
 	// platform-wide while the dashboard still shows "ok" (pct math is guarded by
-	// quota > 0), so it must be rejected up front.
+	// quota > 0), so it must be rejected up front. Zero is refused too: unlike a
+	// per-channel quota, the global default has no "use the default" meaning —
+	// a cleared form field posted 0, and 0 made every channel's storage
+	// unlimited while the dashboards showed "of 0 B".
 	bytes, ok := gbToBytes(req.DefaultQuotaGB)
-	if !ok {
-		http.Error(w, "quota must be between 0 and a reasonable maximum", http.StatusBadRequest)
+	if !ok || req.DefaultQuotaGB <= 0 {
+		http.Error(w, "quota must be a positive number of gigabytes", http.StatusBadRequest)
 		return
 	}
 	if err := dbSetGlobalStorageQuota(ctx, bytes); err != nil {
@@ -177,6 +180,9 @@ func getSuperAdminChannelStorage(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	slug := chi.URLParam(r, "slug")
+	if !requireExistingChannel(ctx, w, slug) {
+		return
+	}
 
 	quotaBytes, err := dbGetChannelStorageQuota(ctx, slug)
 	if err != nil {
@@ -205,6 +211,11 @@ func setSuperAdminChannelStorage(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	slug := chi.URLParam(r, "slug")
+	// Like the other super-admin writers: a quota written for a slug that
+	// does not exist is an orphan key behind a success response.
+	if !requireExistingChannel(ctx, w, slug) {
+		return
+	}
 
 	var req struct {
 		QuotaGB float64 `json:"quotaGb"` // 0 = use global

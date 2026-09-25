@@ -31,7 +31,7 @@ func TestMintSessionCookie(t *testing.T) {
 	// same one here with the same secret — that is what makes the cookie valid
 	// for a server started with this SECRET_KEY.
 	gob.Register(Session{})
-	if store == nil {
+	if store == nil || store.Pool == nil {
 		s, err := redistore.NewRediStore(10, redisType, redisAddr, "", redisPass, []byte(secretKey))
 		if err != nil {
 			t.Fatalf("session store: %v", err)

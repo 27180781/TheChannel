@@ -24,7 +24,10 @@ RUN go build -o the-channel .
 FROM debian:latest
 WORKDIR /app
 RUN apt-get update && apt-get install -y ca-certificates && update-ca-certificates
-COPY --from=builder2 /app/the-channel . 
+COPY --from=builder2 /app/the-channel .
+# The platform favicon is served from ./assets by the backend; without this
+# line only the build stage had it and every tab showed no icon.
+COPY --from=builder2 /app/assets ./assets
 COPY --from=builder1 /app/dist/channel/browser /usr/share/ng
 RUN chmod +x the-channel
 CMD ["./the-channel"]

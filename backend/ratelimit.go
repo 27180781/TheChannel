@@ -19,10 +19,16 @@ type limiterEntry struct {
 	lastSeen atomic.Int64
 }
 
-// limiterIdleTTL is well past every refill window below (the slowest is
-// 60s*3), so a swept-and-recreated limiter starting with a full burst changes
-// nothing a legitimate client would notice.
-const limiterIdleTTL = 10 * time.Minute
+// limiterIdleTTL must cover the slowest refill window below, or a client can
+// reset a limiter by idling: the channel-creation limiter refills one token
+// per 20 minutes, so with a 10 minute TTL an account could create three
+// channels, wait ten minutes, and get a fresh burst of three (a recreated
+// limiter starts full). One hour is the time that limiter takes to refill
+// completely, so sweeping after it changes nothing a client could notice.
+const (
+	limiterIdleTTL       = 60 * time.Minute
+	limiterSweepInterval = 10 * time.Minute
+)
 
 // allowOrRetryAfter takes one token if one is free right now. When the bucket is
 // empty it answers 429 with a Retry-After saying exactly how long to wait, and
@@ -49,7 +55,7 @@ func allowOrRetryAfter(w http.ResponseWriter, l *rate.Limiter, msg string) bool 
 
 func init() {
 	go func() {
-		ticker := time.NewTicker(limiterIdleTTL)
+		ticker := time.NewTicker(limiterSweepInterval)
 		defer ticker.Stop()
 		for range ticker.C {
 			cutoff := time.Now().Add(-limiterIdleTTL).Unix()
@@ -70,6 +76,9 @@ func init() {
 			// unbounded distinct keys to. Leaving it out of the sweep made it
 			// the only limiter map that grew for the process lifetime.
 			sweep(&supportSubmitLimiters)
+			sweep(&loginLimiters)
+			sweep(&importAuthLimiters)
+			sweep(&subscribeLimiters)
 		}
 	}()
 }
@@ -146,6 +155,50 @@ var (
 func reportLimiter(email string) *rate.Limiter {
 	return getLimiter(&reportLimiters, &reportMu, email, func() *rate.Limiter {
 		return rate.NewLimiter(rate.Every(6*time.Second), 5)
+	})
+}
+
+// loginLimiters throttles OAuth code exchanges per client. Each POST
+// /auth/login costs a round trip to Google and a Redis write, and it was the
+// only unauthenticated write path with no limit at all. Twenty attempts at
+// once, then one every 2 seconds, is far above what people behind one shared
+// address produce by signing in (once per device per month).
+var (
+	loginLimiters  sync.Map
+	loginLimiterMu sync.Mutex
+)
+
+func loginLimiter(key string) *rate.Limiter {
+	return getLimiter(&loginLimiters, &loginLimiterMu, key, func() *rate.Limiter {
+		return rate.NewLimiter(rate.Every(2*time.Second), 20)
+	})
+}
+
+// importAuthLimiters counts FAILED API-key checks on the import endpoint per
+// client and channel. The key is owner-chosen free text, and the endpoint is
+// reachable without a session, so an unlimited number of wrong guesses made a
+// short key brute-forceable at network speed. Successful imports are not
+// charged, so a legitimate bulk import is unaffected.
+var (
+	importAuthLimiters sync.Map
+	importAuthMu       sync.Mutex
+)
+
+func importAuthLimiter(key string) *rate.Limiter {
+	return getLimiter(&importAuthLimiters, &importAuthMu, key, func() *rate.Limiter {
+		return rate.NewLimiter(rate.Every(6*time.Second), 10)
+	})
+}
+
+// subscribeLimiters throttles push-subscription registrations per client.
+var (
+	subscribeLimiters  sync.Map
+	subscribeLimiterMu sync.Mutex
+)
+
+func subscribeLimiter(key string) *rate.Limiter {
+	return getLimiter(&subscribeLimiters, &subscribeLimiterMu, key, func() *rate.Limiter {
+		return rate.NewLimiter(rate.Every(10*time.Second), 5)
 	})
 }
 

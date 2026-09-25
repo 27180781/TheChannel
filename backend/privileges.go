@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,15 @@ const (
 	RoleWriter    ChannelRole = "writer"
 )
 
+// validChannelRole reports whether r is one of the three channel roles.
+func validChannelRole(r ChannelRole) bool {
+	switch r {
+	case RoleOwner, RoleModerator, RoleWriter:
+		return true
+	}
+	return false
+}
+
 var channelRoleLevels = map[ChannelRole]int{
 	RoleWriter:    1,
 	RoleModerator: 2,
@@ -33,12 +43,103 @@ var channelRoleLevels = map[ChannelRole]int{
 
 var privilegesUsers sync.Map
 
+// privilegesMu serialises rebuilds of privilegesUsers. Two rebuilds
+// interleaving their upsert-then-prune passes could prune an entry the other
+// had just stored, leaving a live user unprivileged until the next rebuild.
+var privilegesMu sync.Mutex
+
+const (
+	// privilegesReloadChannel is the Redis pub/sub channel a role change is
+	// announced on, so every replica reloads at once instead of serving the
+	// old roles until its next periodic refresh.
+	privilegesReloadChannel = "privileges:reload"
+	// privilegesRefreshInterval bounds how stale a replica that missed the
+	// announcement (or was not subscribed yet) can be.
+	privilegesRefreshInterval = 30 * time.Second
+)
+
+// normEmail is the canonical form every principal comparison uses. Google
+// reports the address in whatever case the account was created with, while
+// the super admin and channel owners type it by hand: "Name@Gmail.com" in
+// ADMIN_USERS or in a role grant never matched "name@gmail.com" from the
+// id_token, so the grant silently did nothing.
+func normEmail(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
+}
+
+// normalizeUsers lower-cases every email and merges the duplicate records that
+// case-variant grants left behind, keeping the strongest role per channel and
+// the super-admin flag if either copy had it.
+func normalizeUsers(users []User) []User {
+	out := make([]User, 0, len(users))
+	idx := make(map[string]int, len(users))
+	for _, u := range users {
+		email := normEmail(u.Email)
+		if email == "" {
+			continue
+		}
+		u.Email = email
+		i, dup := idx[email]
+		if !dup {
+			idx[email] = len(out)
+			out = append(out, u)
+			continue
+		}
+		m := &out[i]
+		if m.ID == "" {
+			m.ID = u.ID
+		}
+		if m.Username == "" {
+			m.Username = u.Username
+		}
+		if m.PublicName == "" {
+			m.PublicName = u.PublicName
+		}
+		if u.GlobalRole == RoleSuperAdmin {
+			m.GlobalRole = RoleSuperAdmin
+		}
+		for slug, role := range u.ChannelRoles {
+			if m.ChannelRoles == nil {
+				m.ChannelRoles = make(map[string]ChannelRole)
+			}
+			if channelRoleLevels[role] > channelRoleLevels[m.ChannelRoles[slug]] {
+				m.ChannelRoles[slug] = role
+			}
+		}
+	}
+	return out
+}
+
+// superAdminEmails is the ADMIN_USERS list, normalised and sorted so the
+// stored users list comes out the same on every rebuild.
+func superAdminEmails() []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, e := range strings.Split(os.Getenv("ADMIN_USERS"), ",") {
+		e = normEmail(e)
+		if e == "" {
+			continue
+		}
+		if _, dup := seen[e]; dup {
+			continue
+		}
+		seen[e] = struct{}{}
+		out = append(out, e)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // initializePrivilegeUsers rebuilds the in-memory privilegesUsers map from Redis.
 // At startup, call it directly (panicking is acceptable). From request handlers
 // use the returned error instead of panicking so a transient Redis error does not
 // crash the entire server.
 func initializePrivilegeUsers() error {
-	superAdminEmails := strings.Split(os.Getenv("ADMIN_USERS"), ",")
+	admins := superAdminEmails()
+	isAdmin := make(map[string]struct{}, len(admins))
+	for _, e := range admins {
+		isAdmin[e] = struct{}{}
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -47,16 +148,24 @@ func initializePrivilegeUsers() error {
 	// edit touches, so it goes through the guarded update too.
 	var merged []User
 	if err := dbUpdateUsersList(ctx, func(users []User) []User {
-		emailToIdx := make(map[string]int)
+		users = normalizeUsers(users)
+		emailToIdx := make(map[string]int, len(users))
 		for i, u := range users {
 			emailToIdx[u.Email] = i
+			// ADMIN_USERS is the source of truth in both directions. The stamp
+			// below only ever added the role, so an address removed from the
+			// variable kept super-admin for as long as the users list existed.
+			// One boot with the variable unset or mistyped would otherwise
+			// persist the demotion of every super admin; an empty list is
+			// far more likely a deploy mistake than a real "nobody".
+			if u.GlobalRole == RoleSuperAdmin && len(admins) > 0 {
+				if _, still := isAdmin[u.Email]; !still {
+					users[i].GlobalRole = ""
+				}
+			}
 		}
 
-		for _, email := range superAdminEmails {
-			email = strings.TrimSpace(email)
-			if email == "" {
-				continue
-			}
+		for _, email := range admins {
 			if i, exists := emailToIdx[email]; exists {
 				users[i].GlobalRole = RoleSuperAdmin
 			} else {
@@ -74,11 +183,22 @@ func initializePrivilegeUsers() error {
 		return fmt.Errorf("update users list: %w", err)
 	}
 
-	// Authorization resolves live from this map, so it must never be empty even
-	// for an instant: clearing it first would make every request that landed in
-	// the gap look unprivileged. Upsert everything, then prune what is gone.
-	seen := make(map[string]struct{}, len(merged))
-	for _, user := range merged {
+	swapPrivilegeMap(merged)
+	notifyPrivilegesChanged()
+	return nil
+}
+
+// swapPrivilegeMap makes users the live authorization set.
+//
+// Authorization resolves live from this map, so it must never be empty even
+// for an instant: clearing it first would make every request that landed in
+// the gap look unprivileged. Upsert everything, then prune what is gone.
+func swapPrivilegeMap(users []User) {
+	privilegesMu.Lock()
+	defer privilegesMu.Unlock()
+
+	seen := make(map[string]struct{}, len(users))
+	for _, user := range users {
 		privilegesUsers.Store(user.Email, user)
 		seen[user.Email] = struct{}{}
 	}
@@ -93,7 +213,60 @@ func initializePrivilegeUsers() error {
 		}
 		return true
 	})
+}
+
+// reloadPrivilegeUsers refreshes the live map from Redis without writing
+// anything back. This is what the other replicas run when one of them changed
+// the roles: before it, a role granted or revoked on one instance took effect
+// on the others only after a restart, since each instance only rebuilt its
+// own map from its own handlers.
+func reloadPrivilegeUsers() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	users, err := dbGetUsersList(ctx)
+	if err != nil {
+		return err
+	}
+	swapPrivilegeMap(normalizeUsers(users))
 	return nil
+}
+
+// notifyPrivilegesChanged tells every replica to reload. Best effort: the
+// periodic refresh covers a lost announcement.
+func notifyPrivilegesChanged() {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := rdb.Publish(ctx, privilegesReloadChannel, "reload").Err(); err != nil {
+		log.Printf("privileges: announce reload: %v\n", err)
+	}
+}
+
+// startPrivilegesRefresh keeps this instance's map in step with the others:
+// a subscription for immediate reloads plus a periodic one as the backstop.
+func startPrivilegesRefresh() {
+	go func() {
+		ticker := time.NewTicker(privilegesRefreshInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := reloadPrivilegeUsers(); err != nil {
+				log.Printf("privileges: periodic reload: %v\n", err)
+			}
+		}
+	}()
+	go func() {
+		for {
+			sub := rdb.Subscribe(context.Background(), privilegesReloadChannel)
+			for range sub.Channel() {
+				if err := reloadPrivilegeUsers(); err != nil {
+					log.Printf("privileges: reload on announcement: %v\n", err)
+				}
+			}
+			// go-redis reconnects a subscription by itself; the channel only
+			// closes when the subscription is torn down, so start a new one.
+			sub.Close()
+			time.Sleep(5 * time.Second)
+		}
+	}()
 }
 
 // sessionUser resolves the privileged user record for the current session.
@@ -107,7 +280,7 @@ func sessionUser(r *http.Request) (User, bool) {
 	if !ok || s.Email == "" {
 		return User{}, false
 	}
-	v, ok := privilegesUsers.Load(s.Email)
+	v, ok := privilegesUsers.Load(normEmail(s.Email))
 	if !ok {
 		return User{}, false
 	}
@@ -192,16 +365,25 @@ func setPrivilegeUsers(w http.ResponseWriter, r *http.Request) {
 	// it would silently revert any role granted concurrently through the other
 	// (WATCH-guarded) writers. Users absent from the submission are left alone;
 	// a future deletion feature needs an explicit deleted-emails field, not
-	// inference from absence.
+	// inference from absence. The super-admin flag is owned by ADMIN_USERS
+	// (see initializePrivilegeUsers) and is kept as stored, whatever the
+	// submission says.
 	if err := dbUpdateUsersList(ctx, func(current []User) []User {
+		current = normalizeUsers(current)
 		byEmail := make(map[string]int, len(current))
 		for i, u := range current {
 			byEmail[u.Email] = i
 		}
 		for _, nu := range req.List {
+			nu.Email = normEmail(nu.Email)
+			if nu.Email == "" {
+				continue
+			}
 			if i, ok := byEmail[nu.Email]; ok {
+				nu.GlobalRole = current[i].GlobalRole
 				current[i] = nu
 			} else {
+				nu.GlobalRole = ""
 				byEmail[nu.Email] = len(current)
 				current = append(current, nu)
 			}

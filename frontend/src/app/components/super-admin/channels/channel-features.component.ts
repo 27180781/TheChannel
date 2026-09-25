@@ -52,6 +52,11 @@ export class ChannelFeaturesComponent implements OnInit {
   };
 
   saving = false;
+  // Save stays disabled until the server copy arrived: `features` starts as
+  // every flag false, and saving that after a failed load switched off every
+  // feature of the tenant in one click.
+  loaded = false;
+  loadFailed = false;
 
   featureConfigs: FeatureConfig[] = [
     { key: 'reactions', label: 'תגובות' },
@@ -85,16 +90,22 @@ export class ChannelFeaturesComponent implements OnInit {
   }
 
   loadFeatures() {
+    this.loadFailed = false;
     this.superAdminService.getChannel(this.slug)
       .then(channel => {
         // Merge over the defaults: an older backend omits newer flags entirely,
         // and an undefined value would leave the toggle unbound.
         this.features = { ...this.features, ...channel.features };
+        this.loaded = true;
       })
-      .catch(() => this.toastr.danger('', 'שגיאה בטעינת תכונות הערוץ'));
+      .catch(() => {
+        this.loadFailed = true;
+        this.toastr.danger('', 'שגיאה בטעינת תכונות הערוץ');
+      });
   }
 
   save() {
+    if (!this.loaded) return;
     this.saving = true;
     this.superAdminService.updateChannelFeatures(this.slug, this.features)
       .then(() => this.toastr.success('', 'התכונות נשמרו בהצלחה'))

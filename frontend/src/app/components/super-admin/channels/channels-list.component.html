@@ -90,7 +90,7 @@
                     אחסון
                   </button>
                   <button nbButton status="danger" size="tiny" (click)="deleteChannel(channel.slug)"
-                    title="מחק ערוץ">
+                    [disabled]="deleting.has(channel.slug)" title="מחק ערוץ">
                     <nb-icon icon="trash-2-outline"></nb-icon>
                   </button>
                 </div>

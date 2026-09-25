@@ -4,8 +4,15 @@
 }
 
 .magnet-ad-message {
+  // Hidden, not removed: a display:none frame has no layout, so its size
+  // script would report zero forever and a late ad could never reopen the
+  // slot. Zero height with the width kept lets the frame keep measuring.
   &.collapsed {
-    display: none !important;
+    height: 0;
+    overflow: hidden;
+    visibility: hidden;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
   }
 }
 
@@ -18,8 +25,9 @@
   width: 100%;
   min-height: 1px;
 
-  ::ng-deep .magnet-ad-content {
+  ::ng-deep .magnet-ad-frame {
     display: block;
     width: 100%;
+    border: 0;
   }
 }

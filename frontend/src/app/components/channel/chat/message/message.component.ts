@@ -136,11 +136,13 @@ export class MessageComponent implements OnInit, AfterViewInit, OnDestroy {
       const media = this.mediaContainer?.nativeElement.querySelectorAll('img, video');
       media?.forEach((item: HTMLMediaElement) => {
         {
+          // Sized by CSS (.auth-overlay-wrapper), not copied from the media
+          // element: an image the server refuses (401) never loads, and legacy
+          // ones carry no height attribute, so both measured 0px here and the
+          // call-to-action collapsed to nothing — a broken picture and no hint
+          // that logging in would fix it.
           const wrapper = document.createElement('div');
-          wrapper.style.position = 'relative';
-          wrapper.style.display = 'inline-block';
-          wrapper.style.width = item.offsetWidth + 'px';
-          wrapper.style.height = item.offsetHeight + 'px';
+          wrapper.className = 'auth-overlay-wrapper';
 
           const overlay = document.createElement('div');
           overlay.style.position = 'absolute';
@@ -196,7 +198,11 @@ export class MessageComponent implements OnInit, AfterViewInit, OnDestroy {
     const confirm = window.confirm('האם אתה בטוח שברצונך למחוק את ההודעה?');
     if (confirm) {
       if (this.isSchedulingMessage) {
+        // The service commits a new list only after the server accepted it,
+        // so the feed's copy has to be refreshed from it; it no longer shares
+        // the array that used to be spliced in place.
         this._adminService.deleteScheduledMessage(this.indexId)
+          .then(() => this._adminService.reloadSchedulingMessage())
           .catch(() => this.toastrService.danger('', 'שגיאה במחיקת ההודעה'));
         return;
       }
@@ -234,7 +240,10 @@ export class MessageComponent implements OnInit, AfterViewInit, OnDestroy {
           break;
       }
     }
-    newMsgText = newMsgText?.slice(0, 100).replace('>', '').replaceAll(/\n/g, ' ').replaceAll('*', '');
+    // Parentheses go too: the quote token is `[quote-embedded#](id@text)`, and
+    // a ')' inside the text closed it early in the tokenizer, leaking the rest
+    // of the quote into the message as plain text.
+    newMsgText = newMsgText?.slice(0, 100).replace('>', '').replaceAll(/\n/g, ' ').replaceAll('*', '').replaceAll(/[()]/g, '');
     if (message.text && message.text.length > 100) {
       newMsgText += '...';
     }
@@ -328,9 +337,12 @@ export class MessageComponent implements OnInit, AfterViewInit, OnDestroy {
 
   isEdited(message: ChatMessage): boolean {
     if (!message.last_edit) return false;
-    const date = new Date(message.last_edit).getFullYear();
-    if (isNaN(date)) return false;
-    return date !== 1;
+    // "Never edited" arrives as Go's zero time, 0001-01-01T00:00:00Z. Judged
+    // by the *local* year that is year 0 anywhere west of UTC, so every
+    // unedited message read "נערכה 31/12/0000" for viewers in the Americas.
+    // The zero time sits ~62 billion seconds below the epoch, so an epoch
+    // test needs no timezone — and NaN (an unparsable value) fails it too.
+    return new Date(message.last_edit).getTime() > 0;
   }
 
   copyLink(messageId?: number) {

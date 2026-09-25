@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/gob"
+	"html"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
@@ -19,21 +20,46 @@ import (
 var rootStaticFolder = os.Getenv("ROOT_STATIC_FOLDER")
 
 func main() {
+	// Sessions are signed with SECRET_KEY; with it unset, redistore signs with
+	// an empty key and every cookie is forgeable. Refuse to start rather than
+	// run with no session security at all.
+	if secretKey == "" {
+		log.Fatal("SECRET_KEY is not set; refusing to start with unsigned sessions")
+	}
+	if len(secretKey) < 32 {
+		log.Printf("WARNING: SECRET_KEY is only %d bytes; use at least 32 random bytes\n", len(secretKey))
+	}
+
 	gob.Register(Session{})
 	initR2()
 	if err := initializePrivilegeUsers(); err != nil {
 		panic(err)
 	}
+	startPrivilegesRefresh()
+	startGlobalSettingsRefresh()
 
 	// The session store is built before the migrations run: a misconfiguration
 	// here is fatal, and failing after a one-shot migration has been marked
 	// applied would consume it without ever serving a request.
+	// redistore dials REDIS_ADDR as one plain address. With Sentinel
+	// (REDIS_MASTER) the data client resolved the master while sessions were
+	// written to the sentinel itself, so the boot looked healthy and every
+	// login answered 500; a comma-separated list failed to dial outright.
+	// Neither is supported, so refuse loudly instead of half-working.
+	if master := os.Getenv("REDIS_MASTER"); master != "" || strings.Contains(redisAddr, ",") {
+		log.Fatalf("Session store cannot use Redis Sentinel or several addresses (REDIS_MASTER=%q, REDIS_ADDR=%q); point REDIS_ADDR at a single Redis/Kvrocks instance", master, redisAddr)
+	}
 	var err error
 	store, err = redistore.NewRediStore(10, redisType, redisAddr, "", redisPass, []byte(secretKey))
 	if err != nil {
 		log.Fatalf("Session store init failed (REDIS_PROTOCOL=%q, REDIS_ADDR=%q): %v", redisType, redisAddr, err)
 	}
 	store.SetMaxAge(60 * 60 * 24 * 30)
+	// redistore refuses to save a session larger than 4 KiB by default. The
+	// session carries the user's whole channel-role map, so a moderator of a
+	// few dozen channels could not log in at all: session.Save failed and the
+	// login answered 500.
+	store.SetMaxLength(64 << 10)
 	store.Options.HttpOnly = true
 	// Secure by default; set COOKIE_INSECURE=1 only for local plain-HTTP dev.
 	store.Options.Secure = os.Getenv("COOKIE_INSECURE") != "1"
@@ -53,9 +79,11 @@ func main() {
 	r.Use(middleware.Logger)
 	// The shipped deployment fronts the backend with Caddy (docker-compose
 	// exposes only the proxy), so RemoteAddr is the proxy's container IP for
-	// every request. RealIP restores the client address from X-Forwarded-For so
-	// per-IP rate limiting works; the backend port must therefore never be
-	// exposed directly, since RealIP trusts the header.
+	// every request. RealIP restores the client address from X-Real-IP, which
+	// the Caddyfile sets from the connection itself (and it strips the other
+	// headers RealIP would otherwise honour), so per-IP rate limiting works.
+	// The backend port must therefore never be exposed directly, since RealIP
+	// trusts whatever header it is given.
 	r.Use(middleware.RealIP)
 	r.Use(limitRequestBody)
 
@@ -183,7 +211,7 @@ func main() {
 	})
 
 	if cfg := getGlobalConfig(); cfg != nil && cfg.RootStaticFolder != "" {
-		r.Handle("/assets/*", staticCacheHeaders(http.StripPrefix("/assets/", http.FileServer(http.Dir(cfg.RootStaticFolder)))))
+		r.Handle("/assets/*", staticCacheHeaders(noDirectoryListing(http.StripPrefix("/assets/", http.FileServer(http.Dir(cfg.RootStaticFolder))))))
 		r.NotFound(serveSpaFile)
 	}
 
@@ -215,18 +243,35 @@ func main() {
 const maxJSONRequestBody = 2 << 20
 
 // limitRequestBody applies that cap to every route, so a handler added later
-// cannot forget it. File uploads are exempt: they are multipart and enforce
-// their own, much larger, per-channel size limit in uploadFile.
+// cannot forget it. The file upload route is exempt: it enforces its own, much
+// larger, per-channel size limit in uploadFile.
 func limitRequestBody(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Body != nil && !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		if r.Body != nil && !isUploadRoute(r.URL.Path) {
 			r.Body = http.MaxBytesReader(w, r.Body, maxJSONRequestBody)
 		}
 		next.ServeHTTP(w, r)
 	})
 }
 
+// isUploadRoute matches the one route that legitimately carries a large body,
+// /api/channel/{slug}/admin/upload. The exemption is keyed on the route and not
+// on the Content-Type, because the client chooses the Content-Type: sending
+// "multipart/form-data" on any JSON route used to lift the cap there too, and
+// the handler then decoded an unbounded body straight into memory.
+func isUploadRoute(p string) bool {
+	return strings.HasPrefix(p, "/api/channel/") && strings.HasSuffix(p, "/admin/upload")
+}
+
 func serveSpaFile(w http.ResponseWriter, r *http.Request) {
+	// The SPA fallback must not answer for the API: a mistyped or removed API
+	// path returned index.html with 200, so an integrator (or a fetch in the
+	// frontend) saw success and then failed to parse HTML as JSON.
+	if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/auth/") {
+		http.NotFound(w, r)
+		return
+	}
+
 	cfg := getGlobalConfig()
 	if cfg == nil || cfg.RootStaticFolder == "" {
 		http.Error(w, "File not found", http.StatusNotFound)
@@ -240,7 +285,13 @@ func serveSpaFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if cfg.CustomTitle != "" {
-		content = bytes.ReplaceAll(content, []byte("<title></title>"), []byte(cfg.CustomTitle))
+		// The tag itself must survive: substituting bare text for it left the
+		// document with no <title> at all, and stray text inside <head> makes
+		// the parser close the head early — so browsers, crawlers and link
+		// previews never saw the operator's title. Escaped, because it is
+		// free text typed in the settings form landing inside markup.
+		content = bytes.ReplaceAll(content, []byte("<title></title>"),
+			[]byte("<title>"+html.EscapeString(cfg.CustomTitle)+"</title>"))
 	}
 
 	if cfg.AnalyticsHead != "" {
@@ -267,6 +318,19 @@ func serveSpaFile(w http.ResponseWriter, r *http.Request) {
 // The hash changes whenever the contents do, so these are safe to cache
 // forever; anything else under /assets (favicon.ico and friends) is not.
 var hashedAssetRe = regexp.MustCompile(`-[A-Z0-9]{8}\.[a-zA-Z0-9]+$`)
+
+// noDirectoryListing refuses the index pages http.FileServer renders for a
+// directory: /assets/media/ listed the whole bundle, which is nobody's
+// business and a free inventory for anyone probing the deployment.
+func noDirectoryListing(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 // staticCacheHeaders pairs the immutable bundles with the no-cache index.html
 // above: the hashed files are what make it safe for index.html to be

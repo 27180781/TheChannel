@@ -4,6 +4,10 @@ import { catchError, throwError } from 'rxjs';
 import { ChannelStatusService } from '../services/channel-status.service';
 
 const CHANNEL_API = /^\/api\/channel\/([^/?#]+)/;
+// Only the channel's own info endpoint decides whether the channel exists:
+// a 404 from any other route (a removed file, an unknown message id) says
+// nothing about the channel itself.
+const CHANNEL_INFO_API = /^\/api\/channel\/([^/?#]+)\/info$/;
 
 /**
  * A disabled channel answers every /api/channel/{slug}/* request with
@@ -24,6 +28,12 @@ export const channelDisabledInterceptor: HttpInterceptorFn = (req, next) => {
         const match = CHANNEL_API.exec(new URL(req.url, window.location.origin).pathname);
         if (match && isChannelDisabledBody(err.error)) {
           channelStatus.markDisabled(decodeURIComponent(match[1]));
+        }
+      }
+      if (err instanceof HttpErrorResponse && err.status === 404) {
+        const match = CHANNEL_INFO_API.exec(new URL(req.url, window.location.origin).pathname);
+        if (match) {
+          channelStatus.markNotFound(decodeURIComponent(match[1]));
         }
       }
       return throwError(() => err);

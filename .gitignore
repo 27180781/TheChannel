@@ -11,3 +11,6 @@ caddy_config/
 data/kvrocks.sock
 .env
 .ds_store
+# Redis writes its snapshot into the cwd of whoever started it (tests)
+dump.rdb
+**/dump.rdb

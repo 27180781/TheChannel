@@ -97,7 +97,11 @@ func listChannelRequests(w http.ResponseWriter, r *http.Request) {
 
 	requests, err := dbListChannelRequests(ctx)
 	if err != nil {
-		requests = []*ChannelRequest{}
+		// An empty 200 rendered "אין בקשות" over a Redis outage, and the
+		// screen's error toast never ran; the sibling handlers answer 500.
+		log.Printf("listChannelRequests: %v\n", err)
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -159,10 +163,11 @@ func approveChannelRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ownerEmail := normEmail(req.Email)
 	channel := &ChannelData{
 		Slug:       finalSlug,
 		Name:       req.Name,
-		OwnerEmail: req.Email,
+		OwnerEmail: ownerEmail,
 		CreatedAt:  time.Now(),
 		Features:   defaultChannelFeatures(),
 	}
@@ -176,10 +181,12 @@ func approveChannelRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := dbAssignChannelRole(ctx, req.Email, finalSlug, RoleOwner); err != nil {
-		log.Printf("approveChannelRequest: %s created but owner role for %s not assigned: %v\n", finalSlug, req.Email, err)
+	if err := dbAssignChannelRole(ctx, ownerEmail, finalSlug, RoleOwner); err != nil {
+		log.Printf("approveChannelRequest: %s created but owner role for %s not assigned: %v\n", finalSlug, ownerEmail, err)
 	}
-	initializePrivilegeUsers()
+	if err := initializePrivilegeUsers(); err != nil {
+		log.Printf("initializePrivilegeUsers after approveChannelRequest(%s): %v\n", finalSlug, err)
+	}
 
 	req.Status = RequestStatusApproved
 	req.ApprovedSlug = finalSlug

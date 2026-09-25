@@ -105,6 +105,11 @@ func reportMessage(w http.ResponseWriter, r *http.Request) {
 
 	if err := dbReportMessage(ctx, slug, &report); err != nil {
 		log.Println("Error saving report:", err)
+		// The dedup entry was added first (SADD is what makes the check
+		// atomic); left in place after a failed save it would make every retry
+		// look like a repeat and answer success without ever creating the
+		// report.
+		rdb.SRem(ctx, reportersKey, s.ID)
 		http.Error(w, "Error saving report", http.StatusInternalServerError)
 		return
 	}

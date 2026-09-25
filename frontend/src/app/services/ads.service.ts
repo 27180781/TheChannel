@@ -6,6 +6,10 @@ import { SlugService } from './slug.service';
 export interface Ad {
   src: string;
   width: number; // Width in pixels
+  // True when the super admin locked the iframe ad (globally or for this
+  // channel): src/width are then the global ones and the channel's own
+  // ad-iframe-* settings are ignored. Optional — an older backend omits it.
+  locked?: boolean;
 }
 
 @Injectable({

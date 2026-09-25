@@ -5,12 +5,15 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"log"
 	"math/rand"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi"
 	"github.com/redis/go-redis/v9"
@@ -133,7 +136,11 @@ func dbSaveSupportTicket(ctx context.Context, t *SupportTicket) error {
 	if err := rdb.ZAdd(ctx, supportTicketIndexKey, score).Err(); err != nil {
 		return err
 	}
-	if t.Email != "" {
+	// Only a ticket opened by a signed-in user is listed under that email.
+	// An anonymous ticket carries whatever address was typed, so indexing it
+	// let a visitor plant a thread in any user's "my tickets" and, holding
+	// the access token, read that user's and the operator's replies.
+	if t.Authenticated && t.Email != "" {
 		key := supportUserIndexKey(t.Email)
 		if err := rdb.ZAdd(ctx, key, score).Err(); err != nil {
 			return err
@@ -283,24 +290,41 @@ func supportSubmitLimiter(key string) *rate.Limiter {
 
 // clientKey identifies the sender for rate limiting: session email when there
 // is one, otherwise the remote address. middleware.RealIP has already resolved
-// RemoteAddr from X-Forwarded-For.
+// RemoteAddr from X-Real-IP / X-Forwarded-For.
 func clientKey(r *http.Request) string {
 	if s, ok := sessionEmail(r); ok {
-		return "email:" + strings.ToLower(s.Email)
+		return "email:" + normEmail(s.Email)
 	}
-	host := r.RemoteAddr
-	if i := strings.LastIndex(host, ":"); i > 0 {
-		host = host[:i]
-	}
-	return "ip:" + host
+	return "ip:" + remoteHost(r.RemoteAddr)
 }
 
-// trimTo bounds a free-text field. Every one of these lands in a Redis value
-// that is read back in full on each view, so length is enforced on write.
+// remoteHost strips the port from a RemoteAddr. After RealIP the address has
+// no port at all, and a bare IPv6 address cut at its last colon lost its
+// final hextet, so every host in the same /112 shared one limiter.
+func remoteHost(addr string) string {
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	return strings.Trim(addr, "[]")
+}
+
+// trimTo bounds a free-text field to max characters. Every one of these lands
+// in a Redis value that is read back in full on each view, so length is
+// enforced on write. The limit counts characters, as the form's maxlength
+// does: counted in bytes, a 3,000-letter Hebrew message (two bytes a letter)
+// was silently cut in half, and a cut through a letter left invalid UTF-8
+// that the JSON encoder showed the operator as U+FFFD.
 func trimTo(s string, max int) string {
 	s = strings.TrimSpace(s)
-	if len(s) > max {
-		s = s[:max]
+	if utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	n := 0
+	for i := range s {
+		if n == max {
+			return strings.TrimSpace(s[:i])
+		}
+		n++
 	}
 	return s
 }
@@ -369,6 +393,13 @@ func createSupportTicket(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
+	// A signed-in sender reaches the thread through the session (my-tickets),
+	// so the ticket carries no token at all. Handing one out anyway had the
+	// browser keep it in local storage past logout, where the next person at
+	// a shared machine could read and answer the thread.
+	if authed {
+		token = ""
+	}
 
 	now := time.Now()
 	ticket := &SupportTicket{
@@ -397,18 +428,38 @@ func createSupportTicket(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"id": id, "accessToken": token})
 }
 
+// ticketTokenHeader carries the anonymous access token. It used to travel as
+// a ?token= query parameter, which the request logger writes to stdout on
+// every read and reply — so the only credential on an anonymous thread ended
+// up in the container logs for the thread's 180-day life.
+const ticketTokenHeader = "X-Ticket-Token"
+
+// ticketToken returns the caller's access token. The query form is still
+// read for clients loaded before the header existed; the SPA keeps running
+// for days in an open tab.
+func ticketToken(r *http.Request) string {
+	if t := r.Header.Get(ticketTokenHeader); t != "" {
+		return t
+	}
+	return r.URL.Query().Get("token")
+}
+
 // authoriseTicket resolves the ticket for a requester-side request and reports
-// whether this caller may see it. Two ways in: the session email matches, or
-// the access token does.
+// whether this caller may see it. Two ways in: the session email matches a
+// ticket that was opened signed-in, or the access token does. A ticket opened
+// anonymously is token-only: its email is unverified, so a session matching
+// it proves nothing (see dbSaveSupportTicket).
 func authoriseTicket(ctx context.Context, r *http.Request, id string) (*SupportTicket, bool) {
 	t, err := dbGetSupportTicket(ctx, id)
 	if err != nil {
 		return nil, false
 	}
-	if s, ok := sessionEmail(r); ok && strings.EqualFold(s.Email, t.Email) {
-		return t, true
+	if t.Authenticated {
+		if s, ok := sessionEmail(r); ok && strings.EqualFold(s.Email, t.Email) {
+			return t, true
+		}
 	}
-	token := r.URL.Query().Get("token")
+	token := ticketToken(r)
 	// Constant time: this is the only credential guarding an anonymous thread.
 	if token != "" && subtle.ConstantTimeCompare([]byte(token), []byte(t.AccessToken)) == 1 {
 		return t, true
@@ -416,7 +467,7 @@ func authoriseTicket(ctx context.Context, r *http.Request, id string) (*SupportT
 	return nil, false
 }
 
-// GET /api/support/tickets/{id}?token=... — the requester's view of a thread.
+// GET /api/support/tickets/{id} (X-Ticket-Token) — the requester's view of a thread.
 func getSupportTicket(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
@@ -432,7 +483,7 @@ func getSupportTicket(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(publicView(t))
 }
 
-// POST /api/support/tickets/{id}/reply?token=... — the requester answers.
+// POST /api/support/tickets/{id}/reply (X-Ticket-Token) — the requester answers.
 func replySupportTicket(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
@@ -488,7 +539,10 @@ func listMySupportTickets(w http.ResponseWriter, r *http.Request) {
 	}
 	tickets, err := dbListSupportTickets(ctx, supportUserIndexKey(s.Email))
 	if err != nil {
-		tickets = []*SupportTicket{}
+		// An empty 200 read as "no tickets" during a Redis outage.
+		log.Printf("listMySupportTickets: %v\n", err)
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
 	}
 	out := make([]SupportTicket, 0, len(tickets))
 	for _, t := range tickets {
@@ -505,7 +559,11 @@ func adminListSupportTickets(w http.ResponseWriter, r *http.Request) {
 
 	tickets, err := dbListSupportTickets(ctx, supportTicketIndexKey)
 	if err != nil {
-		tickets = []*SupportTicket{}
+		// Same as listMySupportTickets: the inbox must not look empty on a
+		// storage error.
+		log.Printf("adminListSupportTickets: %v\n", err)
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
 	}
 	out := make([]SupportTicket, 0, len(tickets))
 	for _, t := range tickets {

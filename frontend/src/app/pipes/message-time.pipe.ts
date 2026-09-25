@@ -14,7 +14,9 @@ export class MessageTimePipe implements PipeTransform {
     const daysDiff = messageDay.diff(today, 'days');
     switch (true) {
       case daysDiff > 0: // Future
-        return m.calendar();
+        // The he locale's sameElse is 'L' (date only), so a message scheduled
+        // more than six days ahead lost its time of day in the list.
+        return m.calendar(null, { sameElse: 'L LT' });
       case daysDiff == 0: // Today
         return m.format('LT');
       case daysDiff == -1: // Yesterday
