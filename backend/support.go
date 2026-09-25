@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"log"
 	"math/rand"
 	"net"
 	"net/http"
@@ -135,7 +136,11 @@ func dbSaveSupportTicket(ctx context.Context, t *SupportTicket) error {
 	if err := rdb.ZAdd(ctx, supportTicketIndexKey, score).Err(); err != nil {
 		return err
 	}
-	if t.Email != "" {
+	// Only a ticket opened by a signed-in user is listed under that email.
+	// An anonymous ticket carries whatever address was typed, so indexing it
+	// let a visitor plant a thread in any user's "my tickets" and, holding
+	// the access token, read that user's and the operator's replies.
+	if t.Authenticated && t.Email != "" {
 		key := supportUserIndexKey(t.Email)
 		if err := rdb.ZAdd(ctx, key, score).Err(); err != nil {
 			return err
@@ -388,6 +393,13 @@ func createSupportTicket(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
+	// A signed-in sender reaches the thread through the session (my-tickets),
+	// so the ticket carries no token at all. Handing one out anyway had the
+	// browser keep it in local storage past logout, where the next person at
+	// a shared machine could read and answer the thread.
+	if authed {
+		token = ""
+	}
 
 	now := time.Now()
 	ticket := &SupportTicket{
@@ -433,15 +445,19 @@ func ticketToken(r *http.Request) string {
 }
 
 // authoriseTicket resolves the ticket for a requester-side request and reports
-// whether this caller may see it. Two ways in: the session email matches, or
-// the access token does.
+// whether this caller may see it. Two ways in: the session email matches a
+// ticket that was opened signed-in, or the access token does. A ticket opened
+// anonymously is token-only: its email is unverified, so a session matching
+// it proves nothing (see dbSaveSupportTicket).
 func authoriseTicket(ctx context.Context, r *http.Request, id string) (*SupportTicket, bool) {
 	t, err := dbGetSupportTicket(ctx, id)
 	if err != nil {
 		return nil, false
 	}
-	if s, ok := sessionEmail(r); ok && strings.EqualFold(s.Email, t.Email) {
-		return t, true
+	if t.Authenticated {
+		if s, ok := sessionEmail(r); ok && strings.EqualFold(s.Email, t.Email) {
+			return t, true
+		}
 	}
 	token := ticketToken(r)
 	// Constant time: this is the only credential guarding an anonymous thread.
@@ -523,7 +539,10 @@ func listMySupportTickets(w http.ResponseWriter, r *http.Request) {
 	}
 	tickets, err := dbListSupportTickets(ctx, supportUserIndexKey(s.Email))
 	if err != nil {
-		tickets = []*SupportTicket{}
+		// An empty 200 read as "no tickets" during a Redis outage.
+		log.Printf("listMySupportTickets: %v\n", err)
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
 	}
 	out := make([]SupportTicket, 0, len(tickets))
 	for _, t := range tickets {
@@ -540,7 +559,11 @@ func adminListSupportTickets(w http.ResponseWriter, r *http.Request) {
 
 	tickets, err := dbListSupportTickets(ctx, supportTicketIndexKey)
 	if err != nil {
-		tickets = []*SupportTicket{}
+		// Same as listMySupportTickets: the inbox must not look empty on a
+		// storage error.
+		log.Printf("adminListSupportTickets: %v\n", err)
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
 	}
 	out := make([]SupportTicket, 0, len(tickets))
 	for _, t := range tickets {

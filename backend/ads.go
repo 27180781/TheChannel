@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -15,6 +16,10 @@ import (
 type AdsSettings struct {
 	Src   string `json:"src"`
 	Width int64  `json:"width"`
+	// Locked tells the owner's settings screen that the super admin's
+	// configuration is being served instead of the channel's own, which used
+	// to be invisible: saves succeeded and changed nothing.
+	Locked bool `json:"locked"`
 }
 
 // isChannelAdsLocked returns true if the super admin has locked ads settings for this channel.
@@ -54,7 +59,7 @@ func getAdsSettings(w http.ResponseWriter, r *http.Request) {
 		// error so the client simply renders no ad frame.
 		settings = AdsSettings{}
 	case isChannelAdsLocked(globalAds, ch):
-		settings = AdsSettings{Src: globalAds.Src, Width: globalAds.Width}
+		settings = AdsSettings{Src: globalAds.Src, Width: globalAds.Width, Locked: true}
 	default:
 		cfg := getChannelConfig(ctx, slug)
 		settings = AdsSettings{Src: cfg.AdSrc, Width: cfg.AdWidth}
@@ -90,6 +95,14 @@ func setGlobalAdsConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer r.Body.Close()
+
+	// The same rule the per-channel ad-iframe-src gets: this source is bound
+	// to an <iframe src> on every locked channel.
+	cfg.Src = strings.TrimSpace(cfg.Src)
+	if cfg.Src != "" && !isHTTPURL(cfg.Src) {
+		http.Error(w, "src must be an absolute http(s) URL", http.StatusBadRequest)
+		return
+	}
 
 	if err := dbSetGlobalAdsConfig(ctx, &cfg); err != nil {
 		http.Error(w, "error", http.StatusInternalServerError)
@@ -164,6 +177,8 @@ type MagnetAdsSettings struct {
 	MinTimeSeconds       int64  `json:"minTimeSeconds"`
 	PerSeconds           int64  `json:"perSeconds"`
 	MinMessagesSinceLast int64  `json:"minMessagesSinceLast"`
+	// Locked: see AdsSettings.Locked.
+	Locked bool `json:"locked"`
 }
 
 // isChannelMagnetLocked returns true if the super admin has locked magnet settings for this channel.
@@ -205,6 +220,7 @@ func getMagnetAdsSettings(w http.ResponseWriter, r *http.Request) {
 			MinTimeSeconds:       globalMagnet.MinTimeSeconds,
 			PerSeconds:           globalMagnet.PerSeconds,
 			MinMessagesSinceLast: globalMagnet.MinMessagesSinceLast,
+			Locked:               true,
 		}
 		if settings.Enabled {
 			settings.Snippet = globalMagnet.Snippet

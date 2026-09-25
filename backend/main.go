@@ -41,6 +41,14 @@ func main() {
 	// The session store is built before the migrations run: a misconfiguration
 	// here is fatal, and failing after a one-shot migration has been marked
 	// applied would consume it without ever serving a request.
+	// redistore dials REDIS_ADDR as one plain address. With Sentinel
+	// (REDIS_MASTER) the data client resolved the master while sessions were
+	// written to the sentinel itself, so the boot looked healthy and every
+	// login answered 500; a comma-separated list failed to dial outright.
+	// Neither is supported, so refuse loudly instead of half-working.
+	if master := os.Getenv("REDIS_MASTER"); master != "" || strings.Contains(redisAddr, ",") {
+		log.Fatalf("Session store cannot use Redis Sentinel or several addresses (REDIS_MASTER=%q, REDIS_ADDR=%q); point REDIS_ADDR at a single Redis/Kvrocks instance", master, redisAddr)
+	}
 	var err error
 	store, err = redistore.NewRediStore(10, redisType, redisAddr, "", redisPass, []byte(secretKey))
 	if err != nil {
@@ -203,7 +211,7 @@ func main() {
 	})
 
 	if cfg := getGlobalConfig(); cfg != nil && cfg.RootStaticFolder != "" {
-		r.Handle("/assets/*", staticCacheHeaders(http.StripPrefix("/assets/", http.FileServer(http.Dir(cfg.RootStaticFolder)))))
+		r.Handle("/assets/*", staticCacheHeaders(noDirectoryListing(http.StripPrefix("/assets/", http.FileServer(http.Dir(cfg.RootStaticFolder))))))
 		r.NotFound(serveSpaFile)
 	}
 
@@ -310,6 +318,19 @@ func serveSpaFile(w http.ResponseWriter, r *http.Request) {
 // The hash changes whenever the contents do, so these are safe to cache
 // forever; anything else under /assets (favicon.ico and friends) is not.
 var hashedAssetRe = regexp.MustCompile(`-[A-Z0-9]{8}\.[a-zA-Z0-9]+$`)
+
+// noDirectoryListing refuses the index pages http.FileServer renders for a
+// directory: /assets/media/ listed the whole bundle, which is nobody's
+// business and a free inventory for anyone probing the deployment.
+func noDirectoryListing(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 // staticCacheHeaders pairs the immutable bundles with the no-cache index.html
 // above: the hashed files are what make it safe for index.html to be

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -263,6 +264,46 @@ func (s *Settings) ToConfig() *SettingConfig {
 	return config
 }
 
+// validateSettings rejects values ToConfig would silently ignore. Every
+// sanity check used to live only at read time, as a log line: a regex RE2
+// cannot compile, a max_file_size over the ceiling, an ad or webhook address
+// that is not an http(s) URL — all "saved" with a success toast and then did
+// nothing, with the form still displaying the value.
+func validateSettings(s *Settings) error {
+	for _, setting := range *s {
+		switch setting.Key {
+		case "regex-replace":
+			r := setting.GetString()
+			if r == "" {
+				continue
+			}
+			pat, _, ok := splitRegexRule(r)
+			if !ok || pat == "" {
+				return fmt.Errorf("regex-replace: a rule needs a pattern, '#' and a replacement")
+			}
+			if _, err := regexp.Compile(pat); err != nil {
+				return fmt.Errorf("regex-replace: invalid pattern: %v", err)
+			}
+		case "ad-iframe-src", "webhook_url":
+			if v := strings.TrimSpace(setting.GetString()); v != "" && !isHTTPURL(v) {
+				return fmt.Errorf("%s: must be an absolute http(s) URL", setting.Key)
+			}
+		case "max_file_size":
+			// The form posts a number; an empty field (nil or "") means default.
+			if setting.Value == nil {
+				continue
+			}
+			if str, isStr := setting.Value.(string); isStr && strings.TrimSpace(str) == "" {
+				continue
+			}
+			if n := setting.GetInt(); n <= 0 || n > maxAllowedFileSizeMB {
+				return fmt.Errorf("max_file_size: must be between 1 and %d MB", maxAllowedFileSizeMB)
+			}
+		}
+	}
+	return nil
+}
+
 // isHTTPURL reports whether u is an absolute http or https URL with a host.
 func isHTTPURL(u string) bool {
 	parsed, err := url.Parse(u)
@@ -312,6 +353,10 @@ func setSettings(w http.ResponseWriter, r *http.Request) {
 	var newSettings Settings
 	if err := json.NewDecoder(r.Body).Decode(&newSettings); err != nil {
 		http.Error(w, "error decoding settings", http.StatusBadRequest)
+		return
+	}
+	if err := validateSettings(&newSettings); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -365,6 +410,10 @@ func setGlobalSettings(w http.ResponseWriter, r *http.Request) {
 	var newSettings Settings
 	if err := json.NewDecoder(r.Body).Decode(&newSettings); err != nil {
 		http.Error(w, "error decoding settings", http.StatusBadRequest)
+		return
+	}
+	if err := validateSettings(&newSettings); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 

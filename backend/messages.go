@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -38,6 +39,38 @@ const sseMaxConnections = 20000
 
 // sseActiveConnections counts live SSE handlers on this instance.
 var sseActiveConnections atomic.Int64
+
+// sseMaxPerClient caps concurrent /events streams per client (session e-mail
+// or address). The global cap alone let one anonymous client open streams
+// until every other viewer was refused. Generous, because a large office NAT
+// behind one X-Real-IP is many real viewers; one client with more open tabs
+// than this to the same site is not.
+const sseMaxPerClient = 100
+
+var (
+	sseClientMu    sync.Mutex
+	sseClientConns = map[string]int{}
+)
+
+// admitSSEClient reserves a per-client slot and returns how to release it,
+// or false when the client already holds sseMaxPerClient streams.
+func admitSSEClient(key string) (func(), bool) {
+	sseClientMu.Lock()
+	defer sseClientMu.Unlock()
+	if sseClientConns[key] >= sseMaxPerClient {
+		return nil, false
+	}
+	sseClientConns[key]++
+	return func() {
+		sseClientMu.Lock()
+		defer sseClientMu.Unlock()
+		if sseClientConns[key] <= 1 {
+			delete(sseClientConns, key)
+		} else {
+			sseClientConns[key]--
+		}
+	}, true
+}
 
 // streamIDRegex matches a Redis stream entry ID ("<ms>" or "<ms>-<seq>").
 var streamIDRegex = regexp.MustCompile(`^\d+(-\d+)?$`)
@@ -323,6 +356,13 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer sseActiveConnections.Add(-1)
+	releaseClient, ok := admitSSEClient(clientKey(r))
+	if !ok {
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, "too many live connections from this client", http.StatusTooManyRequests)
+		return
+	}
+	defer releaseClient()
 
 	slug := channelSlugFromCtx(r)
 	streamKey := fmt.Sprintf("channel:%s:events", slug)
@@ -339,6 +379,13 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 	// A malformed value would make every XREAD fail, turning the loop below into
 	// a busy retry against Redis, so anything that is not a stream ID is ignored.
 	lastID := r.Header.Get("Last-Event-ID")
+	if lastID == "" {
+		// The client's heartbeat watchdog re-creates the EventSource by hand,
+		// and a new EventSource carries no Last-Event-ID, so it resumed from
+		// the tip and lost every edit, delete and reaction of the gap. It
+		// passes the last id it saw as a query parameter instead.
+		lastID = r.URL.Query().Get("last_id")
+	}
 	if !streamIDRegex.MatchString(lastID) {
 		lastID = "$"
 	}

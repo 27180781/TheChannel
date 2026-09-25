@@ -58,9 +58,9 @@ type PushMessage struct {
 func init() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	// Support single-instance, Redis Sentinel, and Redis Cluster via env vars:
-	//   REDIS_ADDRS   — comma-separated list; multiple = cluster mode
-	//   REDIS_MASTER  — master name for Sentinel
+	// The data client could take a comma-separated REDIS_ADDR list (cluster)
+	// or REDIS_MASTER (Sentinel), but the session store in main.go cannot and
+	// refuses to boot with either, so in practice this is one address.
 	addrs := strings.Split(redisAddr, ",")
 	rdb = redis.NewUniversalClient(&redis.UniversalOptions{
 		Addrs:        addrs,
@@ -196,49 +196,30 @@ func setMessage(ctx context.Context, slug string, m *Message, isUpdate bool) err
 }
 
 func setReaction(ctx context.Context, slug string, messageId int, emoji string, userId string) error {
-	// The message must exist and be live before anything is written: HSet below
-	// would otherwise mint an orphan reactions key with no TTL for any ID a
-	// client invents, and soft-deleted messages must not keep collecting votes.
-	fields, err := dbGetMessageFields(ctx, slug, strconv.Itoa(messageId))
+	// The message must exist and be live before anything is written (the
+	// script checks both): an HSET on an invented id would mint an orphan
+	// reactions key with no TTL, and a soft-deleted message must not keep
+	// collecting votes.
+	res, err := toggleReaction.Run(ctx, rdb, []string{
+		fmt.Sprintf("channel:%s:message:%d:reactions", slug, messageId),
+		fmt.Sprintf("channel:%s:messages:%d", slug, messageId),
+	}, userId, emoji).Result()
 	if err != nil {
-		if err == redis.Nil {
-			return fmt.Errorf("message %d does not exist", messageId)
-		}
-		return err
+		return fmt.Errorf("failed to set reaction: %v", err)
 	}
-	if fields["deleted"] == "1" {
+	encoded, _ := dyno.GetString(res)
+	switch encoded {
+	case "missing":
+		return fmt.Errorf("message %d does not exist", messageId)
+	case "deleted":
 		return fmt.Errorf("message %d is deleted", messageId)
 	}
 
-	kay := fmt.Sprintf("channel:%s:message:%d:reactions", slug, messageId)
-	userId = fmt.Sprintf("%v", userId)
-
-	react := map[string]string{
-		userId: emoji,
-	}
-
-	prevReact, err := rdb.HGet(ctx, kay, userId).Result()
-	if err != nil && err != redis.Nil {
-		return fmt.Errorf("failed to get previous reaction: %v", err)
-	}
-
-	if prevReact == emoji {
-		react = map[string]string{
-			userId: "",
+	var r Reactions
+	if encoded != "" && encoded != "{}" {
+		if err := json.Unmarshal([]byte(encoded), &r); err != nil {
+			return fmt.Errorf("failed to unmarshal reactions: %v", err)
 		}
-	}
-
-	if err := rdb.HSet(ctx, kay, react).Err(); err != nil {
-		return err
-	}
-
-	r, err := funcGetSumReactions(ctx, slug, messageId)
-	if err != nil {
-		return err
-	}
-
-	if err := updateMessageReactions(ctx, slug, messageId, r); err != nil {
-		return err
 	}
 
 	pushMessage := PushMessage{
@@ -426,6 +407,41 @@ var sumMessageReactions = redis.NewScript(`
   return cjson.encode(result)
 `)
 
+// toggleReaction is the whole reaction write in one script: existence and
+// deleted checks, the per-user toggle, the recount and the message-field
+// write. Done as separate round trips, two viewers reacting within
+// milliseconds interleaved so the message stored (and every viewer was
+// pushed) a stale total, and one user's double-click read the same "no
+// previous reaction" twice and never un-reacted.
+// KEYS[1] reactions hash, KEYS[2] message hash; ARGV[1] user id, ARGV[2] emoji.
+// Returns the encoded totals, "missing" or "deleted".
+var toggleReaction = redis.NewScript(`
+  if redis.call('EXISTS', KEYS[2]) == 0 then
+    return 'missing'
+  end
+  if redis.call('HGET', KEYS[2], 'deleted') == '1' then
+    return 'deleted'
+  end
+  local prev = redis.call('HGET', KEYS[1], ARGV[1])
+  if prev == ARGV[2] then
+    redis.call('HSET', KEYS[1], ARGV[1], '')
+  else
+    redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+  end
+  local result = {}
+  for _, reaction in ipairs(redis.call('HVALS', KEYS[1])) do
+    if reaction ~= '' then
+      result[reaction] = (result[reaction] or 0) + 1
+    end
+  end
+  local encoded = cjson.encode(result)
+  if encoded == '[]' then
+    encoded = '{}'
+  end
+  redis.call('HSET', KEYS[2], 'reactions', encoded)
+  return encoded
+`)
+
 func funcGetSumReactions(ctx context.Context, slug string, messageId int) (Reactions, error) {
 	res, err := sumMessageReactions.Run(ctx, rdb, []string{
 		fmt.Sprintf("channel:%s:message:%d:reactions", slug, messageId),
@@ -441,29 +457,6 @@ func funcGetSumReactions(ctx context.Context, slug string, messageId int) (React
 	}
 
 	return reactions, nil
-}
-
-func updateMessageReactions(ctx context.Context, slug string, messageId int, reactions Reactions) error {
-	messageKey := fmt.Sprintf("channel:%s:messages:%d", slug, messageId)
-
-	exists, err := rdb.Exists(ctx, messageKey).Result()
-	if err != nil {
-		return err
-	}
-	if exists == 0 {
-		return fmt.Errorf("message %d does not exist", messageId)
-	}
-
-	reactionsJSON, err := json.Marshal(reactions)
-	if err != nil {
-		return fmt.Errorf("failed to marshal reactions: %v", err)
-	}
-
-	if err := rdb.HSet(ctx, messageKey, "reactions", reactionsJSON).Err(); err != nil {
-		return err
-	}
-
-	return nil
 }
 
 // dbGetMessageFields returns the raw Redis hash of a message.
@@ -1324,6 +1317,7 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 		return fmt.Errorf("list files of %s: %w", slug, err)
 	}
 	fileKeys := make([]string, 0, len(fileMembers))
+	unreleased := 0
 	for _, m := range fileMembers {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -1333,9 +1327,19 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 			continue
 		}
 		if len(fileID) >= 4 {
-			deleteFileByID(ctx, p, fileID, false)
+			// A file that could not be released (a failed read or claim)
+			// keeps its record and its index: deleting them regardless
+			// orphaned the blob and its reference count for good, behind a
+			// success response. The channel survives and is deleted again.
+			if _, released := deleteFileByID(ctx, p, fileID, false); !released {
+				unreleased++
+				continue
+			}
 		}
 		fileKeys = append(fileKeys, "file:"+fileID)
+	}
+	if unreleased > 0 {
+		return fmt.Errorf("%d of %d files of %s could not be released; delete the channel again", unreleased, len(fileMembers), slug)
 	}
 
 	// Step 1c: collect the individual report hashes referenced by the reports index

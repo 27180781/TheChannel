@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -149,7 +150,9 @@ func dbGetFileMetadata(ctx context.Context, id string) (*FileMetadata, error) {
 	if err == nil {
 		var meta FileMetadata
 		if err := json.Unmarshal([]byte(data), &meta); err != nil {
-			return nil, err
+			// Unreadable is as gone as missing: nothing can be released from
+			// it, and a caller that waits for it would wait for ever.
+			return nil, fmt.Errorf("%w: corrupt metadata for %s: %v", errFileNotFound, id, err)
 		}
 		return &meta, nil
 	}
@@ -283,6 +286,7 @@ func serveFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Disposition", contentDispositionAttachment(meta.Filename))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 
 	if r2Enabled && len(meta.Hash) >= 4 {
 		key := r2ObjectKey(meta.Hash)
@@ -368,19 +372,6 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Each upload is buffered whole (up to the channel's limit, at most 512 MB)
-	// and the per-user limiter allows a burst of ten, so ten concurrent uploads
-	// from one writer could take the whole backend past its memory. A small
-	// process-wide cap turns that into a 503 the client retries.
-	select {
-	case uploadSlots <- struct{}{}:
-		defer func() { <-uploadSlots }()
-	default:
-		w.Header().Set("Retry-After", "5")
-		http.Error(w, "too many uploads in progress — please retry", http.StatusServiceUnavailable)
-		return
-	}
-
 	file, handler, err := r.FormFile("file")
 	if err != nil {
 		// The errors.As target must be a local: a package-level one is written
@@ -396,6 +387,23 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
+
+	// Each upload is buffered whole (up to the channel's limit, at most 512 MB)
+	// and the per-user limiter allows a burst of ten, so ten concurrent uploads
+	// from one writer could take the whole backend past its memory. A small
+	// process-wide cap turns that into a 503 the client retries. It is taken
+	// here, after the body has been read off the wire, and not before
+	// r.FormFile: held across the network read it bounded socket time rather
+	// than memory, so four slow phone uploads (there is no server read timeout)
+	// stalled every upload on every channel for as long as they trickled.
+	select {
+	case uploadSlots <- struct{}{}:
+		defer func() { <-uploadSlots }()
+	default:
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, "too many uploads in progress — please retry", http.StatusServiceUnavailable)
+		return
+	}
 
 	fileBytes, err := io.ReadAll(file)
 	if err != nil {
@@ -442,9 +450,19 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInsufficientStorage)
 		return
 	}
+	// The releases below run on a context that survives the request's: the
+	// usual reason an upload is abandoned is the client going away (or the
+	// deadline passing) during the R2 write, and go-redis refuses a cancelled
+	// context outright — so the quota bytes and the hash reference were leaked
+	// exactly when they most needed giving back.
+	releaseCtx := func() (context.Context, context.CancelFunc) {
+		return context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	}
 	defer func() {
 		if !committed {
-			releaseStorageReservation(ctx, slug, fileSize)
+			rctx, rcancel := releaseCtx()
+			defer rcancel()
+			releaseStorageReservation(rctx, slug, fileSize)
 		}
 	}()
 
@@ -477,7 +495,9 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() {
 		if !committed {
-			if _, err := dbDecrFileHashRefs(ctx, fileHash); err != nil {
+			rctx, rcancel := releaseCtx()
+			defer rcancel()
+			if _, err := dbDecrFileHashRefs(rctx, fileHash); err != nil {
 				log.Printf("uploadFile: %s: releasing the reference to hash %s failed: %v\n", slug, fileHash, err)
 			}
 		}
@@ -708,10 +728,18 @@ func reserveStorageQuota(ctx context.Context, slug string, newFileSize int64) er
 		// concurrent near-quota uploads read the same oldest-files list, and the
 		// one that lost every deletion claim still reached needToFree <= 0 and
 		// was admitted against bytes the other upload had freed for itself.
-		freed := deleteFileByID(ctx, slug, f.ID, true)
+		freed, released := deleteFileByID(ctx, slug, f.ID, true)
 		needToFree -= freed
-		if freed == 0 {
-			pruneStaleFileIndexEntry(ctx, slug, f.ID, f.Size)
+		if released && freed == 0 {
+			// Gone or tombstoned before this pass: index debris. Nothing else
+			// ever removed such a member, so each one stayed among the oldest
+			// entries for ever and shrank the 200-entry window this loop
+			// scans; once 200 accumulated every pass freed nothing and every
+			// upload on the channel was refused with thousands of newer,
+			// deletable files behind them.
+			if err := dbRemoveChannelFile(ctx, slug, f.ID, f.Size); err != nil {
+				log.Printf("reserveStorageQuota: %s: pruning stale index entry %s failed: %v\n", slug, f.ID, err)
+			}
 		}
 	}
 
@@ -734,30 +762,21 @@ func reserveStorageQuota(ctx context.Context, slug string, newFileSize int64) er
 // no-ops — an unreadable record, one already deleted, or a claim lost to a
 // concurrent caller. Callers that are freeing space to make room must count
 // that return value rather than the size they hoped to free.
-// pruneStaleFileIndexEntry removes an index member whose file is gone or
-// already tombstoned. Nothing else ever did: deleteFileByID no-ops on such a
-// member without touching the index, so each one stayed among the oldest
-// entries for ever and shrank the 200-entry window auto-cleanup scans. Once
-// 200 of them accumulated every cleanup pass freed nothing and every upload on
-// the channel was refused, with thousands of newer, deletable files behind
-// them. A member whose delete is merely in flight elsewhere (metadata still
-// live) is left alone; that deleter removes it.
-func pruneStaleFileIndexEntry(ctx context.Context, slug, fileID string, size int64) {
+// deleteFileByID releases one file: tombstones its metadata, gives its bytes
+// back to the channel quota, drops its hash reference and removes the blob
+// once the last reference is gone. It returns the bytes freed by this call
+// and whether the file is released at all — now, or earlier (already
+// tombstoned, or no metadata anywhere). released is false on a failed read,
+// a failed claim or a claim held by a concurrent deleter: callers that go on
+// to delete the file's own records must not do so in that case, or the blob
+// and its reference count are orphaned with nothing left that points at them.
+func deleteFileByID(ctx context.Context, slug, fileID string, removeFromIndex bool) (freed int64, released bool) {
 	meta, err := dbGetFileMetadata(ctx, fileID)
-	switch {
-	case errors.Is(err, errFileNotFound), err == nil && meta.Delete:
-		if rerr := dbRemoveChannelFile(ctx, slug, fileID, size); rerr != nil {
-			log.Printf("reserveStorageQuota: %s: pruning stale index entry %s failed: %v\n", slug, fileID, rerr)
-		}
-	case err != nil:
-		log.Printf("reserveStorageQuota: %s: reading metadata of %s failed: %v\n", slug, fileID, err)
+	if err != nil {
+		return 0, errors.Is(err, errFileNotFound)
 	}
-}
-
-func deleteFileByID(ctx context.Context, slug, fileID string, removeFromIndex bool) int64 {
-	meta, err := dbGetFileMetadata(ctx, fileID)
-	if err != nil || meta.Delete {
-		return 0
+	if meta.Delete {
+		return 0, true
 	}
 
 	// Claim the deletion atomically: two concurrent callers (e.g. parallel
@@ -766,7 +785,7 @@ func deleteFileByID(ctx context.Context, slug, fileID string, removeFromIndex bo
 	// deleting a blob another channel still references.
 	claimed, err := rdb.SetNX(ctx, "file:"+fileID+":deleting", 1, time.Minute).Result()
 	if err != nil || !claimed {
-		return 0
+		return 0, false
 	}
 
 	meta.Delete = true
@@ -792,7 +811,7 @@ func deleteFileByID(ctx context.Context, slug, fileID string, removeFromIndex bo
 		// Drop the counter itself; a fresh upload of the same hash starts at 1 again.
 		dbDelFileHashRefs(ctx, meta.Hash)
 	}
-	return meta.Size
+	return meta.Size, true
 }
 
 func generatedFileHash(file io.Reader) (string, error) {
@@ -811,19 +830,35 @@ func generatedRandomID(length int) string {
 	return hex.EncodeToString(b)
 }
 
+// serveDefaultFavicon answers with the platform icon. The runtime image did
+// not ship assets/favicon.ico (only the build stage had it), so every tab
+// showed no icon and the log filled with 404s; the frontend bundle in the
+// static folder always carries one, so it is the fallback.
+func serveDefaultFavicon(w http.ResponseWriter, r *http.Request) {
+	if _, err := os.Stat("assets/favicon.ico"); err == nil {
+		http.ServeFile(w, r, "assets/favicon.ico")
+		return
+	}
+	if cfg := getGlobalConfig(); cfg != nil && cfg.RootStaticFolder != "" {
+		http.ServeFile(w, r, filepath.Join(cfg.RootStaticFolder, "favicon.ico"))
+		return
+	}
+	http.NotFound(w, r)
+}
+
 func getFavicon(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	slug := r.URL.Query().Get("slug")
 	if slug == "" {
-		http.ServeFile(w, r, "assets/favicon.ico")
+		serveDefaultFavicon(w, r)
 		return
 	}
 
 	c, err := getChannelDetails(ctx, slug)
 	if err != nil {
-		http.ServeFile(w, r, "assets/favicon.ico")
+		serveDefaultFavicon(w, r)
 		return
 	}
 
@@ -836,19 +871,19 @@ func getFavicon(w http.ResponseWriter, r *http.Request) {
 	// neither the logo nor the fact that the channel exists.
 	if ch, chErr := dbGetChannel(ctx, slug); chErr != nil ||
 		ch.Features.Disabled || ch.Features.RequireAuth || ch.Features.RequireAuthFiles {
-		http.ServeFile(w, r, "assets/favicon.ico")
+		serveDefaultFavicon(w, r)
 		return
 	}
 
 	logoUrl := c["logoUrl"]
 	if logoUrl == "" {
-		http.ServeFile(w, r, "assets/favicon.ico")
+		serveDefaultFavicon(w, r)
 		return
 	}
 
 	fileId := path.Base(logoUrl)
 	if len(fileId) < 4 {
-		http.ServeFile(w, r, "assets/favicon.ico")
+		serveDefaultFavicon(w, r)
 		return
 	}
 
@@ -856,10 +891,16 @@ func getFavicon(w http.ResponseWriter, r *http.Request) {
 	// The logo URL is arbitrary moderator-supplied input, so the same channel
 	// isolation serveFile applies must hold here too.
 	if err != nil || meta.Delete || !fileVisibleToChannel(meta, slug) {
-		http.ServeFile(w, r, "assets/favicon.ico")
+		serveDefaultFavicon(w, r)
 		return
 	}
 
+	// Only an image is streamed from here. This route is anonymous, mounted at
+	// the root, and — unlike serveFile — sends the blob inline: uploads accept
+	// any file type, and the logo URL is whatever a moderator saved, so it
+	// could name an uploaded HTML file, which the browser would then render on
+	// the app's own origin with the viewer's session — stored XSS. The R2
+	// redirect below is exempt: R2 serves it from another origin.
 	if r2Enabled && len(meta.Hash) >= 4 {
 		key := r2ObjectKey(meta.Hash)
 		// Same partial-migration fallback as serveFile: a logo whose blob has
@@ -867,34 +908,78 @@ func getFavicon(w http.ResponseWriter, r *http.Request) {
 		if !r2Exists(ctx, key) {
 			if filePath, ok := localBlobExists(meta.Hash); ok {
 				log.Printf("getFavicon: %s: logo %s not in R2 (key %s), serving local copy\n", slug, fileId, key)
-				http.ServeFile(w, r, filePath)
+				serveLocalImageOrFavicon(w, r, meta, filePath)
 				return
 			}
 			log.Printf("getFavicon: %s: logo %s missing in R2 (key %s) and on local disk\n", slug, fileId, key)
-			http.ServeFile(w, r, "assets/favicon.ico")
+			serveDefaultFavicon(w, r)
 			return
 		}
 		if r2PublicURL != "" {
 			http.Redirect(w, r, r2PublicURL+"/"+key, http.StatusFound)
 			return
 		}
-		body, _, err := r2Download(ctx, key)
+		body, contentType, err := r2Download(ctx, key)
 		if err != nil {
 			log.Printf("getFavicon: %s: R2 download of logo %s (key %s) failed: %v\n", slug, fileId, key, err)
-			http.ServeFile(w, r, "assets/favicon.ico")
+			serveDefaultFavicon(w, r)
 			return
 		}
 		defer body.Close()
-		io.Copy(w, body)
+		br := bufio.NewReader(body)
+		head, _ := br.Peek(512)
+		if !isImageBlob(meta, head) {
+			serveDefaultFavicon(w, r)
+			return
+		}
+		ct := http.DetectContentType(head)
+		if contentType != nil && strings.HasPrefix(*contentType, "image/") {
+			ct = *contentType
+		}
+		w.Header().Set("Content-Type", ct)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		io.Copy(w, br)
 		return
 	}
 
 	filePath, ok := localBlobPath(meta.Hash)
 	if !ok {
 		log.Printf("getFavicon: %s: logo %s has malformed hash %q\n", slug, fileId, meta.Hash)
-		http.ServeFile(w, r, "assets/favicon.ico")
+		serveDefaultFavicon(w, r)
 		return
 	}
+	serveLocalImageOrFavicon(w, r, meta, filePath)
+}
+
+// isImageBlob reports whether a blob may be sent inline as an image: typed
+// "image" at upload (by magic bytes), or — for a record written before the
+// type was stored — sniffed as one from its first bytes. SVG never passes:
+// neither the upload typer nor DetectContentType classify it as an image,
+// and it can carry script.
+func isImageBlob(meta *FileMetadata, head []byte) bool {
+	if meta.Type == "image" {
+		return true
+	}
+	return meta.Type == "" && strings.HasPrefix(http.DetectContentType(head), "image/")
+}
+
+// serveLocalImageOrFavicon serves a local blob inline if it is an image and
+// the default favicon otherwise (see getFavicon).
+func serveLocalImageOrFavicon(w http.ResponseWriter, r *http.Request, meta *FileMetadata, filePath string) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		serveDefaultFavicon(w, r)
+		return
+	}
+	head := make([]byte, 512)
+	n, _ := io.ReadFull(f, head)
+	f.Close()
+	if !isImageBlob(meta, head[:n]) {
+		serveDefaultFavicon(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", http.DetectContentType(head[:n]))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	http.ServeFile(w, r, filePath)
 }
 

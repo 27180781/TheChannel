@@ -30,16 +30,6 @@ func addNewPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg := getChannelConfig(ctx, slug)
-	// Unauthenticated route: an unset key must fail closed, and the comparison
-	// against the configured secret must not vary with how much of it matched.
-	key := r.Header.Get("X-API-Key")
-	if cfg.ApiSecretKey == "" || subtle.ConstantTimeCompare([]byte(key), []byte(cfg.ApiSecretKey)) != 1 {
-		authLimiter.Allow()
-		http.Error(w, "error", http.StatusUnauthorized)
-		return
-	}
-
 	// This route is mounted at the router root, outside the /api/channel/{slug}
 	// group, so channelMiddleware never runs for it — and channelMiddleware is
 	// where the super admin's kill switch lives. Without this check, disabling a
@@ -47,6 +37,10 @@ func addNewPost(w http.ResponseWriter, r *http.Request) {
 	// ingesting posts, publishing to SSE and firing the channel's webhook. The
 	// check is repeated here rather than by remounting the route because the
 	// API key, not a session, is what authenticates it.
+	//
+	// It runs before the key check: a mistyped slug has no configured key, so
+	// it used to answer 401 and burn the failure budget of an integrator whose
+	// key was fine. A channel's existence is public (/info), not a secret.
 	channel, err := dbGetChannel(ctx, slug)
 	if err != nil {
 		http.Error(w, "Channel not found", http.StatusNotFound)
@@ -54,6 +48,16 @@ func addNewPost(w http.ResponseWriter, r *http.Request) {
 	}
 	if channel.Features.Disabled {
 		http.Error(w, "channel_disabled", http.StatusForbidden)
+		return
+	}
+
+	cfg := getChannelConfig(ctx, slug)
+	// Unauthenticated route: an unset key must fail closed, and the comparison
+	// against the configured secret must not vary with how much of it matched.
+	key := r.Header.Get("X-API-Key")
+	if cfg.ApiSecretKey == "" || subtle.ConstantTimeCompare([]byte(key), []byte(cfg.ApiSecretKey)) != 1 {
+		authLimiter.Allow()
+		http.Error(w, "error", http.StatusUnauthorized)
 		return
 	}
 

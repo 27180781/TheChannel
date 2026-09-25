@@ -226,9 +226,8 @@ func createChannel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid owner email", http.StatusBadRequest)
 		return
 	}
-	// The reserved check lived only in the self-service path; a slug like
-	// "admin", "api" or "login" created here would shadow a real route and be
-	// unreachable at /<slug>. The admin paths must refuse them too.
+	// The reserved check lived only in the self-service path; the admin path
+	// must refuse the same slugs (see reservedSlugs for why they are kept).
 	if isReservedSlug(req.Slug) {
 		http.Error(w, "Slug is reserved", http.StatusBadRequest)
 		return
@@ -284,8 +283,11 @@ func deleteChannel(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "slug")
 
 	// Without these checks a typo deletes nothing and still reports success, so
-	// the operator records a channel as gone while it is still live.
-	if !slugRegex.MatchString(slug) {
+	// the operator records a channel as gone while it is still live. The
+	// plausibility check, not the creation regex: a channel created before
+	// the regex existed (uppercase, underscore, two characters) could be
+	// viewed and edited but never deleted.
+	if !isPlausibleSlug(slug) {
 		http.Error(w, "Invalid slug", http.StatusBadRequest)
 		return
 	}
@@ -298,6 +300,24 @@ func deleteChannel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Channel not found", http.StatusNotFound)
 		return
 	}
+
+	// Hold the scheduled-dispatch claim for the whole delete (see
+	// claimScheduled); the TTL outlives this handler's budget.
+	token, ok := claimScheduled(ctx, slug, 90*time.Second)
+	if !ok {
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, "channel is busy, try again", http.StatusServiceUnavailable)
+		return
+	}
+	defer releaseScheduledLock(slug, token)
+
+	// Viewers with an open event stream never learned the channel was gone:
+	// the stream key vanished underneath the hub, which kept polling it, and
+	// the heartbeat kept the page looking live until the next reload. Tell
+	// them first, and give the hub a moment to fan the event out before the
+	// stream is deleted.
+	publishEvent(ctx, slug, []byte(`{"type":"channel-deleted"}`))
+	time.Sleep(500 * time.Millisecond)
 
 	if err := dbDeleteChannel(ctx, slug); err != nil {
 		http.Error(w, "error", http.StatusInternalServerError)
@@ -451,6 +471,23 @@ func setChannelUsersForSlug(w http.ResponseWriter, r *http.Request, slug string,
 	}
 	defer r.Body.Close()
 
+	// A role is one of three words; anything else was stored as typed,
+	// echoed back by the users list as if granted, and granted nothing.
+	for _, u := range req.Users {
+		if u.Role != "" && !validChannelRole(u.Role) {
+			http.Error(w, "invalid role", http.StatusBadRequest)
+			return
+		}
+		// A grant to something that is not an address ("yossi.gmail.com")
+		// was saved with a success toast and could never match a login: the
+		// intended person stayed locked out and a phantom user record was
+		// created. Revocations are left alone so a bad entry can be removed.
+		if u.Role != "" && !looksLikeEmail(normEmail(u.Email)) {
+			http.Error(w, "invalid email: "+strings.TrimSpace(u.Email), http.StatusBadRequest)
+			return
+		}
+	}
+
 	// Read-modify-write under a WATCH so a concurrent role edit elsewhere is not
 	// silently overwritten by this one.
 	if err := dbUpdateUsersList(ctx, applyChannelRoleChanges(slug, req.Users, allowOwner)); err != nil {
@@ -510,7 +547,13 @@ func superAdminSetChannelUsers(w http.ResponseWriter, r *http.Request) {
 
 // Super admin: get channel users
 func superAdminGetChannelUsers(w http.ResponseWriter, r *http.Request) {
-	listChannelUsers(w, chi.URLParam(r, "slug"))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	slug := chi.URLParam(r, "slug")
+	if !requireExistingChannel(ctx, w, slug) {
+		return
+	}
+	listChannelUsers(w, slug)
 }
 
 // Channel owner: get channel users (for this channel only)

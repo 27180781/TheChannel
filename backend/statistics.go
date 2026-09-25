@@ -42,11 +42,24 @@ func sseConnectionsKey(slug string) string {
 // fresh counter that another connection had just created.
 var channelSSECountersMu sync.Mutex
 
-func getOrCreateChannelCounter(slug string) *atomic.Int64 {
+// adjustChannelSSE applies delta to the channel's local counter under the
+// creation lock and returns the new value, clamped at zero. The add itself
+// must happen under the lock: a counter created and then incremented outside
+// it could be forgotten by the refresher in between, leaving a live
+// connection counted on a counter no longer in the map.
+func adjustChannelSSE(slug string, delta int64) int64 {
 	channelSSECountersMu.Lock()
 	defer channelSSECountersMu.Unlock()
 	v, _ := channelSSEConnections.LoadOrStore(slug, &atomic.Int64{})
-	return v.(*atomic.Int64)
+	counter := v.(*atomic.Int64)
+	n := counter.Add(delta)
+	if n < 0 {
+		// A decrement that outruns its increment must not persist a negative
+		// datapoint into the statistics series.
+		counter.Store(0)
+		n = 0
+	}
+	return n
 }
 
 // forgetIdleChannelCounter drops the local counter for slug if it is still 0
@@ -72,7 +85,12 @@ func publishLocalSSECount(ctx context.Context, slug string, count int64) {
 func dbGetSSEConnectionCount(ctx context.Context, slug string) int64 {
 	fields, err := rdb.HGetAll(ctx, sseConnectionsKey(slug)).Result()
 	if err != nil {
-		return getOrCreateChannelCounter(slug).Load() // best effort: local view
+		// Best effort: fall back to this instance's own view without
+		// creating a counter for a channel nobody is connected to.
+		if v, ok := channelSSEConnections.Load(slug); ok {
+			return v.(*atomic.Int64).Load()
+		}
+		return 0
 	}
 	var total int64
 	cutoff := time.Now().Add(-sseConnFreshness).Unix()
@@ -137,7 +155,7 @@ type Statistics struct {
 }
 
 func increaseCounterSSE(slug string) {
-	local := getOrCreateChannelCounter(slug).Add(1)
+	local := adjustChannelSSE(slug, 1)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -155,14 +173,7 @@ func increaseCounterSSE(slug string) {
 }
 
 func decreaseCounterSSE(slug string) {
-	counter := getOrCreateChannelCounter(slug)
-	local := counter.Add(-1)
-	// A decrement that outruns its increment must not persist a negative
-	// datapoint into the statistics series.
-	if local < 0 {
-		counter.Store(0)
-		local = 0
-	}
+	local := adjustChannelSSE(slug, -1)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

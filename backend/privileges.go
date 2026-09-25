@@ -26,6 +26,15 @@ const (
 	RoleWriter    ChannelRole = "writer"
 )
 
+// validChannelRole reports whether r is one of the three channel roles.
+func validChannelRole(r ChannelRole) bool {
+	switch r {
+	case RoleOwner, RoleModerator, RoleWriter:
+		return true
+	}
+	return false
+}
+
 var channelRoleLevels = map[ChannelRole]int{
 	RoleWriter:    1,
 	RoleModerator: 2,

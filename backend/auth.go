@@ -66,6 +66,13 @@ func login(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	var auth Auth
 
+	// Rationed first: the round trip to Google is the expensive part, but the
+	// failure paths below each spawn an audit-log write too, so an unlimited
+	// stream of malformed requests was an unlimited stream of goroutines.
+	if !allowOrRetryAfter(w, loginLimiter(clientKey(r)), "too many login attempts — please wait") {
+		return
+	}
+
 	if err := json.NewDecoder(r.Body).Decode(&auth); err != nil {
 		go saveLoginFailedLog("Decode", err)
 		http.Error(w, "error", http.StatusBadRequest)
@@ -75,11 +82,6 @@ func login(w http.ResponseWriter, r *http.Request) {
 	if auth.Code == "" {
 		go saveLoginFailedLog("Decode", errors.New("invalid credentials"))
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
-		return
-	}
-
-	// Rationed before the round trip to Google, which is the expensive part.
-	if !allowOrRetryAfter(w, loginLimiter(clientKey(r)), "too many login attempts — please wait") {
 		return
 	}
 

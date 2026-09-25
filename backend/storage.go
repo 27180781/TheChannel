@@ -35,6 +35,16 @@ func initR2() {
 		r2PublicURL = ""
 	}
 
+	// sample.env shipped these as "your_..." placeholders; copied as-is they
+	// pass the non-empty test below, R2 comes up against a host that does not
+	// exist and every upload fails with an opaque 500.
+	for _, v := range []string{accountID, accessKey, secretKey, r2Bucket} {
+		if strings.HasPrefix(v, "your_") {
+			log.Println("WARNING: R2_* still holds a sample.env placeholder; R2 disabled, using local file storage")
+			return
+		}
+	}
+
 	if accountID == "" || accessKey == "" || secretKey == "" || r2Bucket == "" {
 		log.Println("R2 not configured, using local file storage")
 		return

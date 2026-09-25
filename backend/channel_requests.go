@@ -97,7 +97,11 @@ func listChannelRequests(w http.ResponseWriter, r *http.Request) {
 
 	requests, err := dbListChannelRequests(ctx)
 	if err != nil {
-		requests = []*ChannelRequest{}
+		// An empty 200 rendered "אין בקשות" over a Redis outage, and the
+		// screen's error toast never ran; the sibling handlers answer 500.
+		log.Printf("listChannelRequests: %v\n", err)
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")

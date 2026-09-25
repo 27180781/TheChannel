@@ -32,8 +32,9 @@ func channelFieldTooLong(s string, maxRunes int) bool {
 
 // reservedSlugs are the top-level frontend route paths (see
 // frontend/src/app/app.routes.ts) plus the prefixes the backend serves itself.
-// A channel taking one of these would be unreachable at /<slug> and would
-// shadow the real page.
+// Channels live at /channel/<slug> today, so none of these can clash yet; they
+// stay reserved so a short /<slug> address can be introduced later without a
+// channel shadowing a real page.
 var reservedSlugs = map[string]struct{}{
 	"login":       {},
 	"channel":     {},
