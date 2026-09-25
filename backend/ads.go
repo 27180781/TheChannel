@@ -99,7 +99,7 @@ func setGlobalAdsConfig(w http.ResponseWriter, r *http.Request) {
 	// The same rule the per-channel ad-iframe-src gets: this source is bound
 	// to an <iframe src> on every locked channel.
 	cfg.Src = strings.TrimSpace(cfg.Src)
-	if cfg.Src != "" && !isHTTPURL(cfg.Src) {
+	if cfg.Src != "" && !isFramableURL(cfg.Src) {
 		http.Error(w, "src must be an absolute http(s) URL", http.StatusBadRequest)
 		return
 	}

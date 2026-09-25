@@ -21,8 +21,11 @@ const migrationsAppliedKey = "migrations:applied"
 // the bucket, so a retry is O(remaining) instead of one HEAD per blob per boot.
 const migrationsR2CopiedKey = "migrations:r2-copied"
 
-// migrationLockTTL bounds the per-migration claim (see runMigrations).
-const migrationLockTTL = 10 * time.Minute
+// migrationLockTTL bounds the per-migration claim (see runMigrations): a
+// replica killed mid-migration leaves its lock behind, and until it expires
+// every restart skips that migration, so it is only slightly longer than the
+// budget a run can actually use.
+const migrationLockTTL = migrationBudget + time.Minute
 
 var migrationUnlock = redis.NewScript(`
 	if redis.call('get', KEYS[1]) == ARGV[1] then

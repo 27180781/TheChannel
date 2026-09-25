@@ -445,6 +445,13 @@ export class InputFormComponent implements OnInit, OnDestroy {
   }
 
   openTimePicker() {
+    // A live message cannot become a scheduled one: the scheduled list is
+    // index-based and the save path would refuse the live id with a generic
+    // error, so say why instead.
+    if (this.message?.id != undefined && !this.schedulingMessage) {
+      this.toastrService.warning('', 'לא ניתן לתזמן הודעה שכבר פורסמה');
+      return;
+    }
     this.dialogService.open(TimePickerComponent, {
       context: {
         date: this.schedulingMessage,

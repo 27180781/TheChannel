@@ -22,7 +22,11 @@ const matchCustomEmbedRegEx = /^\[(video|audio|image|quote)-embedded#(\d+x\d+)?]
  * text. The composer always terminates a quote token with a newline
  * (message.component.ts quoteMessage), so nothing else shares its line.
  */
-const matchQuoteEmbedRegEx = /^\[quote-embedded#]\(([^\n]*)\)/;
+// Greedy to the last ')' so a quoted text with parentheses is not cut, but
+// only when the token ends the line (the composer always terminates it with a
+// newline); a legacy message with reply text on the same line falls back to
+// the non-greedy generic pattern below, or that text would be swallowed.
+const matchQuoteEmbedRegEx = /^\[quote-embedded#]\(([^\n]*)\)[ \t]*(?=\n|$)/;
 
 /**
  * The embed token's opening bracket, without the payload — for callers that

@@ -201,3 +201,48 @@ func TestIsPlausibleSlug(t *testing.T) {
 		}
 	}
 }
+
+// A protocol-relative iframe source is what some channels saved before the
+// URL check existed; it must keep working, while webhooks stay strict.
+func TestIsFramableURLAcceptsProtocolRelative(t *testing.T) {
+	for _, ok := range []string{"https://ads.example.com/x", "//ads.example.com/banner.html"} {
+		if !isFramableURL(ok) {
+			t.Errorf("isFramableURL(%q) = false, want true", ok)
+		}
+	}
+	for _, bad := range []string{"//", "javascript:alert(1)", "/relative", "ftp://x/y", "//host with space/x"} {
+		if isFramableURL(bad) {
+			t.Errorf("isFramableURL(%q) = true, want false", bad)
+		}
+	}
+	if isHTTPURL("//ads.example.com/banner.html") {
+		t.Error("isHTTPURL must stay strict for webhook targets")
+	}
+}
+
+// Only entries that changed are validated, so a legacy value the form cannot
+// even display does not make the whole list unsaveable.
+func TestChangedSettingsIgnoresUntouchedLegacyValues(t *testing.T) {
+	stored := Settings{
+		{Key: "regex-replace", Value: "#(\\S+)#**#$1**"},
+		{Key: "max_file_size", Value: float64(0)},
+		{Key: "webhook_url", Value: "https://hooks.example.com/a"},
+	}
+	next := Settings{
+		{Key: "regex-replace", Value: "#(\\S+)#**#$1**"},
+		{Key: "max_file_size", Value: float64(0)},
+		{Key: "webhook_url", Value: "not a url"},
+		{Key: "magnet_enabled", Value: true},
+	}
+	changed := changedSettings(stored, next)
+	if len(changed) != 2 || changed[0].Key != "webhook_url" || changed[1].Key != "magnet_enabled" {
+		t.Fatalf("changed = %+v, want webhook_url and magnet_enabled", changed)
+	}
+	if err := validateSettings(&changed); err == nil || !strings.Contains(err.Error(), "webhook_url") {
+		t.Fatalf("expected the new webhook_url to be rejected, got %v", err)
+	}
+	untouched := changedSettings(stored, stored)
+	if len(untouched) != 0 {
+		t.Fatalf("re-saving the stored list must validate nothing, got %+v", untouched)
+	}
+}

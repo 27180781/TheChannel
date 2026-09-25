@@ -161,7 +161,19 @@ still served from disk, so switching R2 on cannot break historical images.
 
 ---
 
-## 4. The `/app/files` trap
+## 4. The reverse proxy must pass the client address
+
+Rate limits, the failed-login budget and the per-client cap on live event
+streams (100 concurrent `/events` connections per client) are all keyed by
+the session e-mail or, for anonymous viewers, by the address the backend
+sees. The backend trusts `X-Real-IP` for that, so the proxy in front of it
+must set it from the connection (the shipped `Caddyfile` does:
+`header_up X-Real-IP {remote_host}` plus `header_up -True-Client-IP`;
+CapRover's nginx sets it by default). Behind a proxy that does not, every
+anonymous viewer shares the proxy's address: the 101st viewer platform-wide
+is refused with 429 and one abusive visitor's failed logins lock out everyone.
+
+## 5. The `/app/files` trap
 
 With R2 off, uploads are written to `/app/files/` inside the container.
 
@@ -178,7 +190,7 @@ more than one backend replica, which a local directory does not.
 
 ---
 
-## 5. Diagnosing an upload failure
+## 6. Diagnosing an upload failure
 
 An upload returning 500 logs the reason. Find the line beginning `uploadFile:`:
 
@@ -215,7 +227,7 @@ A browser showing the image proves neither; the status code does.
 
 ---
 
-## 6. Boot log checklist
+## 7. Boot log checklist
 
 A healthy start prints, in order:
 

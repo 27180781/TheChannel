@@ -303,7 +303,10 @@ func deleteChannel(w http.ResponseWriter, r *http.Request) {
 
 	// Hold the scheduled-dispatch claim for the whole delete (see
 	// claimScheduled); the TTL outlives this handler's budget.
-	token, ok := claimScheduled(ctx, slug, 90*time.Second)
+	// The dispatcher refreshes its claim per posted message and can hold it
+	// for most of a minute on a channel with many due posts; two seconds of
+	// waiting turned that into a 503 the operator had to retry by hand.
+	token, ok := claimScheduled(ctx, slug, 90*time.Second, 15*time.Second)
 	if !ok {
 		w.Header().Set("Retry-After", "5")
 		http.Error(w, "channel is busy, try again", http.StatusServiceUnavailable)

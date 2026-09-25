@@ -127,7 +127,18 @@ export class ChatService {
     // request on switch so a forced reload actually re-fetches.
     const requestedSlug = this.slug;
     this.emojisRequest ??= firstValueFrom(this.http.get<string[]>(`/api/channel/${requestedSlug}/emojis/list`))
-      .then(list => { if (requestedSlug === this.slug) this.emojis = list; return list; })
+      .then(list => {
+        if (requestedSlug !== this.slug) return list;
+        // Every rendered message captured the cached array once, so a reload
+        // after the admin saved a new set updates that instance in place
+        // instead of leaving the open pickers on the old list.
+        if (this.emojis) {
+          this.emojis.splice(0, this.emojis.length, ...list);
+        } else {
+          this.emojis = list;
+        }
+        return this.emojis;
+      })
       .finally(() => { this.emojisRequest = undefined; });
     return this.emojisRequest;
   }

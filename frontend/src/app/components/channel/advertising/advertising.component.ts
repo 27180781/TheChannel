@@ -11,8 +11,9 @@ export function isFramableUrl(src: string | undefined | null): boolean {
   if (!src) return false;
   try {
     // Absolute only, as the server requires; a relative value is not a URL
-    // the owner was ever offered.
-    const url = new URL(src);
+    // the owner was ever offered. A protocol-relative one (//host/path) is
+    // what some existing channels saved and resolves to the page's scheme.
+    const url = new URL(src.startsWith('//') ? 'https:' + src : src);
     return (url.protocol === 'https:' || url.protocol === 'http:') && !!url.host;
   } catch {
     return false;

@@ -21,8 +21,33 @@ const AD_SIZE_MESSAGE = 'magnet-ad-size';
 /** Height the frame starts at, so an ad script sees a viewport to render into. */
 const INITIAL_FRAME_HEIGHT = 250;
 
-/** Time the snippet gets to render something before the slot is collapsed. */
+/**
+ * Time the snippet gets, once its frame has loaded, to render something
+ * before the slot is hidden. It counts from the frame's load event rather
+ * than from render, so an ad network that answers slowly does not lose its
+ * slot to the clock.
+ */
 const EMPTY_SLOT_GRACE_MS = 5000;
+
+/** Hard ceiling from render, for a frame whose load event never fires. */
+const EMPTY_SLOT_MAX_WAIT_MS = 20000;
+
+/**
+ * Runs first inside the frame. Without allow-same-origin the frame's origin
+ * is opaque, so reading localStorage, sessionStorage or document.cookie
+ * throws a SecurityError. An ad script that touches them outside a
+ * try/catch would die before rendering, so each one is replaced by an
+ * in-memory stand-in that lives as long as the frame.
+ */
+const STORAGE_SHIM = `(function(){` +
+  `function mem(){var s={};return {getItem:function(k){return Object.prototype.hasOwnProperty.call(s,k)?s[k]:null},` +
+  `setItem:function(k,v){s[k]=String(v)},removeItem:function(k){delete s[k]},clear:function(){s={}},` +
+  `key:function(i){return Object.keys(s)[i]||null},get length(){return Object.keys(s).length}};}` +
+  `['localStorage','sessionStorage'].forEach(function(n){try{void window[n];}catch(e){` +
+  `try{Object.defineProperty(window,n,{value:mem(),configurable:true});}catch(_){}}});` +
+  `try{void document.cookie;}catch(e){try{Object.defineProperty(document,'cookie',` +
+  `{get:function(){return '';},set:function(){},configurable:true});}catch(_){}}` +
+  `})();`;
 
 @Component({
   selector: 'app-magnet-ad-slot',
@@ -114,9 +139,15 @@ export class MagnetAdSlotComponent implements AfterViewInit, OnDestroy {
 
     this.frame = frame;
     window.addEventListener('message', this.onMessage);
+    frame.addEventListener('load', () => this.armCollapse(EMPTY_SLOT_GRACE_MS), { once: true });
     host.appendChild(frame);
+    this.armCollapse(EMPTY_SLOT_MAX_WAIT_MS);
+  }
 
-    this.collapseTimer = setTimeout(() => this.collapseIfEmpty(), EMPTY_SLOT_GRACE_MS);
+  /** (Re)starts the empty-slot clock; the latest arming wins. */
+  private armCollapse(delay: number): void {
+    if (this.collapseTimer) clearTimeout(this.collapseTimer);
+    this.collapseTimer = setTimeout(() => this.collapseIfEmpty(), delay);
   }
 
   /**
@@ -131,6 +162,7 @@ export class MagnetAdSlotComponent implements AfterViewInit, OnDestroy {
     return `<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8">` +
       `<base href="${base}" target="_blank">` +
       `<style>html,body{margin:0;padding:0;background:transparent;overflow:hidden}</style>` +
+      `<script>${STORAGE_SHIM}</script>` +
       `</head><body>${snippet}` +
       `<script>(function(){` +
       `var last=-1;` +
@@ -151,21 +183,34 @@ export class MagnetAdSlotComponent implements AfterViewInit, OnDestroy {
     const height = Number(data.height);
     if (!Number.isFinite(height) || height < 0) return;
 
+    const hadContent = !!this.reportedHeight;
     this.reportedHeight = height;
     if (height > 0) {
       // Cap what an ad may grow to: the slot sits inside the chat, not over it.
       this.frame.style.height = `${Math.min(height, 1200)}px`;
+      if (this.collapsed) {
+        // The ad arrived after the clock hid the slot: show it again.
+        this.zone.run(() => { this.collapsed = false; });
+      }
+    } else if (hadContent) {
+      // The ad emptied itself (no campaign, closed by the viewer). Give it
+      // the same grace as at start before hiding the slot, since a script
+      // replacing its content can pass through zero on the way.
+      this.armCollapse(EMPTY_SLOT_GRACE_MS);
     }
   }
 
   private collapseIfEmpty(): void {
     // No report yet, or a reported height of zero: the snippet rendered
-    // nothing visible, so the slot disappears instead of leaving a gap.
-    if (!this.reportedHeight) {
-      this.zone.run(() => this.collapse());
+    // nothing visible, so the slot is hidden instead of leaving a gap. The
+    // frame stays alive and laid out (see the collapsed style), so an ad
+    // that renders later can reopen the slot with its size report.
+    if (!this.reportedHeight && !this.collapsed) {
+      this.zone.run(() => { this.collapsed = true; });
     }
   }
 
+  /** Nothing to render at all: hide the slot and drop the frame. */
   private collapse(): void {
     this.collapsed = true;
     window.removeEventListener('message', this.onMessage);

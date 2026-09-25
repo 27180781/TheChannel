@@ -118,10 +118,10 @@ func (s *Settings) ToConfig() *SettingConfig {
 			// Only an http(s) URL may be framed. The value is bound to an
 			// <iframe src> by every viewer's browser, and a javascript: URL
 			// there runs in the app's own origin — with the viewer's session.
-			if v := strings.TrimSpace(setting.GetString()); isHTTPURL(v) {
+			if v := strings.TrimSpace(setting.GetString()); isFramableURL(v) {
 				config.AdSrc = v
 			} else if v != "" {
-				log.Printf("ad-iframe-src: %q is not an http(s) URL, ignored\n", v)
+				warnOnce("ad-iframe-src:"+v, "ad-iframe-src: %q is not an http(s) URL, ignored", v)
 			}
 
 		case "ad-iframe-width":
@@ -141,12 +141,12 @@ func (s *Settings) ToConfig() *SettingConfig {
 				pat, rep, ok := splitRegexRule(r)
 				switch {
 				case !ok:
-					log.Printf("regex-replace: rule %q has no '#' separator, ignored\n", r)
+					warnOnce("regex-sep:"+r, "regex-replace: rule %q has no '#' separator, ignored", r)
 				case pat == "":
 					// An empty pattern matches at every position, so the
 					// replacement would be inserted between every two
 					// characters of every message from then on.
-					log.Printf("regex-replace: rule %q has an empty pattern, ignored\n", r)
+					warnOnce("regex-empty:"+r, "regex-replace: rule %q has an empty pattern, ignored", r)
 				default:
 					if re, err := regexp.Compile(pat); err == nil {
 						config.RegexReplace = append(config.RegexReplace, &ReplaceRegex{
@@ -284,7 +284,11 @@ func validateSettings(s *Settings) error {
 			if _, err := regexp.Compile(pat); err != nil {
 				return fmt.Errorf("regex-replace: invalid pattern: %v", err)
 			}
-		case "ad-iframe-src", "webhook_url":
+		case "ad-iframe-src":
+			if v := strings.TrimSpace(setting.GetString()); v != "" && !isFramableURL(v) {
+				return fmt.Errorf("%s: must be an absolute http(s) URL", setting.Key)
+			}
+		case "webhook_url":
 			if v := strings.TrimSpace(setting.GetString()); v != "" && !isHTTPURL(v) {
 				return fmt.Errorf("%s: must be an absolute http(s) URL", setting.Key)
 			}
@@ -302,6 +306,48 @@ func validateSettings(s *Settings) error {
 		}
 	}
 	return nil
+}
+
+// changedSettings returns the entries of next whose value is new or differs
+// from stored. Validation runs on those only: every tab re-posts the whole
+// list, so a legacy value saved before validation existed (an old hashtag
+// rule with an empty pattern, a max_file_size of 0) made a tab that cannot
+// even display it unsaveable, with nothing on that screen to fix.
+func changedSettings(stored, next Settings) Settings {
+	old := make(map[string]string, len(stored))
+	for _, s := range stored {
+		b, _ := json.Marshal(s.Value)
+		old[s.Key+"\x00"+string(b)] = ""
+	}
+	var out Settings
+	for _, s := range next {
+		b, _ := json.Marshal(s.Value)
+		if _, same := old[s.Key+"\x00"+string(b)]; !same {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// warnedConfig remembers which configuration warnings were already logged:
+// ToConfig runs on every post, upload and webhook, so one legacy bad rule
+// used to write the same line thousands of times.
+var warnedConfig sync.Map
+
+func warnOnce(key, format string, args ...any) {
+	if _, seen := warnedConfig.LoadOrStore(key, struct{}{}); !seen {
+		log.Printf(format+"\n", args...)
+	}
+}
+
+// isFramableURL accepts what isHTTPURL does plus a protocol-relative URL
+// (//host/path), which is a valid iframe source that existing channels use
+// and resolves to the page's own scheme.
+func isFramableURL(u string) bool {
+	if strings.HasPrefix(u, "//") {
+		return isHTTPURL("https:" + u)
+	}
+	return isHTTPURL(u)
 }
 
 // isHTTPURL reports whether u is an absolute http or https URL with a host.
@@ -355,7 +401,9 @@ func setSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "error decoding settings", http.StatusBadRequest)
 		return
 	}
-	if err := validateSettings(&newSettings); err != nil {
+	stored, _ := dbGetSettings(ctx, slug)
+	changed := changedSettings(stored, newSettings)
+	if err := validateSettings(&changed); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -412,7 +460,9 @@ func setGlobalSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "error decoding settings", http.StatusBadRequest)
 		return
 	}
-	if err := validateSettings(&newSettings); err != nil {
+	stored, _ := dbGetGlobalSettings(ctx)
+	changed := changedSettings(stored, newSettings)
+	if err := validateSettings(&changed); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

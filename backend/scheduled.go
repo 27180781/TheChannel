@@ -47,12 +47,16 @@ func releaseScheduledLock(slug, token string) {
 // it for the whole delete: a dispatch that straddled the delete wrote the
 // pruned list and the due entry back after the keys were gone, and a channel
 // re-created under the same slug inherited — and posted — them.
-func claimScheduled(ctx context.Context, slug string, ttl time.Duration) (string, bool) {
+func claimScheduled(ctx context.Context, slug string, ttl, wait time.Duration) (string, bool) {
 	token := generatedRandomID(16)
 	if token == "" {
 		return "", false
 	}
-	for attempt := 0; attempt < 10; attempt++ {
+	attempts := int(wait / (200 * time.Millisecond))
+	if attempts < 1 {
+		attempts = 1
+	}
+	for attempt := 0; attempt < attempts; attempt++ {
 		ok, err := rdb.SetNX(ctx, scheduledLockKey(slug), token, ttl).Result()
 		if err == nil && ok {
 			return token, true
@@ -293,14 +297,15 @@ func updateScheduledMessages(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Only the fields a scheduled post is made of are kept. The dispatcher
-		// stores the struct as sent, so client-supplied views, deleted, is_ads
-		// or reactions used to land in the live message hash — a "deleted"
-		// post born already hidden, or an ad flag no writer may set.
+		// stores the struct as sent, so client-supplied views, deleted or
+		// reactions used to land in the live message hash — a "deleted" post
+		// born already hidden. is_ads stays: the composer's ad toggle is an
+		// ordinary writer control on the live path too.
 		typ := m.Type
 		if typ == "" {
 			typ = "md"
 		}
-		messages[i] = Message{Type: typ, Text: m.Text, Timestamp: m.Timestamp}
+		messages[i] = Message{Type: typ, Text: m.Text, Timestamp: m.Timestamp, IsAds: m.IsAds}
 	}
 
 	// Take the same per-channel claim the dispatcher holds: dbSaveScheduledMessages

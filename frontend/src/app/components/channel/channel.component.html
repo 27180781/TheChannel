@@ -2,10 +2,12 @@
   <nb-layout>
     <nb-layout-header fixed>
       <div class="plain-header">
-        <button nbButton ghost status="basic" (click)="logout()">
-          <nb-icon icon="log-out-outline"></nb-icon>
-          התנתק
-        </button>
+        @if (userInfo) {
+          <button nbButton ghost status="basic" (click)="logout()">
+            <nb-icon icon="log-out-outline"></nb-icon>
+            התנתק
+          </button>
+        }
         <span class="plain-header__brand">TheChannel</span>
       </div>
     </nb-layout-header>
@@ -26,10 +28,12 @@
                 <nb-icon icon="arrow-back-outline"></nb-icon>
                 חזרה לערוצים שלי
               </button>
-              <button nbButton ghost status="basic" (click)="logout()">
-                <nb-icon icon="log-out-outline"></nb-icon>
-                התנתק
-              </button>
+              @if (userInfo) {
+                <button nbButton ghost status="basic" (click)="logout()">
+                  <nb-icon icon="log-out-outline"></nb-icon>
+                  התנתק
+                </button>
+              }
             </div>
           </nb-card-body>
         </nb-card>
@@ -42,10 +46,12 @@
   <nb-layout>
     <nb-layout-header fixed>
       <div class="plain-header">
-        <button nbButton ghost status="basic" (click)="logout()">
-          <nb-icon icon="log-out-outline"></nb-icon>
-          התנתק
-        </button>
+        @if (userInfo) {
+          <button nbButton ghost status="basic" (click)="logout()">
+            <nb-icon icon="log-out-outline"></nb-icon>
+            התנתק
+          </button>
+        }
         <span class="plain-header__brand">TheChannel</span>
       </div>
     </nb-layout-header>
@@ -78,10 +84,12 @@
   <nb-layout>
     <nb-layout-header fixed>
       <div class="plain-header">
-        <button nbButton ghost status="basic" (click)="logout()">
-          <nb-icon icon="log-out-outline"></nb-icon>
-          התנתק
-        </button>
+        @if (userInfo) {
+          <button nbButton ghost status="basic" (click)="logout()">
+            <nb-icon icon="log-out-outline"></nb-icon>
+            התנתק
+          </button>
+        }
         <span class="plain-header__brand">TheChannel</span>
       </div>
     </nb-layout-header>
@@ -149,10 +157,12 @@
   <nb-layout>
     <nb-layout-header fixed>
       <div class="plain-header">
-        <button nbButton ghost status="basic" (click)="logout()">
-          <nb-icon icon="log-out-outline"></nb-icon>
-          התנתק
-        </button>
+        @if (userInfo) {
+          <button nbButton ghost status="basic" (click)="logout()">
+            <nb-icon icon="log-out-outline"></nb-icon>
+            התנתק
+          </button>
+        }
         <span class="plain-header__brand">TheChannel</span>
       </div>
     </nb-layout-header>

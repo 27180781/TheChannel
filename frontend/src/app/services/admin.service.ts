@@ -167,7 +167,9 @@ export class AdminService {
    */
   private async commitSchedulingMessages(next: ChatMessage[]): Promise<ResponseResult> {
     const res = await firstValueFrom(this.http.post<ResponseResult>(`/api/channel/${this.slug}/admin/scheduled-messages/update`, next));
-    this.schedulingMessages = next;
+    // The server stamps fields the client does not know (the scheduler's
+    // name), so the cache is re-read rather than kept as the client copy.
+    this.schedulingMessages = await this.fetchScheduledMessages().catch(() => next);
     return res;
   }
 }

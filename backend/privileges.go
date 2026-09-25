@@ -155,7 +155,10 @@ func initializePrivilegeUsers() error {
 			// ADMIN_USERS is the source of truth in both directions. The stamp
 			// below only ever added the role, so an address removed from the
 			// variable kept super-admin for as long as the users list existed.
-			if u.GlobalRole == RoleSuperAdmin {
+			// One boot with the variable unset or mistyped would otherwise
+			// persist the demotion of every super admin; an empty list is
+			// far more likely a deploy mistake than a real "nobody".
+			if u.GlobalRole == RoleSuperAdmin && len(admins) > 0 {
 				if _, still := isAdmin[u.Email]; !still {
 					users[i].GlobalRole = ""
 				}

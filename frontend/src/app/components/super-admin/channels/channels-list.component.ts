@@ -119,7 +119,9 @@ export class ChannelsListComponent implements OnInit {
         this.channels = this.channels.filter(c => c.slug !== slug);
         this.toastr.success('', 'הערוץ נמחק בהצלחה');
       })
-      .catch(() => this.toastr.danger('', 'שגיאה במחיקת הערוץ'))
+      .catch((err) => this.toastr.danger('', err?.status === 503
+        ? 'הערוץ עסוק כרגע (פרסום מתוזמן בעיצומו), נסו שוב בעוד רגע'
+        : 'שגיאה במחיקת הערוץ'))
       .finally(() => this.deleting.delete(slug));
   }
 
