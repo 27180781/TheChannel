@@ -266,8 +266,9 @@ export class InputFormComponent implements OnInit, OnDestroy {
       if (this.message) {
         // A copy, for the same reason as updateMessage: this.message is the
         // scheduled list's own entry, and the service only commits the new
-        // list once the server accepted it.
-        await this.adminService.editScheduledMessage({
+        // list once the server accepted it. The entry itself goes along too,
+        // so the service can find it in the server's current list.
+        await this.adminService.editScheduledMessage(this.message, {
           ...this.message, text: this.input, is_ads: this.isAds, timestamp: this.schedulingMessage,
         });
       } else {

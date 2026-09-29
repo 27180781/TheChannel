@@ -149,7 +149,16 @@ const customEmbedExtension = {
     tokenizer: (src: string, tokens: Token[] | TokensList) => {
 
       const quote = src.match(matchQuoteEmbedRegEx);
-      if (quote) {
+      // The strict pattern runs to the LAST ')' of the line, so a legacy
+      // same-line reply that ends with a markdown link —
+      // `[quote-embedded#](12@abc) see [link](https://…)` — was swallowed
+      // whole: the link gone, its URL shown as quote text. Decide by what the
+      // strict match takes BEYOND the non-greedy one: a link there belongs to
+      // the reply, so the non-greedy branch below wins; a link inside the
+      // quoted text itself (old quotes, before the composer stripped
+      // parentheses) stays with the quote.
+      const loose = src.match(matchCustomEmbedRegEx);
+      if (quote && !(loose && quote[0].slice(loose[0].length).includes(']('))) {
         const s = quote[1].split(/@(.*)/);
         return {
           type: 'custom_embed',
@@ -160,6 +169,18 @@ const customEmbedExtension = {
 
       let match = src.match(matchCustomEmbedRegEx);
       if (match) {
+        if (match[1] === 'quote') {
+          // A legacy quote with reply text on the same line lands here (the
+          // strict pattern above needs the token to end its line). Its payload
+          // is still `id@text`; handing it over unsplit rendered an empty
+          // quote-id and the raw "12@abc" as the quote's text.
+          const s = match[3].split(/@(.*)/);
+          return {
+            type: 'custom_embed',
+            raw: match[0],
+            meta: { type: 'quote', id: s[0], url: s[1] },
+          };
+        }
         return {
           type: 'custom_embed',
           raw: match[0],

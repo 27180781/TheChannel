@@ -503,6 +503,13 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	// A last-reference delete of these very bytes may be mid-flight: it has
+	// taken the count to zero and is about to remove the object. Looking for
+	// the blob now would find it, adopt it, and leave this record pointing at
+	// nothing for good — so wait, briefly and bounded, for that delete to
+	// finish before deciding whether the blob needs writing.
+	waitFileHashUnlocked(ctx, fileHash)
+
 	isNewHash := true
 	if r2Enabled {
 		key := r2ObjectKey(fileHash)
@@ -754,6 +761,35 @@ func reserveStorageQuota(ctx context.Context, slug string, newFileSize int64) er
 	return nil
 }
 
+// fileHashLockKey marks a last-reference removal of a blob in progress. Blobs
+// are shared by hash across tenants, and an upload of the same bytes claims
+// its reference before looking for the blob (see uploadFile): one that claimed
+// between the delete's DECR and its physical removal found the object, adopted
+// it, and was left with a record that answered 404 for good while its bytes
+// stayed charged to the channel. The delete holds this key while the blob
+// goes and the upload waits for it to clear before deciding whether the blob
+// needs writing. The TTL only bounds a lock leaked by a crash.
+func fileHashLockKey(hash string) string { return "file:hash:" + hash + ":lock" }
+
+const fileHashLockTTL = 30 * time.Second
+
+// waitFileHashUnlocked pauses while a last-reference delete of hash is in
+// progress, for a few seconds at most: the wait is the rare case, and an
+// upload must not hang on a leaked lock for its whole TTL.
+func waitFileHashUnlocked(ctx context.Context, hash string) {
+	for i := 0; i < 50; i++ {
+		n, err := rdb.Exists(ctx, fileHashLockKey(hash)).Result()
+		if err != nil || n == 0 {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
 // deleteFileByID marks a file as deleted, decrements storage counter, and removes
 // from R2/disk if no more refs. removeFromIndex controls whether the channel's
 // file tracking set is updated; dbDeleteChannel passes false because it drops
@@ -798,18 +834,44 @@ func deleteFileByID(ctx context.Context, slug, fileID string, removeFromIndex bo
 	// Decrement hash refs and delete from storage if no more references
 	refs, err := dbDecrFileHashRefs(ctx, meta.Hash)
 	if err == nil && refs <= 0 {
-		if r2Enabled && len(meta.Hash) >= 4 {
-			if err := r2Delete(ctx, r2ObjectKey(meta.Hash)); err != nil {
-				log.Printf("deleteFileByID: %s: R2 delete of %s (key %s) failed: %v\n", slug, fileID, r2ObjectKey(meta.Hash), err)
+		// Hold the per-hash lock while the blob goes (see fileHashLockKey),
+		// then re-read the counter: an upload that claimed the hash between
+		// the DECR above and the lock is not waiting on it and would find the
+		// object and adopt it — so if anyone holds a reference now, the blob
+		// and its counter are theirs and stay. The lock itself is best
+		// effort: a failed SETNX only reopens the old window.
+		lockKey := fileHashLockKey(meta.Hash)
+		locked, _ := rdb.SetNX(ctx, lockKey, 1, fileHashLockTTL).Result()
+		if n, gerr := dbGetFileHashRefs(ctx, meta.Hash); gerr == nil && n > 0 {
+			log.Printf("deleteFileByID: %s: hash %s was claimed by an upload while %s was being deleted; keeping the blob\n", slug, meta.Hash, fileID)
+		} else {
+			if r2Enabled && len(meta.Hash) >= 4 {
+				if err := r2Delete(ctx, r2ObjectKey(meta.Hash)); err != nil {
+					log.Printf("deleteFileByID: %s: R2 delete of %s (key %s) failed: %v\n", slug, fileID, r2ObjectKey(meta.Hash), err)
+				}
+			}
+			// The local copy is removed either way: with R2 on it is the migration's
+			// fallback copy of the same blob, and the last reference is gone.
+			if p, ok := localBlobPath(meta.Hash); ok {
+				os.Remove(p)
+			}
+			// Drop the counter itself, so a fresh upload of the same hash starts
+			// at 1 again — unless an upload claimed the hash after the re-read
+			// above. It is waiting on the lock and will write the blob anew,
+			// and an unconditional DEL here wiped its reference: the next
+			// same-hash delete then removed a blob that record still served.
+			// The removal is conditional on the count, atomically.
+			if kept, derr := dbDelFileHashRefs(ctx, meta.Hash); derr == nil && kept > 0 {
+				log.Printf("deleteFileByID: %s: hash %s was claimed by %d upload(s) while the blob of %s was being removed; keeping the counter\n", slug, meta.Hash, kept, fileID)
 			}
 		}
-		// The local copy is removed either way: with R2 on it is the migration's
-		// fallback copy of the same blob, and the last reference is gone.
-		if p, ok := localBlobPath(meta.Hash); ok {
-			os.Remove(p)
+		if locked {
+			// On a fresh context: the caller's may have expired mid-delete, and
+			// a lingering lock stalls every same-hash upload for its TTL.
+			uctx, ucancel := context.WithTimeout(context.Background(), 5*time.Second)
+			rdb.Del(uctx, lockKey)
+			ucancel()
 		}
-		// Drop the counter itself; a fresh upload of the same hash starts at 1 again.
-		dbDelFileHashRefs(ctx, meta.Hash)
 	}
 	return meta.Size, true
 }
@@ -852,6 +914,14 @@ func getFavicon(w http.ResponseWriter, r *http.Request) {
 
 	slug := r.URL.Query().Get("slug")
 	if slug == "" {
+		serveDefaultFavicon(w, r)
+		return
+	}
+	// This handler sits outside channelMiddleware, so it is the one place a raw
+	// ?slug= still reached Redis unchecked; a hash-typed key such as
+	// "foo:messages:5" would resolve as a phantom channel. Same guard as the
+	// middleware, same answer as "not found" (no oracle).
+	if !isPlausibleSlug(slug) {
 		serveDefaultFavicon(w, r)
 		return
 	}

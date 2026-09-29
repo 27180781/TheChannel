@@ -104,6 +104,9 @@ export class ChannelInfoFormComponent implements OnInit {
 
       this.uploadFile(this.attachment, previousLogoUrl);
     }
+    // Cleared so picking the same logo again (after a failed upload) fires a
+    // change event; a browser only fires it when the selection differs.
+    input.value = '';
   }
 
   async uploadFile(attachment: Attachment, previousLogoUrl?: string) {

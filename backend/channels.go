@@ -319,13 +319,23 @@ func deleteChannel(w http.ResponseWriter, r *http.Request) {
 	// the heartbeat kept the page looking live until the next reload. Tell
 	// them first, and give the hub a moment to fan the event out before the
 	// stream is deleted.
-	publishEvent(ctx, slug, []byte(`{"type":"channel-deleted"}`))
+	publishEvent(ctx, slug, []byte(sseChannelGoneEvent))
 	time.Sleep(500 * time.Millisecond)
+	// Then retire this instance's hub outright: a client that ignores the
+	// event, or a stale connection, would otherwise keep its stream — and
+	// the writer resolution it was opened with — for as long as it stayed up.
+	streamKey := "channel:" + slug + ":events"
+	sseStopHub(streamKey)
 
 	if err := dbDeleteChannel(ctx, slug); err != nil {
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
+	// A reconnect that slipped in between the stop above and the fence
+	// inside dbDeleteChannel built a fresh hub on a key that no longer
+	// exists, where it would sit and pick up the events of whatever tenant
+	// re-creates the slug. Now that the channel is gone, reconnects meet 404.
+	sseStopHub(streamKey)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(Response{Success: true})
@@ -353,7 +363,9 @@ func updateChannelFeatures(w http.ResponseWriter, r *http.Request) {
 	// back untouched, so a save made after the global lock changed used to
 	// replay the stale pair. They are kept from the stored record, and the
 	// write is atomic against the sync so neither side reverts the other.
+	var wasDisabled bool
 	err := dbUpdateChannelFeatures(ctx, slug, func(cur *ChannelFeatures) {
+		wasDisabled = cur.Disabled
 		magnetLocked, adsLocked := cur.MagnetLockedByAdmin, cur.AdsLockedByAdmin
 		*cur = features
 		cur.MagnetLockedByAdmin, cur.AdsLockedByAdmin = magnetLocked, adsLocked
@@ -363,8 +375,36 @@ func updateChannelFeatures(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The kill switch used to stop new requests only: every open event
+	// stream — a since-demoted writer's included — kept streaming, unmasked,
+	// until its connection dropped. The control event tells the clients and
+	// every hub, this instance's included, which retire themselves after
+	// fanning it out. Reconnects meet channelMiddleware's 403.
+	if features.Disabled && !wasDisabled {
+		announceChannelDisabled(ctx, slug)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(Response{Success: true})
+}
+
+// announceChannelDisabled publishes the channel-disabled control event and
+// retires this instance's hub once the event had a chance to fan out.
+//
+// The hub used to be stopped right after the publish. sseStopHub closes every
+// subscriber at once, and the hub's blocking read returned with the event only
+// afterwards, straight into its "already cancelled" exit — so on the instance
+// that served the request (every viewer, in a single-replica deployment) the
+// viewers lost the very event that tells them the channel is disabled and kept
+// a live-looking page until the heartbeat watchdog reconnected them into a
+// 403. The hub retires itself when it reads the control event (see run); the
+// delayed stop only covers a hub that never read it, and does not hold the
+// request. A hub built for the slug within the delay (a re-enable in that
+// window) is stopped too, which costs its viewers one reconnect.
+func announceChannelDisabled(ctx context.Context, slug string) {
+	publishEvent(ctx, slug, []byte(sseChannelDisabledEvent))
+	streamKey := "channel:" + slug + ":events"
+	time.AfterFunc(500*time.Millisecond, func() { sseStopHub(streamKey) })
 }
 
 // requireExistingChannel answers 404 and returns false when slug does not name
@@ -492,10 +532,34 @@ func setChannelUsersForSlug(w http.ResponseWriter, r *http.Request, slug string,
 	}
 
 	// Read-modify-write under a WATCH so a concurrent role edit elsewhere is not
-	// silently overwritten by this one.
-	if err := dbUpdateUsersList(ctx, applyChannelRoleChanges(slug, req.Users, allowOwner)); err != nil {
+	// silently overwritten by this one. The mutator may run more than once;
+	// the last run is the one that committed, so its output is what is kept.
+	var updated []User
+	mutate := applyChannelRoleChanges(slug, req.Users, allowOwner)
+	if err := dbUpdateUsersList(ctx, func(users []User) []User {
+		updated = mutate(users)
+		return updated
+	}); err != nil {
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
+	}
+	// The channel hash's ownerEmail (what the channels list shows as owner)
+	// was written at creation only, so moving owner through this editor left
+	// the list naming the old one. Owner can only change when allowOwner.
+	if allowOwner {
+		owner := ""
+		for _, u := range updated {
+			if u.ChannelRoles[slug] == RoleOwner {
+				owner = u.Email
+				break
+			}
+		}
+		// Written only if the hash still exists: a bare HSET would otherwise
+		// mint a phantom channel for a slug deleted a moment ago.
+		if err := rdb.Eval(ctx, `if redis.call('EXISTS', KEYS[1]) == 1 then return redis.call('HSET', KEYS[1], 'ownerEmail', ARGV[1]) end return 0`,
+			[]string{"channel:" + slug}, owner).Err(); err != nil {
+			log.Printf("setChannelUsers(%s): ownerEmail not updated: %v", slug, err)
+		}
 	}
 	if err := initializePrivilegeUsers(); err != nil {
 		log.Printf("initializePrivilegeUsers after setChannelUsers(%s): %v", slug, err)

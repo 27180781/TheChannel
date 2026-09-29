@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"strconv"
 	"strings"
@@ -169,7 +170,23 @@ func setMessage(ctx context.Context, slug string, m *Message, isUpdate bool) err
 	// no cleanup reached, and that still counted as existing for reactions
 	// and reports.
 	if _, err := rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
-		p.HSet(ctx, messageKey, m)
+		if isUpdate {
+			// Only the fields an edit can change. Writing the whole struct
+			// back replayed the views and reactions the handler had read
+			// milliseconds earlier over every HINCRBY (addViewsToMessages)
+			// and reaction toggle that landed in between, so both counters
+			// silently lost increments on each save. The caller still fills
+			// them in on m, but only for the SSE payload published below.
+			p.HSet(ctx, messageKey, map[string]any{
+				"type":      m.Type,
+				"text":      m.Text,
+				"last_edit": m.LastEdit,
+				"deleted":   m.Deleted,
+				"is_ads":    m.IsAds,
+			})
+		} else {
+			p.HSet(ctx, messageKey, m)
+		}
 		if !isUpdate {
 			p.ZAdd(ctx, fmt.Sprintf("channel:%s:m_times", slug), redis.Z{Score: float64(m.Timestamp.Unix()), Member: messageKey})
 		}
@@ -536,6 +553,19 @@ func addSubscription(slug, token string) error {
 	return nil
 }
 
+// countSubscriptions is the size of the channel's token set, read before a
+// subscribe so the set can be capped (see maxSubscriptionsPerChannel).
+func countSubscriptions(slug string) (int64, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	key := "subscriptions"
+	if slug != "" {
+		key = fmt.Sprintf("channel:%s:subscriptions", slug)
+	}
+	return rdb.SCard(ctx, key).Result()
+}
+
 // removeSubscriptions drops tokens FCM has told us are dead (unregistered or
 // malformed). Without this the subscription set only ever grows: every expired
 // or rotated device token stays forever and every push wastes an FCM slot on
@@ -641,7 +671,11 @@ func dbGetUsersList(ctx context.Context) ([]User, error) {
 // a read-modify-write of one JSON string, so doing it unguarded means two
 // concurrent administrative edits silently discard one another.
 func dbUpdateUsersList(ctx context.Context, mutate func([]User) []User) error {
-	const maxRetries = 5
+	// Same budget and backoff as dbUpdateSupportTicket: five back-to-back
+	// retries with no pause were exhausted by a handful of simultaneous
+	// privileged logins re-colliding in lockstep, and each loser's login
+	// answered 500. The jitter spreads the contenders apart.
+	const maxRetries = 20
 
 	txf := func(tx *redis.Tx) error {
 		var users []User
@@ -671,6 +705,11 @@ func dbUpdateUsersList(ctx context.Context, mutate func([]User) []User) error {
 		err := rdb.Watch(ctx, txf, "users:list")
 		if err != redis.TxFailedErr {
 			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(rand.Int63n(int64(2*time.Millisecond))) + time.Millisecond):
 		}
 	}
 	return errors.New("users:list: too much contention")
@@ -1283,12 +1322,89 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 		log.Printf("initializePrivilegeUsers after dbDeleteChannel: %v\n", err)
 	}
 
-	// Step 1: collect all message keys and reaction keys from the sorted set
+	// Step 0b: fence the channel. Revoking roles does not stop every writer:
+	// the API-key import path authenticates with the channel's secret, not a
+	// role, and a super admin passes hasChannelRole outright — so until the
+	// hash went in the final pipeline both could still post during the
+	// (long) file sweep below and leave an unindexed message hash behind.
+	// Disabled is the one flag channelMiddleware and addNewPost both refuse
+	// on. A delete that fails past this point leaves a disabled channel,
+	// which is the safer state: the operator deletes it again (deleteChannel
+	// checks existence only) or re-enables it from the features form.
+	if err := dbUpdateChannelFeatures(ctx, slug, func(f *ChannelFeatures) { f.Disabled = true }); err != nil {
+		return fmt.Errorf("fence %s: %w", slug, err)
+	}
+	// Tell the hubs once more, now that the fence is up. deleteChannel
+	// published the control event before calling here, but until the fence
+	// channelMiddleware still admitted /events: a viewer whose stream had
+	// just been closed reconnected and built a fresh hub — on another replica
+	// one that no stop reaches — which then never saw a control event, sat on
+	// the deleted key, and fanned the events of whatever tenant re-created
+	// the slug to viewers who never passed that channel's middleware. Any hub
+	// built in the window reads this entry and retires; a second control
+	// event is a no-op for a client and a hub that already got the first.
+	// The entry goes with the stream in the final pipeline.
+	publishEvent(ctx, slug, []byte(sseChannelGoneEvent))
+
+	// Step 1: release every uploaded file through the normal delete path so
+	// hash refcounts are decremented and the R2/disk blob is removed once the
+	// last reference is gone. The tracking set is NOT deleted up front: it is
+	// the only record of which blobs still need cleanup, so destroying it before
+	// the loop finishes would orphan every remaining blob permanently if the
+	// context expires or the process dies mid-delete. The per-file index removal
+	// is skipped instead (removeFromIndex=false) to keep the loop O(N); the set
+	// itself is dropped with the fixed keys below once the loop completes.
+	//
+	// Two passes over the set: the fence above refuses new uploads, but one
+	// admitted just before it can still index its file while this sweep runs
+	// (an R2 write has a minute's budget), and a single snapshot left that
+	// blob and its reference count orphaned when the set was dropped. The
+	// second pass re-reads the set and releases only what the first missed.
+	fileKeys := make([]string, 0)
+	swept := make(map[string]bool)
+	for pass := 0; pass < 2; pass++ {
+		fileMembers, err := rdb.ZRange(ctx, channelFilesKey(p), 0, -1).Result()
+		if err != nil {
+			return fmt.Errorf("list files of %s: %w", slug, err)
+		}
+		unreleased := 0
+		for _, m := range fileMembers {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			fileID, _, ok := decodeFileMember(m)
+			if !ok || swept[fileID] {
+				continue
+			}
+			swept[fileID] = true
+			if len(fileID) >= 4 {
+				// A file that could not be released (a failed read or claim)
+				// keeps its record and its index: deleting them regardless
+				// orphaned the blob and its reference count for good, behind a
+				// success response. The channel survives and is deleted again.
+				if _, released := deleteFileByID(ctx, p, fileID, false); !released {
+					unreleased++
+					continue
+				}
+			}
+			fileKeys = append(fileKeys, "file:"+fileID)
+		}
+		if unreleased > 0 {
+			return fmt.Errorf("%d of %d files of %s could not be released; delete the channel again", unreleased, len(fileMembers), slug)
+		}
+	}
+
+	// Step 1b: collect all message keys and reaction keys from the sorted set
 	// (avoids SCAN). Every index read below must succeed before anything is
 	// deleted: an ignored error left the slice empty, Step 2 then dropped the
 	// index itself, and every message, reaction, report hash and — worst —
 	// every file blob and hash refcount it pointed at was orphaned for good,
 	// while the handler still reported success.
+	//
+	// Taken after the file sweep, not before it: a post admitted before the
+	// fence can land while the sweep runs, and a snapshot from before it left
+	// that message hash behind when the index was deleted — to resurface on a
+	// re-created slug.
 	messageKeys, err := rdb.ZRange(ctx, fmt.Sprintf("channel:%s:m_times", p), 0, -1).Result()
 	if err != nil {
 		return fmt.Errorf("list messages of %s: %w", slug, err)
@@ -1302,44 +1418,6 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 		reactionKeys = append(reactionKeys, fmt.Sprintf("channel:%s:message:%s:reactions", p, id))
 		// The per-message report-dedup set lives under the same message id.
 		reporterKeys = append(reporterKeys, fmt.Sprintf("channel:%s:message:%s:reporters", p, id))
-	}
-
-	// Step 1b: release every uploaded file through the normal delete path so
-	// hash refcounts are decremented and the R2/disk blob is removed once the
-	// last reference is gone. The tracking set is NOT deleted up front: it is
-	// the only record of which blobs still need cleanup, so destroying it before
-	// the loop finishes would orphan every remaining blob permanently if the
-	// context expires or the process dies mid-delete. The per-file index removal
-	// is skipped instead (removeFromIndex=false) to keep the loop O(N); the set
-	// itself is dropped with the fixed keys below once the loop completes.
-	fileMembers, err := rdb.ZRange(ctx, channelFilesKey(p), 0, -1).Result()
-	if err != nil {
-		return fmt.Errorf("list files of %s: %w", slug, err)
-	}
-	fileKeys := make([]string, 0, len(fileMembers))
-	unreleased := 0
-	for _, m := range fileMembers {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		fileID, _, ok := decodeFileMember(m)
-		if !ok {
-			continue
-		}
-		if len(fileID) >= 4 {
-			// A file that could not be released (a failed read or claim)
-			// keeps its record and its index: deleting them regardless
-			// orphaned the blob and its reference count for good, behind a
-			// success response. The channel survives and is deleted again.
-			if _, released := deleteFileByID(ctx, p, fileID, false); !released {
-				unreleased++
-				continue
-			}
-		}
-		fileKeys = append(fileKeys, "file:"+fileID)
-	}
-	if unreleased > 0 {
-		return fmt.Errorf("%d of %d files of %s could not be released; delete the channel again", unreleased, len(fileMembers), slug)
 	}
 
 	// Step 1c: collect the individual report hashes referenced by the reports index
@@ -1367,6 +1445,7 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 		fmt.Sprintf("channel:%s:reports:closed", p),
 		fmt.Sprintf("channel:%s:report:next_id", p),
 		fmt.Sprintf("channel:%s:scheduled_messages:list", p),
+		fmt.Sprintf("channel:%s:scheduled:dispatched", p),
 		fmt.Sprintf("channel:%s:peak_sse_connections", p),
 		fmt.Sprintf("channel:%s:storage:used_bytes", p),
 		fmt.Sprintf("channel:%s:storage:quota_bytes", p),
@@ -1737,9 +1816,32 @@ func dbIncrFileHashRefsResult(ctx context.Context, hash string) (int64, error) {
 	return rdb.Incr(ctx, "file:hash:"+hash+":refs").Result()
 }
 
-// dbDelFileHashRefs removes the ref counter entirely (used once it reaches zero).
-func dbDelFileHashRefs(ctx context.Context, hash string) error {
-	return rdb.Del(ctx, "file:hash:"+hash+":refs").Err()
+// delFileHashRefsIfUnreferenced removes the counter only while nothing holds a
+// reference; otherwise it answers the count that keeps it alive. GET on an
+// absent key is false in Lua, hence the "or 0".
+var delFileHashRefsIfUnreferenced = redis.NewScript(`
+	local n = tonumber(redis.call('GET', KEYS[1]) or 0)
+	if n <= 0 then
+		redis.call('DEL', KEYS[1])
+		return 0
+	end
+	return n
+`)
+
+// dbDelFileHashRefs removes the ref counter once it reached zero, and returns
+// 0 when it did (or when the counter was already gone). A plain DEL was not
+// safe: the last-reference delete reads the counter before removing the blob,
+// and an upload of the same bytes could claim (INCR) the hash between that
+// read and the DEL — it then waits on the per-hash lock and writes the blob
+// anew, but its reference was wiped. The check and the removal are one
+// atomic step here; a positive return is the count that kept the counter.
+func dbDelFileHashRefs(ctx context.Context, hash string) (int64, error) {
+	return delFileHashRefsIfUnreferenced.Run(ctx, rdb, []string{"file:hash:" + hash + ":refs"}).Int64()
+}
+
+// dbGetFileHashRefs reads the current count; an absent counter is redis.Nil.
+func dbGetFileHashRefs(ctx context.Context, hash string) (int64, error) {
+	return rdb.Get(ctx, "file:hash:"+hash+":refs").Int64()
 }
 
 // dbDecrFileHashRefs decrements ref count; returns new count.

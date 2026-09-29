@@ -196,7 +196,9 @@ func dbUpdateSupportTicket(ctx context.Context, id string, mutate func(*SupportT
 		_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
 			p.Set(ctx, key, encoded, supportTicketTTL)
 			p.ZAdd(ctx, supportTicketIndexKey, score)
-			if t.Email != "" {
+			// Same rule as dbSaveSupportTicket: an anonymous ticket's address is
+			// unverified, so a reply must not plant it in that user's list.
+			if t.Authenticated && t.Email != "" {
 				userKey := supportUserIndexKey(t.Email)
 				p.ZAdd(ctx, userKey, score)
 				p.Expire(ctx, userKey, supportTicketTTL)
@@ -434,14 +436,12 @@ func createSupportTicket(w http.ResponseWriter, r *http.Request) {
 // up in the container logs for the thread's 180-day life.
 const ticketTokenHeader = "X-Ticket-Token"
 
-// ticketToken returns the caller's access token. The query form is still
-// read for clients loaded before the header existed; the SPA keeps running
-// for days in an open tab.
+// ticketToken returns the caller's access token. A client loaded before the
+// header existed (the SPA keeps running for days in an open tab) still sends
+// ?token=; hideTicketTokenQuery in main.go lifts that into the header before
+// the request is logged or routed, so the header is the only source here.
 func ticketToken(r *http.Request) string {
-	if t := r.Header.Get(ticketTokenHeader); t != "" {
-		return t
-	}
-	return r.URL.Query().Get("token")
+	return r.Header.Get(ticketTokenHeader)
 }
 
 // authoriseTicket resolves the ticket for a requester-side request and reports

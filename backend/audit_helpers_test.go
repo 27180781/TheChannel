@@ -246,3 +246,26 @@ func TestChangedSettingsIgnoresUntouchedLegacyValues(t *testing.T) {
 		t.Fatalf("re-saving the stored list must validate nothing, got %+v", untouched)
 	}
 }
+
+// The import key guards an unauthenticated route, and a one-character key
+// falls to guessing in minutes despite the failed-attempt limiter. Only a
+// value being set is checked, so a short legacy key keeps working until the
+// owner replaces it; the error text is what the frontend maps to Hebrew, so
+// it is matched exactly.
+func TestValidateSettingsRequiresLongAPISecretKey(t *testing.T) {
+	short := Settings{{Key: "api_secret_key", Value: "1"}}
+	err := validateSettings(&short)
+	if err == nil || err.Error() != "api_secret_key must be at least 16 characters" {
+		t.Fatalf("short key: got %v", err)
+	}
+	for _, v := range []string{"", "   ", "0123456789abcdef", strings.Repeat("א", 16)} {
+		ok := Settings{{Key: "api_secret_key", Value: v}}
+		if err := validateSettings(&ok); err != nil {
+			t.Errorf("%q should be accepted: %v", v, err)
+		}
+	}
+	stored := Settings{{Key: "api_secret_key", Value: "1"}}
+	if changed := changedSettings(stored, stored); len(changed) != 0 {
+		t.Fatalf("an untouched legacy key must not be re-validated, got %+v", changed)
+	}
+}

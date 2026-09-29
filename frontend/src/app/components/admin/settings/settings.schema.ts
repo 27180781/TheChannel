@@ -8,6 +8,11 @@ export interface SettingFieldSchema {
   placeholder?: string;
   default?: string | number | boolean;
   hideWhen?: { key: string; equals: any };
+  // Rendered as the input's min/max (number) or minlength (password) — a
+  // hint only; the server's validateSettings is what rejects the value.
+  min?: number;
+  max?: number;
+  minLength?: number;
 }
 
 export interface SettingsCategorySchema {
@@ -27,10 +32,12 @@ export const SETTINGS_SCHEMA: SettingsCategorySchema[] = [
       {
         key: 'max_file_size',
         label: 'הגבלת גודל קובץ להעלאה (MB)',
-        description: 'גודל מקסימלי בקבצים שניתן להעלות לערוץ. ברירת מחדל: 100 MB.',
+        description: 'גודל מקסימלי בקבצים שניתן להעלות לערוץ. ברירת מחדל: 100 MB, מרבי: 512 MB.',
         type: 'number',
         placeholder: '100',
         default: 100,
+        min: 1,
+        max: 512,
       },
     ],
   },
@@ -42,9 +49,10 @@ export const SETTINGS_SCHEMA: SettingsCategorySchema[] = [
       {
         key: 'api_secret_key',
         label: 'מפתח API ליבוא הודעות',
-        description: 'מפתח סודי שיש לכלול בכותרת X-API-Key בעת קריאות יבוא הודעות.',
+        description: 'מפתח סודי שיש לכלול בכותרת X-API-Key בעת קריאות יבוא הודעות. מפתח חדש חייב להכיל לפחות 16 תווים.',
         type: 'password',
         placeholder: 'מפתח סודי חזק',
+        minLength: 16,
       },
     ],
   },

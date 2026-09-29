@@ -43,9 +43,11 @@ var channelRoleLevels = map[ChannelRole]int{
 
 var privilegesUsers sync.Map
 
-// privilegesMu serialises rebuilds of privilegesUsers. Two rebuilds
-// interleaving their upsert-then-prune passes could prune an entry the other
-// had just stored, leaving a live user unprivileged until the next rebuild.
+// privilegesMu serialises every read-then-swap of privilegesUsers, held from
+// the users:list read (or transaction) through the swap. Guarding only the
+// swap was not enough: rebuild A could load an older users:list, lose the
+// race to rebuild B, and still swap its stale snapshot in last, pruning a
+// role B had just granted until the next periodic reload.
 var privilegesMu sync.Mutex
 
 const (
@@ -144,6 +146,15 @@ func initializePrivilegeUsers() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	// Held across the transaction and the swap so that the snapshot swapped in
+	// is always the newest one written (see privilegesMu). Nothing below takes
+	// the lock: dbUpdateUsersList and notifyPrivilegesChanged only talk to
+	// Redis, and the subscriber's reload runs on its own goroutine after this
+	// unlocks. The cost is that concurrent role edits are serialised, each
+	// bounded by the 5 s context.
+	privilegesMu.Lock()
+	defer privilegesMu.Unlock()
+
 	// The super-admin stamping is a read-modify-write of the same blob every role
 	// edit touches, so it goes through the guarded update too.
 	var merged []User
@@ -183,20 +194,18 @@ func initializePrivilegeUsers() error {
 		return fmt.Errorf("update users list: %w", err)
 	}
 
-	swapPrivilegeMap(merged)
+	swapPrivilegeMapLocked(merged)
 	notifyPrivilegesChanged()
 	return nil
 }
 
-// swapPrivilegeMap makes users the live authorization set.
+// swapPrivilegeMapLocked makes users the live authorization set. The caller
+// holds privilegesMu, and has held it since it read users from Redis.
 //
 // Authorization resolves live from this map, so it must never be empty even
 // for an instant: clearing it first would make every request that landed in
 // the gap look unprivileged. Upsert everything, then prune what is gone.
-func swapPrivilegeMap(users []User) {
-	privilegesMu.Lock()
-	defer privilegesMu.Unlock()
-
+func swapPrivilegeMapLocked(users []User) {
 	seen := make(map[string]struct{}, len(users))
 	for _, user := range users {
 		privilegesUsers.Store(user.Email, user)
@@ -223,11 +232,15 @@ func swapPrivilegeMap(users []User) {
 func reloadPrivilegeUsers() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	// Read and swap under one hold of the lock, or a reload that read before a
+	// rebuild wrote could swap its older snapshot in after the rebuild's.
+	privilegesMu.Lock()
+	defer privilegesMu.Unlock()
 	users, err := dbGetUsersList(ctx)
 	if err != nil {
 		return err
 	}
-	swapPrivilegeMap(normalizeUsers(users))
+	swapPrivilegeMapLocked(normalizeUsers(users))
 	return nil
 }
 
@@ -297,12 +310,32 @@ func isSuperAdmin(r *http.Request) bool {
 }
 
 func hasChannelRole(r *http.Request, slug string, minRole ChannelRole) bool {
-	if isSuperAdmin(r) {
-		return true
-	}
-	u, ok := sessionUser(r)
-	if !ok || u.ChannelRoles == nil {
+	s, ok := sessionEmail(r)
+	if !ok {
 		return false
+	}
+	return emailHasChannelRole(normEmail(s.Email), slug, minRole)
+}
+
+// emailHasChannelRole is hasChannelRole without the session lookup: the live
+// record for email (already normalised) is a super admin or holds at least
+// minRole on slug. A long-lived handler (the SSE stream) resolves the session
+// once and calls this per event, so a revocation reaches it without a
+// reconnect; a Load on the sync.Map is all it costs.
+func emailHasChannelRole(email, slug string, minRole ChannelRole) bool {
+	if email == "" {
+		return false
+	}
+	v, ok := privilegesUsers.Load(email)
+	if !ok {
+		return false
+	}
+	u, ok := v.(User)
+	if !ok {
+		return false
+	}
+	if u.GlobalRole == RoleSuperAdmin {
+		return true
 	}
 	role, exists := u.ChannelRoles[slug]
 	if !exists {

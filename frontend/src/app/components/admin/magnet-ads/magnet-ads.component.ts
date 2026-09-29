@@ -204,7 +204,14 @@ export class MagnetAdsComponent implements OnInit {
       const status = err?.status ?? 0;
       const data = err?.error;
       if (status === 400) {
-        this.statsError = data?.message || 'מפתח API לא תקין או חסר. שמרו תחילה מפתח תקין ונסו שוב.';
+        // The body is English ({"error":"missing_api_key","message":"Magnet
+        // API key is not configured"}), and this tab has no key field, so
+        // the text has to say where the key lives — as the super-admin
+        // statistics card does.
+        const code = typeof data === 'string' ? data : (data?.error ?? '');
+        this.statsError = String(code).includes('missing_api_key')
+          ? 'מפתח ה-API של מגנט לא הוגדר — הגדירו אותו בפאנל מנהל-על ← פרסומות מגנט'
+          : 'מפתח ה-API של מגנט אינו תקין — בדקו אותו בפאנל מנהל-על ← פרסומות מגנט';
       } else if (status === 404) {
         this.statsError = 'האתר לא נמצא במערכת מגנט או שאינו מאושר.';
       } else if (status === 401 || status === 403) {

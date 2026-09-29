@@ -19,6 +19,29 @@ import (
 
 var rootStaticFolder = os.Getenv("ROOT_STATIC_FOLDER")
 
+// hideTicketTokenQuery moves a support-thread access token that still arrives
+// as ?token= (a SPA tab loaded before the X-Ticket-Token header existed, or a
+// hand-built link) into the header and strips it from the URL. It runs ahead
+// of the request logger, whose line is built from r.RequestURI, so the only
+// credential of an anonymous thread never reaches stdout. Scoped to the
+// support routes so no other endpoint's query string is rewritten.
+func hideTicketTokenQuery(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/support/tickets/") && r.URL.RawQuery != "" {
+			q := r.URL.Query()
+			if t := q.Get("token"); t != "" {
+				if r.Header.Get(ticketTokenHeader) == "" {
+					r.Header.Set(ticketTokenHeader, t)
+				}
+				q.Del("token")
+				r.URL.RawQuery = q.Encode()
+				r.RequestURI = r.URL.RequestURI()
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func main() {
 	// Sessions are signed with SECRET_KEY; with it unset, redistore signs with
 	// an empty key and every cookie is forgeable. Refuse to start rather than
@@ -76,6 +99,9 @@ func main() {
 	migCancel()
 
 	r := chi.NewRouter()
+	// Before Logger, which prints RequestURI: the anonymous support token must
+	// be lifted out of the query string before anything can write it down.
+	r.Use(hideTicketTokenQuery)
 	r.Use(middleware.Logger)
 	// The shipped deployment fronts the backend with Caddy (docker-compose
 	// exposes only the proxy), so RemoteAddr is the proxy's container IP for
@@ -169,7 +195,9 @@ func main() {
 
 		r.Group(func(r chi.Router) {
 			r.Use(checkLogin)
-			r.Post("/notifications-subscribe", subscribeNotifications)
+			// Gated like the other feature routes: a channel whose push the
+			// operator switched off must not keep collecting tokens.
+			r.Post("/notifications-subscribe", requireFeature(func(f *ChannelFeatures) bool { return f.Notifications }, subscribeNotifications))
 			r.Post("/reactions/set-reactions", requireFeature(func(f *ChannelFeatures) bool { return f.Reactions }, setReactions))
 			r.Post("/messages/report", requireFeature(func(f *ChannelFeatures) bool { return f.Reports }, reportMessage))
 			r.Get("/user-info", getUserInfo)

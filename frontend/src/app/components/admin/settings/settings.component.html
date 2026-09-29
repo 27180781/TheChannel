@@ -56,6 +56,8 @@
                       fullWidth
                       type="number"
                       [id]="'f-' + field.key"
+                      [attr.min]="field.min ?? null"
+                      [attr.max]="field.max ?? null"
                       [disabled]="isFieldLocked(field)"
                       [(ngModel)]="values[field.key]"
                       [placeholder]="field.placeholder || ''">
@@ -67,6 +69,7 @@
                       type="password"
                       autocomplete="new-password"
                       [id]="'f-' + field.key"
+                      [attr.minlength]="field.minLength ?? null"
                       [(ngModel)]="values[field.key]"
                       [placeholder]="field.placeholder || ''">
                   }

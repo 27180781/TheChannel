@@ -292,6 +292,13 @@ export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
     this.router.navigate(['/channel']);
   }
 
+  // For a visitor on the disabled / not-found card: /channel is guarded and
+  // would only bounce them to /login, so they are offered the landing page.
+  goHome(): void {
+    this.channelStatus.reset();
+    this.router.navigate(['/']);
+  }
+
   async logout(): Promise<void> {
     if (await this._authService.logout()) {
       this.router.navigate(['/login']);

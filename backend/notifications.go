@@ -138,6 +138,16 @@ func getFirebaseMessagingSW(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// fcmTokenRe is the shape of an FCM registration token (base64url pieces
+// joined by ':'). Anything else can never be delivered to, so accepting it
+// only fills the subscription set with junk that costs an FCM slot per push.
+var fcmTokenRe = regexp.MustCompile(`^[A-Za-z0-9_:\-]+$`)
+
+// maxSubscriptionsPerChannel caps a channel's token set. Dead tokens are only
+// pruned when a push fails for them, so a channel that never pushes keeps every
+// token forever; the cap bounds what one tenant can cost the platform.
+const maxSubscriptionsPerChannel = 50000
+
 func subscribeNotifications(w http.ResponseWriter, r *http.Request) {
 	slug := channelSlugFromCtx(r)
 
@@ -150,7 +160,7 @@ func subscribeNotifications(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	if req.Token == "" || len(req.Token) < 50 || len(req.Token) > 300 {
+	if req.Token == "" || len(req.Token) < 50 || len(req.Token) > 300 || !fcmTokenRe.MatchString(req.Token) {
 		http.Error(w, "Invalid token ", http.StatusBadRequest)
 		return
 	}
@@ -160,6 +170,24 @@ func subscribeNotifications(w http.ResponseWriter, r *http.Request) {
 	// limit one signed-in user could grow the set (and slow every post on
 	// the channel) without bound. A device re-registers rarely.
 	if !allowOrRetryAfter(w, subscribeLimiter(clientKey(r)), "too many subscription requests — please slow down") {
+		return
+	}
+
+	// The token is stored even while push is off platform-wide. A short-circuit
+	// that answered success without storing it told the user, on the bell,
+	// that notifications were enabled while nothing was kept: a tab loaded
+	// while push was on still shows the bell after the operator turns it off,
+	// and once push came back the device was not in the set and nothing made
+	// it retry. pushFcmMessage checks the global flag before it reads the set,
+	// and the per-channel cap above bounds the growth.
+	n, err := countSubscriptions(slug)
+	if err != nil {
+		http.Error(w, "Failed to subscribe to notifications", http.StatusInternalServerError)
+		return
+	}
+	if n >= maxSubscriptionsPerChannel {
+		w.Header().Set("Retry-After", "3600")
+		http.Error(w, "too many subscriptions on this channel", http.StatusTooManyRequests)
 		return
 	}
 

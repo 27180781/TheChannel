@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi"
@@ -163,10 +164,22 @@ func approveChannelRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The stored request is the one write path that never had the name
+	// checked; the same trim/empty/length rules as the other creation paths.
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		http.Error(w, "Channel name is required", http.StatusBadRequest)
+		return
+	}
+	if channelFieldTooLong(name, maxChannelNameLen) {
+		http.Error(w, "Channel name is too long", http.StatusBadRequest)
+		return
+	}
+
 	ownerEmail := normEmail(req.Email)
 	channel := &ChannelData{
 		Slug:       finalSlug,
-		Name:       req.Name,
+		Name:       name,
 		OwnerEmail: ownerEmail,
 		CreatedAt:  time.Now(),
 		Features:   defaultChannelFeatures(),

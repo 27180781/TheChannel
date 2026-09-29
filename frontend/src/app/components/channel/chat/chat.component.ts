@@ -290,6 +290,10 @@ export class ChatComponent implements OnInit, OnDestroy {
         // Reconnect after a drop — fetch messages that arrived during the gap
         this.zone.run(() => { this.isOffline = false; });
         this.loadMissedMessages();
+        // The scheduled list is only refreshed by the dispatch event; one that
+        // fell into the gap left a stale cache, and the writer's next save
+        // re-posted the already-published entry from it.
+        this.zone.run(() => this.loadScheduledMessagesIfAllowed(true));
       }
       this.sseEverConnected = true;
       this.lastHeartbeat = Date.now();
@@ -311,6 +315,12 @@ export class ChatComponent implements OnInit, OnDestroy {
           // it answers 404 from here on. Without this the page kept looking
           // live, and the heartbeat watchdog reconnected to a 404 forever.
           this.onChannelGone();
+          break;
+        case 'channel-disabled':
+          // Same as above for the super admin's kill switch: the stream is
+          // closed server-side and reconnects answer 403, so show the
+          // disabled page instead of reconnecting into it.
+          this.onChannelGone(true);
           break;
         case 'new-message':
           if (this.hasNewMessages) break;
@@ -395,10 +405,14 @@ export class ChatComponent implements OnInit, OnDestroy {
    * Stop the stream and its watchdog so nothing keeps reconnecting, and raise
    * the not-found flag the channel page already renders for a wrong address.
    */
-  private onChannelGone() {
+  private onChannelGone(disabled = false) {
     this.subLastHeartbeat?.unsubscribe();
     this.chatService.sseClose();
-    this.zone.run(() => this.channelStatus.markNotFound(this.slugService.slug));
+    this.zone.run(() => {
+      const slug = this.slugService.slug;
+      if (disabled) this.channelStatus.markDisabled(slug);
+      else this.channelStatus.markNotFound(slug);
+    });
   }
 
   // The scheduler used to post under the literal author "Scheduled"; it now
@@ -430,15 +444,21 @@ export class ChatComponent implements OnInit, OnDestroy {
           this.lastHeartbeat = Date.now();
           this.initializeMessageListener();
           this.loadMissedMessages();
+          // The scheduled list is reloaded by the new EventSource's onopen
+          // (sseEverConnected is already set), so no second GET here.
         }
       });
   }
 
   private async loadMissedMessages() {
     if (!this.messages.length) return;
-    const maxId = Math.max(...this.messages.map(m => m.id!));
+    // The server resumes AFTER the given id's rank in its time index, and the
+    // list is kept in that order, so the cursor is index 0 — not the largest
+    // id: after a backdated import the largest id can sit deep in the past,
+    // and paging up from it re-fetched the loaded window.
+    const newestId = this.messages[0].id!;
     try {
-      const missed = await firstValueFrom(this.chatService.getMessages(maxId, this.limit, 'asc'));
+      const missed = await firstValueFrom(this.chatService.getMessages(newestId, this.limit, 'asc'));
       if (!missed?.length) return;
 
       this.zone.run(() => {
@@ -541,9 +561,16 @@ export class ChatComponent implements OnInit, OnDestroy {
     opt.resetList && (this.offset = 0);
 
     const maxId = this.messages.length ? Math.max(...this.messages.map(m => m.id!)) : 0;
+    // Cursor for an asc page: the server resumes after the given id's rank in
+    // its time index and the list is kept in that order, so it is the newest
+    // loaded message, index 0 — not the largest id, which after a backdated
+    // import can be the OLDEST message in the window, so the same page was
+    // fetched and unshifted again (the desc cursor below had the same fix).
+    // maxId stays for the deep-link arithmetic only, which is id-based.
+    const newestId = this.messages.length ? this.messages[0].id! : 0;
     if (opt.scrollDown) {
       direction = "asc";
-      startId = maxId;
+      startId = newestId;
     } else {
       if (opt.messageId) {
         if (opt.messageId > maxId + this.limit) {
@@ -560,7 +587,7 @@ export class ChatComponent implements OnInit, OnDestroy {
           direction = "asc";
           opt.scrollDown = true;
         } else if (opt.messageId > maxId) {
-          startId = maxId;
+          startId = newestId;
           direction = "asc";
           opt.scrollDown = true;
         } else {
@@ -582,11 +609,17 @@ export class ChatComponent implements OnInit, OnDestroy {
       this.isLoading = true;
       const response = await firstValueFrom(this.chatService.getMessages(startId, this.limit, direction))
       if (response) {
+        // Drop ids already in the list (as loadMissedMessages does): an SSE
+        // push or a jump can leave the window overlapping the page, and the
+        // feed tracks by object identity, so a repeated id rendered twice.
+        // The "more pages" flags read the raw page size, not the survivors.
+        const existing = new Set(this.messages.map(m => m.id));
+        const fresh = resetList ? response : response.filter(m => !existing.has(m.id));
         if (opt.scrollDown) {
-          resetList ? this.messages = response.reverse() : this.messages.unshift(...response.reverse());
+          resetList ? this.messages = fresh.reverse() : this.messages.unshift(...fresh.reverse());
           this.hasNewMessages = response.length >= this.limit;
         } else {
-          resetList ? this.messages = response : this.messages.push(...response);
+          resetList ? this.messages = fresh : this.messages.push(...fresh);
           this.hasOldMessages = response.length >= this.limit;
         }
         // The server pages by position in the time-ordered index, resuming

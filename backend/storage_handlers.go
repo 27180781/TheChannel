@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"time"
 
@@ -50,7 +51,9 @@ func buildStorageInfo(ctx context.Context, slug string) (*StorageInfo, error) {
 
 	var pct float64
 	if quota > 0 {
-		pct = float64(used) / float64(quota) * 100
+		// One decimal: the super-admin storage bar binds the value as-is and
+		// printed the raw division ("43.333333333333336%").
+		pct = math.Round(float64(used)/float64(quota)*1000) / 10
 	}
 
 	level := "ok"

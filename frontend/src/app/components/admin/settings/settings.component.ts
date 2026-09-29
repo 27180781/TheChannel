@@ -240,7 +240,8 @@ export class SettingsComponent implements OnInit {
    * validateSettings on the server answers 400 with a plain-text English
    * reason that names the offending key ("webhook_url: must be an absolute
    * http(s) URL", "regex-replace: invalid pattern: …", "max_file_size: must be
-   * between 1 and 512 MB"). Matched on here, never shown as-is.
+   * between 1 and 512 MB", "api_secret_key must be at least 16 characters").
+   * Matched on here, never shown as-is.
    */
   private saveErrorText(err: any): string {
     const text = typeof err?.error === 'string' ? err.error : '';
@@ -249,6 +250,7 @@ export class SettingsComponent implements OnInit {
       if (text.includes('ad-iframe-src')) return 'כתובת ה-iframe חייבת להתחיל ב-http:// או https://';
       if (text.includes('regex')) return 'אחד מכללי ההחלפה (regex) אינו תקין';
       if (text.includes('max_file_size')) return 'גודל הקובץ המרבי חייב להיות בין 1 ל-512 MB';
+      if (text.includes('api_secret_key')) return 'מפתח ה-API חייב להכיל לפחות 16 תווים';
     }
     return 'שגיאה בשמירת השינויים';
   }

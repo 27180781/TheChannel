@@ -18,6 +18,11 @@ redis_data/
 channel_data/
 data/
 .env
+# A developer's redis-server writes its snapshot/AOF into the cwd it was
+# started from (backend/ during tests); `COPY ./backend .` would ship it.
+**/dump.rdb
+**/appendonly.aof
+**/appendonlydir/
 
 # VCS and editor noise
 .git/

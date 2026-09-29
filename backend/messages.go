@@ -370,9 +370,14 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 	// The stream stores the full payload including real author identity; the
 	// /messages Lua deliberately anonymizes author/authorId for anyone below
 	// writer, and this stream must not leak what that endpoint withholds. The
-	// role is fixed per connection, so it is resolved once here and applied at
-	// send time.
-	isWriter := hasChannelRole(r, slug, RoleWriter)
+	// identity (session e-mail) is fixed per connection and resolved once; the
+	// role is looked up live at send time, because a moderator or writer
+	// demoted mid-connection kept seeing real names until they reconnected.
+	viewerEmail := ""
+	if s, ok := sessionEmail(r); ok {
+		viewerEmail = normEmail(s.Email)
+	}
+	isWriter := func() bool { return emailHasChannelRole(viewerEmail, slug, RoleWriter) }
 
 	// Support SSE reconnection: browser sends Last-Event-ID with the stream entry ID
 	// from the last event it received. On fresh connect, start from "now".
@@ -425,9 +430,25 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 	sub, unsubscribe := sseSubscribe(streamKey)
 	defer unsubscribe()
 
+	// channelMiddleware admitted this request a moment ago, but a delete or
+	// disable can land in between: the control event is then already the
+	// stream tip, a hub built now starts past it and never reads it, and
+	// catch-up skips it by design. Re-read the flag once, after subscribing,
+	// so such a viewer is turned away instead of holding a live-looking page
+	// on a channel that is gone (another replica's hub is the only one that
+	// would otherwise outlive it).
+	{
+		rctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		ch, err := dbGetChannel(rctx, slug)
+		cancel()
+		if err != nil || ch == nil || ch.Features.Disabled {
+			return
+		}
+	}
+
 	send := func(ev sseEvent) bool {
 		data := ev.data
-		if !isWriter {
+		if !isWriter() {
 			data = maskEventAuthor(data)
 		}
 		armWrite()
@@ -439,7 +460,9 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// A reconnecting client carries Last-Event-ID; the hub reads from the tip,
-	// so whatever it missed while away is replayed from the stream here.
+	// so whatever it missed while away is replayed from the stream here. The
+	// replay carries no channel-deleted/disabled entry (see sseCatchUp): this
+	// request passed channelMiddleware, so one left in the stream is stale.
 	replayedTo := ""
 	for _, ev := range sseCatchUp(clientCtx, streamKey, lastID) {
 		if !send(ev) {

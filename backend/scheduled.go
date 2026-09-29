@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -94,7 +95,64 @@ func forgetScheduledChannel(slug string) {
 	pipe := rdb.Pipeline()
 	pipe.ZRem(ctx, "scheduled:due_channels", slug)
 	pipe.Del(ctx, fmt.Sprintf("channel:%s:scheduled_messages:list", slug))
+	pipe.Del(ctx, scheduledDispatchedKey(slug))
 	pipe.Exec(ctx)
+}
+
+// scheduledDispatchedKey is the set of fingerprints of the entries the
+// dispatcher has posted, kept for scheduledDispatchedTTL so that a stale
+// client snapshot cannot resurrect one (see dropDispatchedScheduled).
+func scheduledDispatchedKey(slug string) string {
+	return fmt.Sprintf("channel:%s:scheduled:dispatched", slug)
+}
+
+// scheduledDispatchedTTL is how long a dispatched entry is remembered. A tab
+// left open over a weekend still holds its snapshot, so an hour is too short;
+// the set is one short line per post and is refreshed on every dispatch.
+const scheduledDispatchedTTL = 7 * 24 * time.Hour
+
+// scheduledFingerprint identifies an entry by the two things a client hands
+// back unchanged: its scheduled time and its text.
+func scheduledFingerprint(m Message) string {
+	return fmt.Sprintf("%d:%x", m.Timestamp.UnixNano(), sha256.Sum256([]byte(m.Text)))
+}
+
+// rememberScheduledDispatch records that msg was posted. Best effort: a lost
+// write only leaves the old behaviour (a stale save can repost the entry).
+func rememberScheduledDispatch(ctx context.Context, slug string, msg Message) {
+	key := scheduledDispatchedKey(slug)
+	pipe := rdb.Pipeline()
+	pipe.SAdd(ctx, key, scheduledFingerprint(msg))
+	pipe.Expire(ctx, key, scheduledDispatchedTTL)
+	if _, err := pipe.Exec(ctx); err != nil {
+		log.Printf("rememberScheduledDispatch: %s: %v\n", slug, err)
+	}
+}
+
+// dropDispatchedScheduled removes from a submitted list every entry the
+// dispatcher has already posted. A tab that missed the dispatch event (a
+// backgrounded phone, an SSE gap) still holds the entry with its past
+// timestamp and hands it back on its next save, and the next tick posted,
+// pushed and webhooked it a second time. Not an error: the rest of the save
+// is what the user meant, and the entry is simply already done.
+func dropDispatchedScheduled(ctx context.Context, slug string, messages []Message) []Message {
+	dispatched, err := rdb.SMembers(ctx, scheduledDispatchedKey(slug)).Result()
+	if err != nil || len(dispatched) == 0 {
+		return messages
+	}
+	seen := make(map[string]struct{}, len(dispatched))
+	for _, fp := range dispatched {
+		seen[fp] = struct{}{}
+	}
+	kept := make([]Message, 0, len(messages))
+	for _, m := range messages {
+		if _, ok := seen[scheduledFingerprint(m)]; ok {
+			log.Printf("updateScheduledMessages: %s: dropping an entry the scheduler already posted (due %s)\n", slug, m.Timestamp.Format(time.RFC3339))
+			continue
+		}
+		kept = append(kept, m)
+	}
+	return kept
 }
 
 // runScheduledMessages only processes channels that have at least one message
@@ -218,6 +276,11 @@ func runScheduledMessages() {
 				newList = append(newList, msg)
 				continue
 			}
+			// Remembered under the entry's own scheduled time (msg, not m):
+			// that is what a tab holding a stale snapshot hands back, and
+			// what updateScheduledMessages drops so the next tick cannot
+			// post it a second time.
+			rememberScheduledDispatch(postCtx, slug, msg)
 			// Posting can take a while under a degraded Redis; refresh the claim
 			// after each message so it cannot expire mid-run and let a second
 			// replica re-read the still-unsaved list and re-post everything.
@@ -329,6 +392,10 @@ func updateScheduledMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer releaseScheduledLock(slug, token)
+
+	// Entries the dispatcher has already posted are not saved back, whatever
+	// snapshot the client built the list from.
+	messages = dropDispatchedScheduled(ctx, slug, messages)
 
 	// Dispatch used to post every scheduled message as the English literal
 	// "Scheduled", shown to moderators and sent to webhooks. The scheduler's

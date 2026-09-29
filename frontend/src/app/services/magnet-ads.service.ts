@@ -23,11 +23,28 @@ export class MagnetAdsService {
   private settings: MagnetSettings | null = null;
   private settingsPromise: Promise<MagnetSettings | null> | null = null;
 
+  /**
+   * Slot decisions already taken, by message id, for the channel in
+   * `decisionsSlug`. A slot is placed by counting messages or seconds from
+   * the previous slot, and counting afresh from the oldest LOADED message
+   * meant every older page prepended by a scroll-up shifted every count: the
+   * slots landed on different messages (0/6 overlap for per=3 on a
+   * 20-message page), each moved slot destroyed and recreated its
+   * <app-magnet-ad-slot>, and the snippet ran again in a fresh frame. A
+   * decision, once taken, is replayed on every later fill and only undecided
+   * messages are placed, so a slot never moves once it is on screen. The map
+   * is dropped with the channel and whenever the placement settings change.
+   */
+  private decisions = new Map<number, boolean>();
+  private decisionsSlug: string | undefined;
+
   constructor(private slugService: SlugService) {}
 
   clearCache() {
     this.settings = null;
     this.settingsPromise = null;
+    this.decisions.clear();
+    this.decisionsSlug = undefined;
   }
 
   loadSettings(force = false): Promise<MagnetSettings | null> {
@@ -37,6 +54,11 @@ export class MagnetAdsService {
     this.settingsPromise = fetch(`/api/channel/${this.slugService.slug}/ads/magnet`)
       .then(r => r.ok ? r.json() : null)
       .then((data: MagnetSettings | null) => {
+        // Other placement settings would place the loaded window differently,
+        // so the decisions taken under the old ones are dropped. A re-read
+        // that brings the same values keeps them: recomputing from scratch
+        // would move the slots a prepended page had been placed around.
+        if (this.placementKey(data) !== this.placementKey(this.settings)) this.decisions.clear();
         this.settings = data;
         return data;
       })
@@ -65,6 +87,14 @@ export class MagnetAdsService {
     const s = this.settings;
     if (!s || !s.enabled || !s.snippet?.trim()) return result;
 
+    // Decisions belong to one channel's id sequence. clearCache() drops them
+    // on a switch; this guard covers a fill that arrives before it.
+    const slug = this.slugService.slug;
+    if (slug !== this.decisionsSlug) {
+      this.decisions.clear();
+      this.decisionsSlug = slug;
+    }
+
     const chrono = [...messages].reverse();
 
     // 'per_seconds' is a legacy value stored by an older super-admin form.
@@ -77,6 +107,29 @@ export class MagnetAdsService {
     return result;
   }
 
+  /**
+   * The placement-relevant settings as a comparable string; the snippet is
+   * left out because a new snippet does not move slots.
+   */
+  private placementKey(s: MagnetSettings | null): string {
+    if (!s) return '';
+    return [s.mode, s.perMessages, s.minTimeSeconds, s.perSeconds, s.minMessagesSinceLast].join('|');
+  }
+
+  /**
+   * Both fillers walk the loaded window oldest-first with the documented
+   * rules (SET.md, "תדירות הצגה"): a slot every `per` visible messages, or
+   * every `per` seconds, counted from the previous slot, each honouring its
+   * min-gap setting. A message already in `decisions` replays its decision
+   * and feeds the counters as if placed now; an undecided one is decided by
+   * the rules and remembered. A window that grows at its newest end is thus
+   * a plain continuation. An older page prepended by a scroll-up sits BEFORE
+   * the decided messages in the walk and is placed from its own start, so
+   * the decided slots never move; only the boundary between that page and
+   * the old window can fall short of the gap — the page's last slot and the
+   * window's first may be closer than `per` (or than the min-gap setting) —
+   * which is accepted, the alternative being slots that move on screen.
+   */
   private fillByMessages(out: Set<number>, chrono: ChatMessage[], s: MagnetSettings): void {
     const per = Math.max(1, s.perMessages || 5);
     const minTime = Math.max(0, s.minTimeSeconds || 0);
@@ -86,14 +139,19 @@ export class MagnetAdsService {
 
     for (const m of chrono) {
       countSinceLast++;
-      if (countSinceLast < per) continue;
-
+      const id = m.id ?? null;
       const msgTime = this.toEpoch(m.timestamp);
-      const enoughTimePassed = !minTime || lastAdTime === null ||
-        (msgTime !== null && (msgTime - lastAdTime) >= minTime * 1000);
 
-      if (enoughTimePassed && m.id !== undefined && m.id !== null) {
-        out.add(m.id);
+      let place = id !== null ? this.decisions.get(id) : undefined;
+      if (place === undefined) {
+        const enoughTimePassed = !minTime || lastAdTime === null ||
+          (msgTime !== null && (msgTime - lastAdTime) >= minTime * 1000);
+        place = id !== null && countSinceLast >= per && enoughTimePassed;
+        if (id !== null) this.decisions.set(id, place);
+      }
+
+      if (place && id !== null) {
+        out.add(id);
         countSinceLast = 0;
         if (msgTime !== null) lastAdTime = msgTime;
       }
@@ -113,16 +171,21 @@ export class MagnetAdsService {
       const msgTime = this.toEpoch(m.timestamp);
       if (msgTime === null) continue;
 
-      if (lastAdTime === null) {
-        lastAdTime = msgTime;
-        continue;
+      const id = m.id ?? null;
+      let place = id !== null ? this.decisions.get(id) : undefined;
+      if (place === undefined) {
+        // The oldest timed message of a fresh walk only starts the clock.
+        place = id !== null && lastAdTime !== null &&
+          (msgTime - lastAdTime) / 1000 >= per && msgsSinceLast >= minMsgs;
+        if (id !== null) this.decisions.set(id, place);
       }
 
-      const elapsed = (msgTime - lastAdTime) / 1000;
-      if (elapsed >= per && msgsSinceLast >= minMsgs && m.id !== undefined && m.id !== null) {
-        out.add(m.id);
+      if (place && id !== null) {
+        out.add(id);
         lastAdTime = msgTime;
         msgsSinceLast = 0;
+      } else if (lastAdTime === null) {
+        lastAdTime = msgTime;
       }
     }
   }

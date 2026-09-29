@@ -41,6 +41,17 @@ const (
 	sseCatchUpLimit = 1000
 )
 
+// sseChannelGoneEvent and sseChannelDisabledEvent are the control events
+// published to a channel's stream right before the channel is deleted or
+// disabled. Clients close their EventSource on either, and every hub that
+// fans one out retires itself (see run): on the other replicas that is the
+// only signal there is. They differ only so the client can show the right
+// page: "not found" for a deleted channel, "disabled" for a disabled one.
+const (
+	sseChannelGoneEvent     = `{"type":"channel-deleted"}`
+	sseChannelDisabledEvent = `{"type":"channel-disabled"}`
+)
+
 // sseEvent is one stream entry, broadcast verbatim. Per-viewer transformation
 // (author masking for sub-writer viewers) happens at the subscriber, because it
 // depends on who is watching rather than on the event.
@@ -182,6 +193,18 @@ func (h *sseHub) run(ctx context.Context) {
 				lastID = msg.ID
 				data, _ := msg.Values["data"].(string)
 				h.broadcast(sseEvent{id: msg.ID, data: data})
+				if data == sseChannelGoneEvent || data == sseChannelDisabledEvent {
+					// The channel is going away. deleteChannel and the
+					// disable path stop the hub on their own instance
+					// directly; on every other replica this is the only
+					// signal, and a hub left running kept a stale writer's
+					// stream open — unmasked, and later fed by whatever
+					// tenant re-created the slug. Its viewers' reconnects
+					// meet channelMiddleware's 404/403 instead.
+					h.stop()
+					h.shutdown()
+					return
+				}
 			}
 		}
 	}
@@ -252,6 +275,8 @@ func (h *sseHub) shutdown() {
 // received event and the moment it subscribed exists only in the stream. The
 // caller subscribes first and replays second, so an event arriving during the
 // replay is buffered rather than lost; sending is then deduplicated on id.
+//
+// Control events are never replayed, only delivered live by the hub.
 func sseCatchUp(ctx context.Context, streamKey, lastID string) []sseEvent {
 	if lastID == "" || lastID == "$" {
 		return nil
@@ -267,6 +292,17 @@ func sseCatchUp(ctx context.Context, streamKey, lastID string) []sseEvent {
 	out := make([]sseEvent, 0, len(msgs))
 	for _, m := range msgs {
 		data, _ := m.Values["data"].(string)
+		if data == sseChannelGoneEvent || data == sseChannelDisabledEvent {
+			// A control entry outlives its moment: a disable leaves it in the
+			// stream, and a viewer whose tab was open then reconnects with a
+			// last id from before it. Once the channel is re-enabled that
+			// request passes channelMiddleware, and replaying the entry made
+			// the client mark a live channel disabled until a manual reload.
+			// A request that reached the replay has just passed the
+			// middleware, so any control entry behind it is stale by
+			// definition. A fresh one still arrives live through the hub.
+			continue
+		}
 		out = append(out, sseEvent{id: m.ID, data: data})
 	}
 	return out
@@ -302,6 +338,29 @@ func splitStreamID(id string) (ms, seq uint64) {
 	ms, _ = strconv.ParseUint(id[:dash], 10, 64)
 	seq, _ = strconv.ParseUint(id[dash+1:], 10, 64)
 	return ms, seq
+}
+
+// sseStopHub retires a stream's hub on this instance, closing every subscriber
+// so its handler returns; a browser that reconnects then meets
+// channelMiddleware, which refuses a deleted (404) or disabled (403) channel.
+// Nothing did this before: a connection resolved its writer role once, when
+// it opened, and kept it for as long as it stayed open — so a demoted writer's
+// tab kept an unmasked stream, and after a delete and a re-creation of the
+// slug it received the new tenant's events unmasked.
+func sseStopHub(streamKey string) {
+	sseHubsMu.Lock()
+	hub, ok := sseHubs[streamKey]
+	if ok {
+		delete(sseHubs, streamKey)
+	}
+	sseHubsMu.Unlock()
+	if !ok {
+		return
+	}
+	hub.stop()
+	// Not left to the reader: it notices the cancel only once its blocking
+	// read returns, up to sseHubBlock later. shutdown tolerates running twice.
+	hub.shutdown()
 }
 
 // sseHubCount reports how many hubs are running, i.e. how many Redis

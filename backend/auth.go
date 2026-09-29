@@ -247,7 +247,8 @@ func getUser(ctx context.Context, claims map[string]any) (*User, error) {
 	id, _ := dyno.GetString(claims["sub"]) // Google user ID
 
 	if v, ok := privilegesUsers.Load(email); ok {
-		user = v.(User)
+		stored := v.(User)
+		user = stored
 		if user.ID != id && id != "" {
 			user.ID = id
 		}
@@ -259,6 +260,14 @@ func getUser(ctx context.Context, claims map[string]any) (*User, error) {
 		}
 		if user.PublicName == "" {
 			user.PublicName = name
+		}
+		// Only write when a profile field actually changed. Every privileged
+		// login used to rewrite the whole users:list blob under WATCH, so a
+		// burst of logins contended with each other and with role edits, and
+		// the loser's login answered 500 — for a write that changed nothing.
+		if user.ID == stored.ID && user.Username == stored.Username &&
+			user.Email == stored.Email && user.PublicName == stored.PublicName {
+			return &user, nil
 		}
 		// Refresh only the profile fields, atomically. Writing the whole in-memory
 		// User back would race with (and undo) a concurrent role edit, and the

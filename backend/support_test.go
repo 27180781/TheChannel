@@ -178,6 +178,62 @@ func TestSupportAnonymousTicketIsNotIndexedByEmail(t *testing.T) {
 	}
 }
 
+// The update path (a reply, a status change) re-indexes the ticket, and used
+// to do so under the typed e-mail regardless of Authenticated — so the anonymous
+// thread the save path kept out of the victim's list reappeared there as soon
+// as anyone answered it.
+func TestSupportAnonymousTicketStaysUnindexedAfterUpdate(t *testing.T) {
+	ctx := supportCtx(t)
+	victim := "victim-upd@example.com"
+	newTestTicket(t, ctx, "sup-victim-upd", victim)
+
+	anon := &SupportTicket{
+		ID: "sup-anon-upd", Subject: "נושא", Name: "אורח", Email: victim,
+		Status: SupportStatusOpen, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		Messages: []SupportMessage{{Author: "user", Body: "x", CreatedAt: time.Now()}},
+	}
+	if err := dbSaveSupportTicket(ctx, anon); err != nil {
+		t.Fatalf("save anonymous ticket: %v", err)
+	}
+	t.Cleanup(func() {
+		cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		rdb.Del(cctx, supportTicketKey("sup-anon-upd"))
+		rdb.ZRem(cctx, supportTicketIndexKey, "sup-anon-upd")
+		rdb.ZRem(cctx, supportUserIndexKey(victim), "sup-anon-upd")
+	})
+
+	if _, err := dbUpdateSupportTicket(ctx, "sup-anon-upd", func(tk *SupportTicket) error {
+		appendSupportMessage(tk, "admin", "מנהל", "תשובה", SupportStatusAnswered)
+		return nil
+	}); err != nil {
+		t.Fatalf("reply to anonymous ticket: %v", err)
+	}
+
+	tickets, err := dbListSupportTickets(ctx, supportUserIndexKey(victim))
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, tk := range tickets {
+		if tk.ID == "sup-anon-upd" {
+			t.Fatal("a reply re-indexed the anonymous ticket under the typed email")
+		}
+	}
+	if len(tickets) != 1 || tickets[0].ID != "sup-victim-upd" {
+		t.Errorf("expected only the signed-in user's ticket, got %d", len(tickets))
+	}
+	// The same update on a signed-in ticket must still refresh its index entry.
+	if _, err := dbUpdateSupportTicket(ctx, "sup-victim-upd", func(tk *SupportTicket) error {
+		appendSupportMessage(tk, "admin", "מנהל", "תשובה", SupportStatusAnswered)
+		return nil
+	}); err != nil {
+		t.Fatalf("reply to signed-in ticket: %v", err)
+	}
+	if n, _ := rdb.ZScore(ctx, supportUserIndexKey(victim), "sup-victim-upd").Result(); n == 0 {
+		t.Error("signed-in ticket lost its per-user index entry after an update")
+	}
+}
+
 // The operator inbox is ordered by last activity, so a thread that just
 // received a reply rises to the top rather than staying at its creation time.
 func TestSupportInboxOrdersByLastActivity(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/icza/dyno"
 )
@@ -291,6 +292,18 @@ func validateSettings(s *Settings) error {
 		case "webhook_url":
 			if v := strings.TrimSpace(setting.GetString()); v != "" && !isHTTPURL(v) {
 				return fmt.Errorf("%s: must be an absolute http(s) URL", setting.Key)
+			}
+		case "api_secret_key":
+			// The import key is all that guards an unauthenticated route
+			// (addNewPost). Its failed-attempt limiter slows guessing, but a
+			// one- or two-character key — the docs once showed "1" — still
+			// falls in minutes. Only a value being set is checked (see
+			// changedSettings), so a short legacy key keeps working until the
+			// owner replaces it, and clearing the key stays allowed: an empty
+			// key fails closed. The text is matched by the frontend, which
+			// shows it in Hebrew, so it must not change.
+			if v := strings.TrimSpace(setting.GetString()); v != "" && utf8.RuneCountInString(v) < 16 {
+				return fmt.Errorf("api_secret_key must be at least 16 characters")
 			}
 		case "max_file_size":
 			// The form posts a number; an empty field (nil or "") means default.

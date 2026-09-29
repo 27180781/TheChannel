@@ -177,6 +177,13 @@ func decreaseCounterSSE(slug string) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	// A viewer that disconnects after the channel was deleted (a tab that
+	// missed the channel-deleted event) would recreate the per-channel stats
+	// keys dbDeleteChannel just removed. Skipped only on a definite "gone":
+	// a Redis error keeps the old behaviour rather than losing a sample.
+	if exists, err := dbChannelExists(ctx, slug); err == nil && !exists {
+		return
+	}
 	publishLocalSSECount(ctx, slug, local)
 
 	go dbSaveSSEStatistics(slug, dbGetSSEConnectionCount(ctx, slug))

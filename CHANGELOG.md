@@ -41,7 +41,7 @@ A single Go backend instance and a single Redis/Kvrocks instance serve **all cha
 | `frontend/src/app/services/super-admin.service.ts` | All super admin API calls |
 | `frontend/src/app/components/super-admin/super-admin-panel.component.*` | Main super admin shell |
 | `frontend/src/app/components/super-admin/channels/channels-list.component.*` | Channel list with CRUD actions |
-| `frontend/src/app/components/super-admin/channels/channel-features.component.*` | Per-channel feature toggles (12 features) |
+| `frontend/src/app/components/super-admin/channels/channel-features.component.*` | Per-channel feature toggles (13 features) |
 | `frontend/src/app/components/super-admin/channels/channel-users.component.*` | Per-channel user/role management |
 | `frontend/src/app/components/super-admin/global-ads/global-ads.component.*` | Global iframe-ads config + lock |
 | `frontend/src/app/components/super-admin/global-magnet/global-magnet.component.*` | Global Magnet ads config + frequency + lock |
@@ -85,7 +85,7 @@ A single Go backend instance and a single Redis/Kvrocks instance serve **all cha
 - `FileMetadata` struct: added `Size int64` and `ChannelSlug string`
 - `dbSaveFileMetadata` / `dbGetFileMetadata` — now uses Redis JSON; YAML fallback for legacy local files
 - `uploadFile` — reads bytes to memory, checks quota, deduplicates by SHA-256 hash, increments ref counter, tracks in channel sorted set
-- `enforceStorageQuota` — checks quota before upload; runs auto-cleanup (target: 80% usage) if enabled
+- `reserveStorageQuota` — checks quota before upload; runs auto-cleanup (target: 80% usage) if enabled
 - `deleteFileByID` — marks deleted, decrements storage counter, removes from R2/disk only when refs reach 0
 - **TinyPNG integration**: `compressWithTinyPng(ctx, apiKey, data, mimeType)` — compresses PNG/JPEG/WebP via TinyPNG API before upload if `tinypng_api_key` is set in channel settings
 

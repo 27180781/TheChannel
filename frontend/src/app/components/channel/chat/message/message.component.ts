@@ -162,6 +162,17 @@ export class MessageComponent implements OnInit, AfterViewInit, OnDestroy {
           overlay.innerHTML = '<div style="text-align: center;">יש להתחבר כדי לצפות בקבצים <br>לחצו כאן להתחברות</div>';
 
           overlay.addEventListener('click', () => {
+            // Same as the header's login button: the login page returns to
+            // returnUrl, and with none recorded a reader who signed in from
+            // here landed on /channel (my-channel / onboarding) instead of
+            // the feed they were reading. Written here, not in
+            // loginWithGoogle(), so the /login page's own button does not
+            // overwrite the guard's returnUrl with '/login'.
+            try {
+              localStorage.setItem('returnUrl', location.pathname + location.search + location.hash);
+            } catch {
+              // Storage unavailable — the login page falls back to /channel.
+            }
             this._authService.loginWithGoogle();
           });
 
@@ -186,11 +197,11 @@ export class MessageComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   editMessage(message: ChatMessage) {
-    // Under track $index views are reused by position, so the displayed
-    // message's live array index — not a stamped id — is the correct key.
-    if (this.isSchedulingMessage && this.message) {
-      this.message.id = this.indexId;
-    }
+    // A scheduled entry is handed over as the object itself: the service finds
+    // it again in the server's list by time and text (locateScheduled), so
+    // nothing is stamped on it. The index it used to carry went stale as soon
+    // as the list was reloaded behind the open editor (every SSE reconnect
+    // does that) and then addressed a neighbour.
     this._adminService.setEditMessage({ message, isScheduling: this.isSchedulingMessage });
   }
 
@@ -201,7 +212,7 @@ export class MessageComponent implements OnInit, AfterViewInit, OnDestroy {
         // The service commits a new list only after the server accepted it,
         // so the feed's copy has to be refreshed from it; it no longer shares
         // the array that used to be spliced in place.
-        this._adminService.deleteScheduledMessage(this.indexId)
+        this._adminService.deleteScheduledMessage(message)
           .then(() => this._adminService.reloadSchedulingMessage())
           .catch(() => this.toastrService.danger('', 'שגיאה במחיקת ההודעה'));
         return;
@@ -243,7 +254,7 @@ export class MessageComponent implements OnInit, AfterViewInit, OnDestroy {
     // Parentheses go too: the quote token is `[quote-embedded#](id@text)`, and
     // a ')' inside the text closed it early in the tokenizer, leaking the rest
     // of the quote into the message as plain text.
-    newMsgText = newMsgText?.slice(0, 100).replace('>', '').replaceAll(/\n/g, ' ').replaceAll('*', '').replaceAll(/[()]/g, '');
+    newMsgText = newMsgText?.slice(0, 100).replaceAll('>', '').replaceAll(/\n/g, ' ').replaceAll('*', '').replaceAll(/[()]/g, '');
     if (message.text && message.text.length > 100) {
       newMsgText += '...';
     }

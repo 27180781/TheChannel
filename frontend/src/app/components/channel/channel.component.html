@@ -24,10 +24,18 @@
             </p>
             <p class="state-card__hint">אם לדעתך מדובר בטעות, פנו להנהלת המערכת.</p>
             <div class="state-card__actions">
-              <button nbButton status="primary" (click)="backToMyChannels()">
-                <nb-icon icon="arrow-back-outline"></nb-icon>
-                חזרה לערוצים שלי
-              </button>
+              <!-- /channel is guarded: for a visitor it only leads to /login. -->
+              @if (userInfo) {
+                <button nbButton status="primary" (click)="backToMyChannels()">
+                  <nb-icon icon="arrow-back-outline"></nb-icon>
+                  חזרה לערוצים שלי
+                </button>
+              } @else {
+                <button nbButton status="primary" (click)="goHome()">
+                  <nb-icon icon="home-outline"></nb-icon>
+                  לדף הבית
+                </button>
+              }
               @if (userInfo) {
                 <button nbButton ghost status="basic" (click)="logout()">
                   <nb-icon icon="log-out-outline"></nb-icon>
@@ -68,10 +76,18 @@
             </p>
             <p class="state-card__hint">בדקו את הקישור שקיבלתם, או חזרו לערוצים שלכם.</p>
             <div class="state-card__actions">
-              <button nbButton status="primary" (click)="backToMyChannels()">
-                <nb-icon icon="arrow-back-outline"></nb-icon>
-                חזרה לערוצים שלי
-              </button>
+              <!-- /channel is guarded: for a visitor it only leads to /login. -->
+              @if (userInfo) {
+                <button nbButton status="primary" (click)="backToMyChannels()">
+                  <nb-icon icon="arrow-back-outline"></nb-icon>
+                  חזרה לערוצים שלי
+                </button>
+              } @else {
+                <button nbButton status="primary" (click)="goHome()">
+                  <nb-icon icon="home-outline"></nb-icon>
+                  לדף הבית
+                </button>
+              }
             </div>
           </nb-card-body>
         </nb-card>
