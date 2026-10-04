@@ -40,6 +40,7 @@ import { SuperAdminService, ChannelRequest } from '../../../services/super-admin
                   <th>אימייל</th>
                   <th>Slug מבוקש</th>
                   <th>תיאור</th>
+                  <th>הערות / שם הערוץ</th>
                   <th>תאריך</th>
                   <th>סטטוס</th>
                   <th>פעולות</th>
@@ -55,6 +56,15 @@ import { SuperAdminService, ChannelRequest } from '../../../services/super-admin
                       <span class="text-truncate d-inline-block" style="max-width:200px" [title]="req.description">
                         {{ req.description }}
                       </span>
+                    </td>
+                    <td>
+                      @if (req.notes) {
+                        <span class="text-truncate d-inline-block" style="max-width:200px" [title]="req.notes">
+                          {{ notesText(req) }}
+                        </span>
+                      } @else {
+                        <span class="text-muted">—</span>
+                      }
                     </td>
                     <td>{{ req.createdAt | date:'dd/MM/yy HH:mm' }}</td>
                     <td>
@@ -92,7 +102,7 @@ import { SuperAdminService, ChannelRequest } from '../../../services/super-admin
                   <!-- Approve inline form -->
                   @if (actionId === req.id && approveMode) {
                     <tr class="table-success">
-                      <td colspan="7">
+                      <td colspan="8">
                         <div class="p-3" dir="rtl">
                           <h6 class="mb-3">אישור בקשה — {{ req.name }}</h6>
 
@@ -140,7 +150,7 @@ import { SuperAdminService, ChannelRequest } from '../../../services/super-admin
                   <!-- Reject inline form -->
                   @if (actionId === req.id && rejectMode) {
                     <tr class="table-danger">
-                      <td colspan="7">
+                      <td colspan="8">
                         <div class="p-3" dir="rtl">
                           <h6 class="mb-3">דחיית בקשה — {{ req.name }}</h6>
                           <div class="mb-3">
@@ -186,6 +196,21 @@ export class ChannelRequestsComponent implements OnInit {
 
   ngOnInit(): void {
     this.load();
+  }
+
+  /**
+   * Since self-service creation became the primary path this screen is mostly
+   * an audit log: `name` is the creator's display name and the channel's own
+   * name only reaches the client inside `notes` ("self-service creation:
+   * <name>"), which the table never rendered — nor the rejection reasons
+   * typed here. The known prefix is translated; anything else is shown as is.
+   */
+  notesText(req: ChannelRequest): string {
+    const prefix = 'self-service creation: ';
+    if (req.notes?.startsWith(prefix)) {
+      return 'יצירה עצמית: ' + req.notes.slice(prefix.length);
+    }
+    return req.notes || '';
   }
 
   load(): void {

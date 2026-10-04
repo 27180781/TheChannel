@@ -7,10 +7,12 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"firebase.google.com/go/v4/messaging"
 	"github.com/appleboy/go-fcm"
@@ -136,6 +138,16 @@ func getFirebaseMessagingSW(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// fcmTokenRe is the shape of an FCM registration token (base64url pieces
+// joined by ':'). Anything else can never be delivered to, so accepting it
+// only fills the subscription set with junk that costs an FCM slot per push.
+var fcmTokenRe = regexp.MustCompile(`^[A-Za-z0-9_:\-]+$`)
+
+// maxSubscriptionsPerChannel caps a channel's token set. Dead tokens are only
+// pruned when a push fails for them, so a channel that never pushes keeps every
+// token forever; the cap bounds what one tenant can cost the platform.
+const maxSubscriptionsPerChannel = 50000
+
 func subscribeNotifications(w http.ResponseWriter, r *http.Request) {
 	slug := channelSlugFromCtx(r)
 
@@ -148,8 +160,34 @@ func subscribeNotifications(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	if req.Token == "" || len(req.Token) < 50 || len(req.Token) > 300 {
+	if req.Token == "" || len(req.Token) < 50 || len(req.Token) > 300 || !fcmTokenRe.MatchString(req.Token) {
 		http.Error(w, "Invalid token ", http.StatusBadRequest)
+		return
+	}
+
+	// Every accepted token is a permanent entry in the channel's subscription
+	// set, only pruned once FCM rejects it on a later push — so without a
+	// limit one signed-in user could grow the set (and slow every post on
+	// the channel) without bound. A device re-registers rarely.
+	if !allowOrRetryAfter(w, subscribeLimiter(clientKey(r)), "too many subscription requests — please slow down") {
+		return
+	}
+
+	// The token is stored even while push is off platform-wide. A short-circuit
+	// that answered success without storing it told the user, on the bell,
+	// that notifications were enabled while nothing was kept: a tab loaded
+	// while push was on still shows the bell after the operator turns it off,
+	// and once push came back the device was not in the set and nothing made
+	// it retry. pushFcmMessage checks the global flag before it reads the set,
+	// and the per-channel cap above bounds the growth.
+	n, err := countSubscriptions(slug)
+	if err != nil {
+		http.Error(w, "Failed to subscribe to notifications", http.StatusInternalServerError)
+		return
+	}
+	if n >= maxSubscriptionsPerChannel {
+		w.Header().Set("Retry-After", "3600")
+		http.Error(w, "too many subscriptions on this channel", http.StatusTooManyRequests)
 		return
 	}
 
@@ -163,6 +201,44 @@ func subscribeNotifications(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+const (
+	maxPushTitleRunes = 100
+	maxPushBodyRunes  = 300
+)
+
+var (
+	// The composer's file markers, "[image-embedded#WxH](url)" and the
+	// "[quote-embedded#]" prefix: neither means anything in a notification.
+	pushEmbedMarker = regexp.MustCompile(`!?\[[a-z]+-embedded#[^\]]*\](\([^)]*\))?`)
+	// A markdown link or image: keep the label, drop the URL.
+	pushMarkdownLink = regexp.MustCompile(`!?\[([^\]]*)\]\([^)]*\)`)
+	pushWhitespace   = regexp.MustCompile(`\s+`)
+	pushEmphasis     = strings.NewReplacer("**", "", "__", "", "~~", "", "`", "")
+)
+
+// pushPreview reduces a post's markdown to the short plain text a notification
+// can carry. Two reasons this is not just m.Text:
+//   - the tray shows raw markup otherwise ("**", link URLs, embed markers);
+//   - a data payload over 4 KiB is refused by FCM with INVALID_ARGUMENT for
+//     every token in the batch — the same code a dead token gets — so one
+//     long post not only failed to deliver but got every subscriber pruned.
+func pushPreview(text string) string {
+	t := pushEmbedMarker.ReplaceAllString(text, "")
+	t = pushMarkdownLink.ReplaceAllString(t, "$1")
+	t = pushEmphasis.Replace(t)
+	t = strings.TrimSpace(pushWhitespace.ReplaceAllString(t, " "))
+	return truncateRunes(t, maxPushBodyRunes)
+}
+
+// truncateRunes cuts on a character boundary, never inside a multi-byte rune.
+func truncateRunes(s string, max int) string {
+	if utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	r := []rune(s)
+	return strings.TrimSpace(string(r[:max])) + "…"
 }
 
 // The FCM client owns an OAuth token source, so rebuilding one per push throws
@@ -256,8 +332,8 @@ func pushFcmMessage(slug string, m *Message) {
 		// project_domain is global, so it must be joined with the channel slug
 		// or every channel's notification opens the same page.
 		"url":   strings.TrimRight(cfg.ProjectDomain, "/") + "/channel/" + slug,
-		"title": title,
-		"body":  m.Text,
+		"title": truncateRunes(title, maxPushTitleRunes),
+		"body":  pushPreview(m.Text),
 	}
 
 	// The send loop gets its own budget: ctx above also covers the config and
@@ -285,14 +361,27 @@ func pushFcmMessage(slug string, m *Message) {
 		// unregistered/invalid tokens are removed — a transient failure
 		// (rate-limited, server error) is left in place to retry.
 		if r.FailureCount > 0 {
-			var dead []string
+			var dead, invalid []string
 			for i, resp := range r.Responses {
 				if resp.Success || i >= len(chunk) {
 					continue
 				}
-				if messaging.IsUnregistered(resp.Error) || messaging.IsInvalidArgument(resp.Error) {
+				switch {
+				case messaging.IsUnregistered(resp.Error):
 					dead = append(dead, chunk[i])
+				case messaging.IsInvalidArgument(resp.Error):
+					invalid = append(invalid, chunk[i])
 				}
+			}
+			// INVALID_ARGUMENT is also what FCM answers for a malformed
+			// *message* (oversized payload, bad field) — and then every token
+			// in the chunk fails with it at once. That is a bad send, not a
+			// batch of dead tokens: pruning them would silently unsubscribe
+			// the whole channel because of one long post.
+			if len(invalid) == len(chunk) && len(chunk) > 1 {
+				log.Printf("push to %s: every token rejected as INVALID_ARGUMENT, keeping subscriptions (payload problem?)\n", slug)
+			} else {
+				dead = append(dead, invalid...)
 			}
 			removeSubscriptions(slug, dead)
 		}

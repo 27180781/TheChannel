@@ -33,10 +33,10 @@ interface StorageInfo {
           <div class="mb-3">
             <div class="d-flex justify-content-between mb-1">
               <span>שימוש: {{ formatBytes(info.usedBytes) }}</span>
-              <span>מתוך: {{ formatBytes(info.quotaBytes) }}</span>
+              <span>מתוך: {{ info.quotaBytes ? formatBytes(info.quotaBytes) : 'ללא הגבלה' }}</span>
             </div>
             <nb-progress-bar
-              [value]="info.usedPercent"
+              [value]="percentDisplay()"
               [status]="progressStatus()"
               [displayValue]="true">
             </nb-progress-bar>
@@ -50,7 +50,7 @@ interface StorageInfo {
           } @else if (info.level === 'warning') {
             <nb-alert status="warning" closable class="mb-3">
               <nb-icon icon="alert-circle-outline"></nb-icon>
-              שטח האחסון מתמלא ({{ info.usedPercent | number:'1.0-0' }}%).
+              שטח האחסון מתמלא ({{ percentDisplay() }}%).
             </nb-alert>
           }
 
@@ -61,7 +61,7 @@ interface StorageInfo {
               ניקוי אוטומטי של מדיה ישנה
             </nb-toggle>
             <small class="text-muted">
-              כשהאחסון עומד לעגמור, מוחק קבצים ישנים אוטומטית כדי לפנות מקום
+              כשהאחסון עומד להיגמר, מוחק קבצים ישנים אוטומטית כדי לפנות מקום
             </small>
           </div>
         } @else {
@@ -101,8 +101,20 @@ export class StorageComponent implements OnInit {
       ));
       this.toastr.success('הגדרות נשמרו', 'אחסון');
     } catch {
+      // ngModel flipped the switch before the request went out; put it back so
+      // the toggle does not keep claiming a state the server never stored.
+      this.info.autoCleanup = !this.info.autoCleanup;
       this.toastr.danger('שגיאה בשמירה', 'שגיאה');
     }
+  }
+
+  // The server sends the raw float division and nb-progress-bar prints
+  // `{{ value }}%` verbatim: 2.3456789012345% on a quiet channel, and once a
+  // quota is lowered below current usage, 130% spilling past the bar. A quota
+  // of 0 means unlimited, so there is nothing to be a percentage of.
+  percentDisplay(): number {
+    if (!this.info || !this.info.quotaBytes) return 0;
+    return Math.min(100, Math.round(this.info.usedPercent));
   }
 
   progressStatus(): string {

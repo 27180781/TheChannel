@@ -35,12 +35,20 @@ export class ReportsComponent implements OnInit {
   }
 
   toggleReport(report: Report) {
-    report.closed = !report.closed;
-    report.updatedAt = new Date();
-    this.adminService.setReports(report).then(() => {
-      this.toastrService.success('', report.closed ? 'דיווח נסגר בהצלחה' : 'דיווח נפתח מחדש');
-      this.status === 'all' ? this.reports[this.reports.findIndex(r => r.id === report.id)] = report : this.reports = this.reports.filter(r => r.id !== report.id);
-    }).catch(() => this.toastrService.danger('', ''));
+    // The flip used to be applied before the request and never undone, so a
+    // 404/500 left the button reading "reopen" for a report the server still
+    // has open. Send the intended state and apply it only once it is stored.
+    const updated: Report = { ...report, closed: !report.closed, updatedAt: new Date() };
+    this.adminService.setReports(updated).then(() => {
+      this.toastrService.success('', updated.closed ? 'דיווח נסגר בהצלחה' : 'דיווח נפתח מחדש');
+      if (this.status === 'all') {
+        const i = this.reports.findIndex(r => r.id === report.id);
+        if (i >= 0) this.reports[i] = updated;
+      } else {
+        this.reports = this.reports.filter(r => r.id !== report.id);
+      }
+    }).catch((err: any) => this.toastrService.danger('',
+      err?.status === 404 ? 'הדיווח לא נמצא' : 'שגיאה בעדכון הדיווח'));
   }
 
   viewReport(messageId: number) {

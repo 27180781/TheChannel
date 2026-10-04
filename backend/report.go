@@ -73,6 +73,16 @@ func reportMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A known repeat is answered before the limiter: it is idempotent and
+	// creates nothing, so it must not burn a token the user's next real report
+	// needs. Read-only; the SADD below stays the atomic guard for the race.
+	reportersKey := fmt.Sprintf("channel:%s:message:%d:reporters", slug, report.MessageId)
+	if already, err := rdb.SIsMember(ctx, reportersKey, s.ID).Result(); err == nil && already {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(Response{Success: true})
+		return
+	}
+
 	// Rate-limit per user: reporting was unlimited, and each report is a
 	// permanent write, so a loop was a cheap way to grow Redis without bound.
 	if !allowOrRetryAfter(w, reportLimiter(s.Email), "too many reports — please slow down") {
@@ -82,7 +92,6 @@ func reportMessage(w http.ResponseWriter, r *http.Request) {
 	// One report per user per message. SADD returns 0 when the reporter is
 	// already in the set, so a repeat report is acknowledged without creating
 	// another record. The set is dropped with the channel.
-	reportersKey := fmt.Sprintf("channel:%s:message:%d:reporters", slug, report.MessageId)
 	added, err := rdb.SAdd(ctx, reportersKey, s.ID).Result()
 	if err != nil {
 		http.Error(w, "Error saving report", http.StatusInternalServerError)
@@ -111,6 +120,17 @@ func reportMessage(w http.ResponseWriter, r *http.Request) {
 
 	if err := dbReportMessage(ctx, slug, &report); err != nil {
 		log.Println("Error saving report:", err)
+		// The dedup entry was added first (SADD is what makes the check
+		// atomic); left in place after a failed save it would make every retry
+		// look like a repeat and answer success without ever creating the
+		// report. Detached from ctx: the likeliest failure is that very
+		// deadline expiring inside the save, and go-redis refuses a command on
+		// an expired context, which left the entry in place anyway.
+		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		defer rcancel()
+		if err := rdb.SRem(rctx, reportersKey, s.ID).Err(); err != nil {
+			log.Printf("reportMessage: %s: undo dedup for %s after failed save: %v\n", slug, s.ID, err)
+		}
 		http.Error(w, "Error saving report", http.StatusInternalServerError)
 		return
 	}

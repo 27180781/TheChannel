@@ -27,7 +27,10 @@ export class EmojisComponent implements OnInit {
 
   ngOnInit(): void {
     this.chatService.getEmojisList(true)
-      .then(emojis => this.emojis = emojis)
+      // Copied: the service resolves with its cached array, the same instance
+      // every message's reaction picker holds, so push/splice on it showed
+      // unsaved edits everywhere and kept them after closing without saving.
+      .then(emojis => this.emojis = [...emojis])
       .catch(() => {
         this.toastrService.danger('', 'שגיאה בהגדרת אימוגים');
         this.emojis = undefined;
@@ -45,6 +48,9 @@ export class EmojisComponent implements OnInit {
     this.adminService.setEmojis(this.emojis)
       .then(() => {
         this.toastrService.success('', 'אימוגים הוגדרו בהצלחה');
+        // Nothing else refreshes the cache after a save; without this the
+        // reaction pickers keep the pre-save list until the next channel load.
+        this.chatService.getEmojisList(true).catch(() => null);
       })
       .catch(() => {
         this.toastrService.danger('', 'שגיאה בהגדרת אימוגים');

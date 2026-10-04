@@ -315,6 +315,208 @@ func TestSSEHubSubscribeRetireRace(t *testing.T) {
 	}
 }
 
+// Retiring a hub closes every subscriber so its handler returns; a viewer
+// that comes back builds a fresh hub or, after a delete or disable, meets
+// channelMiddleware. This is what ends a stale writer's unmasked stream.
+func TestSSEStopHubClosesSubscribers(t *testing.T) {
+	drainHubs(t)
+	const streamKey = "channel:hub-stop:events"
+	sub, stop := sseSubscribe(streamKey)
+	defer stop()
+
+	sseStopHub(streamKey)
+
+	select {
+	case _, ok := <-sub.ch:
+		if ok {
+			t.Fatal("got an event, want the subscriber channel closed")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("subscriber channel not closed by sseStopHub")
+	}
+	if got := sseHubCount(); got != 0 {
+		t.Errorf("hubs = %d after the stop, want 0", got)
+	}
+	// A stream with no hub is a no-op.
+	sseStopHub("channel:hub-never:events")
+}
+
+// On every other replica the control event is the only signal: a hub that
+// fans it out delivers it and then retires itself.
+func TestSSEHubRetiresItselfOnChannelGoneEvent(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	drainHubs(t)
+	const slug = "hub-gone"
+	streamKey := "channel:" + slug + ":events"
+	t.Cleanup(func() { rdb.Del(context.Background(), streamKey) })
+
+	sub, stop := sseSubscribe(streamKey)
+	defer stop()
+	time.Sleep(300 * time.Millisecond)
+	publishEvent(ctx, slug, []byte(sseChannelGoneEvent))
+
+	select {
+	case ev, ok := <-sub.ch:
+		if !ok || ev.data != sseChannelGoneEvent {
+			t.Fatalf("got (%q, %v), want the control event delivered first", ev.data, ok)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("control event not delivered")
+	}
+	select {
+	case _, ok := <-sub.ch:
+		if ok {
+			t.Fatal("got another event, want the subscriber channel closed")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("hub did not retire after fanning out the control event")
+	}
+	if !waitFor(t, 5*time.Second, func() bool { return sseHubCount() == 0 }) {
+		t.Errorf("hubs still registered after the control event: %d", sseHubCount())
+	}
+}
+
+// The disable path publishes the control event and then retires this
+// instance's hub. Stopping the hub right after the publish closed every viewer
+// before the hub's blocking read came back with the event, so the local
+// viewers — every viewer, on a single replica — never learned the channel was
+// disabled. The stop is now delayed; the hub retires itself on the event.
+func TestSSEDisableDeliversControlEventToLocalViewer(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	drainHubs(t)
+	// One slug per round: the delayed stop of one round must not hit the hub
+	// of the next, and each stream is dropped at the end.
+	const rounds = 8
+	for i := 0; i < rounds; i++ {
+		slug := "hub-disable-" + itoa(i)
+		streamKey := "channel:" + slug + ":events"
+		t.Cleanup(func() { rdb.Del(context.Background(), streamKey) })
+
+		sub, stop := sseSubscribe(streamKey)
+		time.Sleep(300 * time.Millisecond) // the hub is blocked in XREAD at the tip
+
+		announceChannelDisabled(ctx, slug)
+
+		got := false
+	drain:
+		for {
+			select {
+			case ev, ok := <-sub.ch:
+				if !ok {
+					break drain
+				}
+				if ev.data == sseChannelDisabledEvent {
+					got = true
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatalf("round %d: subscriber neither closed nor delivered", i)
+			}
+		}
+		stop()
+		if !got {
+			t.Fatalf("round %d: the local viewer's stream was closed without the channel-disabled event", i)
+		}
+		if !waitFor(t, 5*time.Second, func() bool { return sseHubCount() == 0 }) {
+			t.Fatalf("round %d: hub still registered after the control event: %d", i, sseHubCount())
+		}
+	}
+}
+
+// A disable leaves its control entry in the stream. A viewer that reconnects
+// later with a last id from before it — after the channel was re-enabled, so
+// the request passed channelMiddleware — must not have it replayed: the client
+// would mark a live channel disabled until a manual reload. Live delivery of a
+// fresh control event is the hub's job (TestSSEHubRetiresItselfOnChannelGoneEvent).
+func TestSSECatchUpSkipsStaleControlEvents(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	const slug = "hub-catchup-control"
+	streamKey := "channel:" + slug + ":events"
+	rdb.Del(ctx, streamKey)
+	t.Cleanup(func() { rdb.Del(context.Background(), streamKey) })
+
+	publishEvent(ctx, slug, []byte(`{"type":"new-message","message":{"id":1}}`))
+	tip, err := rdb.XRevRangeN(ctx, streamKey, "+", "-", 1).Result()
+	if err != nil || len(tip) != 1 {
+		t.Fatalf("seed: %v", err)
+	}
+	lastSeen := tip[0].ID
+	publishEvent(ctx, slug, []byte(sseChannelDisabledEvent)) // the disable
+	publishEvent(ctx, slug, []byte(sseChannelGoneEvent))     // a delete that failed past its fence leaves this one
+	const after = `{"type":"new-message","message":{"id":2}}`
+	publishEvent(ctx, slug, []byte(after)) // posted after the re-enable
+
+	events := sseCatchUp(ctx, streamKey, lastSeen)
+	for _, ev := range events {
+		if ev.data == sseChannelDisabledEvent || ev.data == sseChannelGoneEvent {
+			t.Errorf("catch-up replayed a stale control event: %+v", events)
+		}
+	}
+	if len(events) != 1 || events[0].data != after {
+		t.Errorf("catch-up = %+v, want only the message posted after the re-enable", events)
+	}
+}
+
+// deleteChannel publishes the control event before dbDeleteChannel fences the
+// channel, and until the fence channelMiddleware still admits /events: a
+// viewer whose stream had just been closed reconnects and builds a fresh hub
+// that starts at the tip and never saw the event. On another replica no stop
+// reaches it. dbDeleteChannel publishes the event again behind the fence, so
+// such a hub retires too instead of outliving the channel on the deleted key.
+func TestSSEHubBuiltBeforeFenceRetiresOnDelete(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	drainHubs(t)
+	const slug = "hub-delete-window"
+	streamKey := "channel:" + slug + ":events"
+	t.Cleanup(func() {
+		cctx, ccancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer ccancel()
+		_ = dbDeleteChannel(cctx, slug)
+		rdb.Del(cctx, streamKey)
+	})
+	if err := dbCreateChannel(ctx, &ChannelData{Slug: slug, Name: "N", CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+
+	// The window: the first control event is already in the stream when the
+	// reconnect builds its hub, which therefore starts past it.
+	publishEvent(ctx, slug, []byte(sseChannelGoneEvent))
+	sub, stop := sseSubscribe(streamKey)
+	defer stop()
+	time.Sleep(300 * time.Millisecond)
+
+	if err := dbDeleteChannel(ctx, slug); err != nil {
+		t.Fatalf("dbDeleteChannel: %v", err)
+	}
+
+	select {
+	case ev, ok := <-sub.ch:
+		if !ok || ev.data != sseChannelGoneEvent {
+			t.Fatalf("got (%q, %v), want the control event delivered to the hub built in the window", ev.data, ok)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a hub built between the control event and the fence never got a control event")
+	}
+	select {
+	case _, ok := <-sub.ch:
+		if ok {
+			t.Fatal("got another event, want the subscriber channel closed")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("hub did not retire after the second control event")
+	}
+	if !waitFor(t, 5*time.Second, func() bool { return sseHubCount() == 0 }) {
+		t.Errorf("hubs still registered after the delete: %d", sseHubCount())
+	}
+}
+
 func itoa(n int) string {
 	if n == 0 {
 		return "0"

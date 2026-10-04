@@ -42,6 +42,57 @@ func seedMessages(t *testing.T, ctx context.Context, slug string, n int, deleted
 	})
 }
 
+// An edit must not write back the counters it read: views (HINCRBY on every
+// page view) and reactions (toggled by viewers) change underneath the edit
+// handler, and a full-struct HSET replayed the stale copies over them.
+func TestSetMessageUpdateLeavesCountersAlone(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	const slug = "edit-counters"
+	seedMessages(t, ctx, slug, 1, func(int) bool { return false })
+	key := "channel:" + slug + ":messages:1"
+	t.Cleanup(func() {
+		cctx, c := context.WithTimeout(context.Background(), 30*time.Second)
+		defer c()
+		rdb.Del(cctx, "channel:"+slug+":events", "channel:"+slug+":last_modified")
+	})
+
+	// The edit handler read the hash here (views 0, no reactions)...
+	m := Message{ID: 1, Type: "md", Text: "edited", Views: 0, LastEdit: time.Now()}
+	// ...and a viewer's page load and reaction land before it writes.
+	if err := rdb.HIncrBy(ctx, key, "views", 3).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := rdb.HSet(ctx, key, "reactions", `{"👍":1}`).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := setMessage(ctx, slug, &m, true); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	stored, err := dbGetMessageFields(ctx, slug, "1")
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if stored["views"] != "3" {
+		t.Errorf("views = %q after the edit, want the 3 views recorded meanwhile", stored["views"])
+	}
+	if stored["reactions"] != `{"👍":1}` {
+		t.Errorf("reactions = %q after the edit, want the reaction cast meanwhile", stored["reactions"])
+	}
+	if stored["text"] != "edited" || stored["type"] != "md" {
+		t.Errorf("edit not applied: text=%q type=%q", stored["text"], stored["type"])
+	}
+	if stored["author"] != "someone" {
+		t.Errorf("author = %q, want untouched", stored["author"])
+	}
+	// An edit must not re-index the message either.
+	if score, err := rdb.ZScore(ctx, "channel:"+slug+":m_times", key).Result(); err != nil || score != 1 {
+		t.Errorf("m_times score = %v (%v), want the original 1", score, err)
+	}
+}
+
 // Ordinary paging must be unchanged by the scan bound: a page of live messages
 // still comes back full, newest first.
 func TestMessageRangeReturnsFullPageOfLiveMessages(t *testing.T) {

@@ -38,6 +38,23 @@ export class ReportComponent implements OnInit{
         this.toastrService.success('', 'הדיווח נשלח בהצלחה!');
         this.dialogRef.close();
       })
-      .catch(() => this.toastrService.danger('', 'אירעה שגיאה בעת שליחת הדיווח'));
+      .catch((err) => this.toastrService.danger('', reportErrorMessage(err)));
+  }
+}
+
+/**
+ * The server caps a reason at 500 BYTES (report.go); the input's maxlength of
+ * 250 characters is the Hebrew ceiling, but emoji weigh four bytes each, so a
+ * reason can still overflow and come back 400. A 400 for anything else (the
+ * message was deleted meanwhile) keeps the generic text. The body is a plain
+ * "reason too long" line, which HttpClient hands over as `error.text` when
+ * it fails to parse it as JSON.
+ */
+function reportErrorMessage(err: any): string {
+  const body = typeof err?.error === 'string' ? err.error : String(err?.error?.text ?? '');
+  switch (err?.status) {
+    case 400: return body.includes('too long') ? 'הסיבה ארוכה מדי' : 'אירעה שגיאה בעת שליחת הדיווח';
+    case 429: return 'יותר מדי דיווחים, נסו שוב מאוחר יותר';
+    default: return 'אירעה שגיאה בעת שליחת הדיווח';
   }
 }

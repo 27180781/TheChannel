@@ -129,10 +129,13 @@ func (o operatorSet) anonymiseOperatorEvent(data string) string {
 // recognise it and the read paths would keep serving their Google id. Only
 // writes when the id is missing, so it costs one map lookup per post otherwise.
 func recordAuthorID(ctx context.Context, s Session) {
-	if s.ID == "" || s.Email == "" {
+	// The live map and the stored list are keyed by the normalised address
+	// (see normEmail); the session carries the address as Google reported it.
+	email := normEmail(s.Email)
+	if s.ID == "" || email == "" {
 		return
 	}
-	v, ok := privilegesUsers.Load(s.Email)
+	v, ok := privilegesUsers.Load(email)
 	if !ok {
 		return
 	}
@@ -141,21 +144,21 @@ func recordAuthorID(ctx context.Context, s Session) {
 	}
 	if err := dbUpdateUsersList(ctx, func(users []User) []User {
 		for i := range users {
-			if users[i].Email == s.Email && users[i].ID == "" {
+			if normEmail(users[i].Email) == email && users[i].ID == "" {
 				users[i].ID = s.ID
 			}
 		}
 		return users
 	}); err != nil {
-		log.Printf("recordAuthorID: %s: %v\n", s.Email, err)
+		log.Printf("recordAuthorID: %s: %v\n", email, err)
 		return
 	}
 	// Merge onto whatever entry is current, as getUser does, so a concurrent
 	// role rebuild is not overwritten with this snapshot.
-	if cur, ok := privilegesUsers.Load(s.Email); ok {
+	if cur, ok := privilegesUsers.Load(email); ok {
 		if c, ok := cur.(User); ok && c.ID == "" {
 			c.ID = s.ID
-			privilegesUsers.Store(s.Email, c)
+			privilegesUsers.Store(email, c)
 		}
 	}
 }

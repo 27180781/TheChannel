@@ -20,7 +20,9 @@
 
     @for (msg of scheduledMessages; track $index) {
     <nb-list-item class="d-flex flex-column align-items-start scheduled-message-item">
-      <app-message class="overflow-auto" [message]="msg" [id]="$index" [isSchedulingMessage]="true"
+      <!-- Own id namespace: a bare index collided with real message ids, so
+           /channel/<slug>#3 and quotes of message 3 could land on scheduled item 3. -->
+      <app-message class="overflow-auto" [message]="msg" [id]="'scheduled-' + $index" [isSchedulingMessage]="true"
         [indexId]="$index"></app-message>
     </nb-list-item>
     }

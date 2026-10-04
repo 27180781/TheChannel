@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"strconv"
 	"strings"
@@ -58,9 +59,9 @@ type PushMessage struct {
 func init() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	// Support single-instance, Redis Sentinel, and Redis Cluster via env vars:
-	//   REDIS_ADDRS   — comma-separated list; multiple = cluster mode
-	//   REDIS_MASTER  — master name for Sentinel
+	// The data client could take a comma-separated REDIS_ADDR list (cluster)
+	// or REDIS_MASTER (Sentinel), but the session store in main.go cannot and
+	// refuses to boot with either, so in practice this is one address.
 	addrs := strings.Split(redisAddr, ",")
 	rdb = redis.NewUniversalClient(&redis.UniversalOptions{
 		Addrs:        addrs,
@@ -149,28 +150,58 @@ func getMessageNextId(ctx context.Context, slug string) (int, error) {
 func setMessage(ctx context.Context, slug string, m *Message, isUpdate bool) error {
 	messageKey := fmt.Sprintf("channel:%s:messages:%d", slug, m.ID)
 
-	// Load per-channel settings for regex replace
-	settings, err := dbGetSettings(ctx, slug)
-	if err == nil {
-		cfg := settings.ToConfig()
-		for _, regex := range cfg.RegexReplace {
-			if !strings.HasPrefix(m.Text, "[quote-embedded#]") {
-				t := regex.Pattern.ReplaceAllString(m.Text, regex.Replace)
-				m.Text = t
+	// The channel's regex replacements run once, when a message is first
+	// published. They must NOT run again on edit: the composer opens with the
+	// stored text — which already carries the replacement — so re-applying the
+	// same rule wrapped the markup a second time on every save (the documented
+	// "**$1**" headline rule turned "**title!**" into "****title!****").
+	if !isUpdate {
+		settings, err := dbGetSettings(ctx, slug)
+		if err == nil && !strings.HasPrefix(m.Text, "[quote-embedded#]") {
+			cfg := settings.ToConfig()
+			for _, regex := range cfg.RegexReplace {
+				m.Text = regex.Pattern.ReplaceAllString(m.Text, regex.Replace)
 			}
 		}
 	}
 
-	// Set message in hash
-	if err := rdb.HSet(ctx, messageKey, m).Err(); err != nil {
-		return err
-	}
-
-	// Add message timestamp to sorted set
-	if !isUpdate {
-		if err := rdb.ZAdd(ctx, fmt.Sprintf("channel:%s:m_times", slug), redis.Z{Score: float64(m.Timestamp.Unix()), Member: messageKey}).Err(); err != nil {
-			return err
+	// The hash and its index entry go in one transaction: written separately,
+	// a failure between the two left an orphan hash that no listing showed,
+	// no cleanup reached, and that still counted as existing for reactions
+	// and reports.
+	if _, err := rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		if isUpdate {
+			// Only the fields an edit can change. Writing the whole struct
+			// back replayed the views and reactions the handler had read
+			// milliseconds earlier over every HINCRBY (addViewsToMessages)
+			// and reaction toggle that landed in between, so both counters
+			// silently lost increments on each save. The caller still fills
+			// them in on m, but only for the SSE payload published below.
+			fields := map[string]any{
+				"type":      m.Type,
+				"text":      m.Text,
+				"last_edit": m.LastEdit,
+				"deleted":   m.Deleted,
+				"is_ads":    m.IsAds,
+			}
+			// The author travels with the edit only when the caller carries
+			// it: updateMessage copies it from the stored record, re-labelled
+			// when the record still names an operator (see currentOperators),
+			// so a legacy operator post is stored anonymised from its first
+			// edit. An update without an author leaves the stored one alone.
+			if m.Author != "" {
+				fields["author"], fields["authorId"] = m.Author, m.AuthorId
+			}
+			p.HSet(ctx, messageKey, fields)
+		} else {
+			p.HSet(ctx, messageKey, m)
 		}
+		if !isUpdate {
+			p.ZAdd(ctx, fmt.Sprintf("channel:%s:m_times", slug), redis.Z{Score: float64(m.Timestamp.Unix()), Member: messageKey})
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	pushType := "new-message"
@@ -191,49 +222,30 @@ func setMessage(ctx context.Context, slug string, m *Message, isUpdate bool) err
 }
 
 func setReaction(ctx context.Context, slug string, messageId int, emoji string, userId string) error {
-	// The message must exist and be live before anything is written: HSet below
-	// would otherwise mint an orphan reactions key with no TTL for any ID a
-	// client invents, and soft-deleted messages must not keep collecting votes.
-	fields, err := dbGetMessageFields(ctx, slug, strconv.Itoa(messageId))
+	// The message must exist and be live before anything is written (the
+	// script checks both): an HSET on an invented id would mint an orphan
+	// reactions key with no TTL, and a soft-deleted message must not keep
+	// collecting votes.
+	res, err := toggleReaction.Run(ctx, rdb, []string{
+		fmt.Sprintf("channel:%s:message:%d:reactions", slug, messageId),
+		fmt.Sprintf("channel:%s:messages:%d", slug, messageId),
+	}, userId, emoji).Result()
 	if err != nil {
-		if err == redis.Nil {
-			return fmt.Errorf("message %d does not exist", messageId)
-		}
-		return err
+		return fmt.Errorf("failed to set reaction: %v", err)
 	}
-	if fields["deleted"] == "1" {
+	encoded, _ := dyno.GetString(res)
+	switch encoded {
+	case "missing":
+		return fmt.Errorf("message %d does not exist", messageId)
+	case "deleted":
 		return fmt.Errorf("message %d is deleted", messageId)
 	}
 
-	kay := fmt.Sprintf("channel:%s:message:%d:reactions", slug, messageId)
-	userId = fmt.Sprintf("%v", userId)
-
-	react := map[string]string{
-		userId: emoji,
-	}
-
-	prevReact, err := rdb.HGet(ctx, kay, userId).Result()
-	if err != nil && err != redis.Nil {
-		return fmt.Errorf("failed to get previous reaction: %v", err)
-	}
-
-	if prevReact == emoji {
-		react = map[string]string{
-			userId: "",
+	var r Reactions
+	if encoded != "" && encoded != "{}" {
+		if err := json.Unmarshal([]byte(encoded), &r); err != nil {
+			return fmt.Errorf("failed to unmarshal reactions: %v", err)
 		}
-	}
-
-	if err := rdb.HSet(ctx, kay, react).Err(); err != nil {
-		return err
-	}
-
-	r, err := funcGetSumReactions(ctx, slug, messageId)
-	if err != nil {
-		return err
-	}
-
-	if err := updateMessageReactions(ctx, slug, messageId, r); err != nil {
-		return err
 	}
 
 	pushMessage := PushMessage{
@@ -246,6 +258,11 @@ func setReaction(ctx context.Context, slug string, messageId int, emoji string, 
 
 	pushMessageData, _ := json.Marshal(pushMessage)
 	publishEvent(ctx, slug, pushMessageData)
+	// The reaction counts are part of every /messages response, whose ETag is
+	// derived from last_modified. Without this bump a reload after reacting
+	// revalidated to 304 and the browser showed its cached, pre-reaction
+	// counts until something else touched the channel.
+	touchLastModified(ctx, slug)
 
 	return nil
 }
@@ -416,6 +433,41 @@ var sumMessageReactions = redis.NewScript(`
   return cjson.encode(result)
 `)
 
+// toggleReaction is the whole reaction write in one script: existence and
+// deleted checks, the per-user toggle, the recount and the message-field
+// write. Done as separate round trips, two viewers reacting within
+// milliseconds interleaved so the message stored (and every viewer was
+// pushed) a stale total, and one user's double-click read the same "no
+// previous reaction" twice and never un-reacted.
+// KEYS[1] reactions hash, KEYS[2] message hash; ARGV[1] user id, ARGV[2] emoji.
+// Returns the encoded totals, "missing" or "deleted".
+var toggleReaction = redis.NewScript(`
+  if redis.call('EXISTS', KEYS[2]) == 0 then
+    return 'missing'
+  end
+  if redis.call('HGET', KEYS[2], 'deleted') == '1' then
+    return 'deleted'
+  end
+  local prev = redis.call('HGET', KEYS[1], ARGV[1])
+  if prev == ARGV[2] then
+    redis.call('HSET', KEYS[1], ARGV[1], '')
+  else
+    redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+  end
+  local result = {}
+  for _, reaction in ipairs(redis.call('HVALS', KEYS[1])) do
+    if reaction ~= '' then
+      result[reaction] = (result[reaction] or 0) + 1
+    end
+  end
+  local encoded = cjson.encode(result)
+  if encoded == '[]' then
+    encoded = '{}'
+  end
+  redis.call('HSET', KEYS[2], 'reactions', encoded)
+  return encoded
+`)
+
 func funcGetSumReactions(ctx context.Context, slug string, messageId int) (Reactions, error) {
 	res, err := sumMessageReactions.Run(ctx, rdb, []string{
 		fmt.Sprintf("channel:%s:message:%d:reactions", slug, messageId),
@@ -433,29 +485,6 @@ func funcGetSumReactions(ctx context.Context, slug string, messageId int) (React
 	return reactions, nil
 }
 
-func updateMessageReactions(ctx context.Context, slug string, messageId int, reactions Reactions) error {
-	messageKey := fmt.Sprintf("channel:%s:messages:%d", slug, messageId)
-
-	exists, err := rdb.Exists(ctx, messageKey).Result()
-	if err != nil {
-		return err
-	}
-	if exists == 0 {
-		return fmt.Errorf("message %d does not exist", messageId)
-	}
-
-	reactionsJSON, err := json.Marshal(reactions)
-	if err != nil {
-		return fmt.Errorf("failed to marshal reactions: %v", err)
-	}
-
-	if err := rdb.HSet(ctx, messageKey, "reactions", reactionsJSON).Err(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
 // dbGetMessageFields returns the raw Redis hash of a message.
 // It reports redis.Nil when the message does not exist.
 func dbGetMessageFields(ctx context.Context, slug string, id string) (map[string]string, error) {
@@ -469,9 +498,16 @@ func dbGetMessageFields(ctx context.Context, slug string, id string) (map[string
 	return fields, nil
 }
 
-func funcDeleteMessage(ctx context.Context, slug string, id string) error {
+func funcDeleteMessage(ctx context.Context, slug string, id string, deletedBy string) error {
 	msgKey := fmt.Sprintf("channel:%s:messages:%s", slug, id)
-	rdb.HSet(ctx, msgKey, "deleted", true)
+	// The write's error used to be discarded: on a Redis failure the delete
+	// event was still broadcast and the handler answered success, and the
+	// message came back on the next reload. deletedBy records who took the
+	// post down, so a writer cannot undo a moderator's takedown (see
+	// updateMessage).
+	if err := rdb.HSet(ctx, msgKey, "deleted", true, "deletedBy", deletedBy).Err(); err != nil {
+		return err
+	}
 
 	var m Message
 	idInt, _ := strconv.Atoi(id)
@@ -526,6 +562,19 @@ func addSubscription(slug, token string) error {
 	return nil
 }
 
+// countSubscriptions is the size of the channel's token set, read before a
+// subscribe so the set can be capped (see maxSubscriptionsPerChannel).
+func countSubscriptions(slug string) (int64, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	key := "subscriptions"
+	if slug != "" {
+		key = fmt.Sprintf("channel:%s:subscriptions", slug)
+	}
+	return rdb.SCard(ctx, key).Result()
+}
+
 // removeSubscriptions drops tokens FCM has told us are dead (unregistered or
 // malformed). Without this the subscription set only ever grows: every expired
 // or rotated device token stays forever and every push wastes an FCM slot on
@@ -558,12 +607,19 @@ func getSubcriptionsList(slug string) ([]string, error) {
 	if slug != "" {
 		key = fmt.Sprintf("channel:%s:subscriptions", slug)
 	}
-	subscriptionsSet, err := rdb.SMembers(ctx, key).Result()
-	if err != nil {
+	// SSCAN in pages rather than one SMEMBERS: the set holds every device that
+	// ever subscribed to the channel, and a single reply carrying all of it
+	// blocked Redis for the duration on every post to a large channel.
+	var tokens []string
+	iter := rdb.SScan(ctx, key, 0, "", 1000).Iterator()
+	for iter.Next(ctx) {
+		tokens = append(tokens, iter.Val())
+	}
+	if err := iter.Err(); err != nil {
 		log.Printf("Failed to get subscriptions: %v\n", err)
 		return []string{}, err
 	}
-	return subscriptionsSet, nil
+	return tokens, nil
 }
 
 func getChannelDetails(ctx context.Context, slug string) (map[string]string, error) {
@@ -624,7 +680,11 @@ func dbGetUsersList(ctx context.Context) ([]User, error) {
 // a read-modify-write of one JSON string, so doing it unguarded means two
 // concurrent administrative edits silently discard one another.
 func dbUpdateUsersList(ctx context.Context, mutate func([]User) []User) error {
-	const maxRetries = 5
+	// Same budget and backoff as dbUpdateSupportTicket: five back-to-back
+	// retries with no pause were exhausted by a handful of simultaneous
+	// privileged logins re-colliding in lockstep, and each loser's login
+	// answered 500. The jitter spreads the contenders apart.
+	const maxRetries = 20
 
 	txf := func(tx *redis.Tx) error {
 		var users []User
@@ -654,6 +714,11 @@ func dbUpdateUsersList(ctx context.Context, mutate func([]User) []User) error {
 		err := rdb.Watch(ctx, txf, "users:list")
 		if err != redis.TxFailedErr {
 			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(rand.Int63n(int64(2*time.Millisecond))) + time.Millisecond):
 		}
 	}
 	return errors.New("users:list: too much contention")
@@ -911,12 +976,20 @@ func dbGetPeakSSEConnections(ctx context.Context, slug string) (*PeakSSEConnecti
 		return nil, err
 	}
 
+	// No record (a new channel, or right after resetStatistics) is a zero
+	// value with a zero time. time.Unix(0, 0) here was a real 1970 timestamp,
+	// which the statistics page rendered as a peak of 0 users on 01/01/1970.
 	var peak PeakSSEConnections
+	if len(p) == 0 {
+		return &peak, nil
+	}
 	vel, _ := dyno.GetInteger(p["value"])
 	timestamp, _ := dyno.GetInteger(p["timestamp"])
 
 	peak.Value = vel
-	peak.Timestamp = time.Unix(timestamp, 0)
+	if timestamp > 0 {
+		peak.Timestamp = time.Unix(timestamp, 0)
+	}
 
 	return &peak, nil
 }
@@ -1024,10 +1097,15 @@ func dbSaveScheduledMessages(ctx context.Context, slug string, messages *[]Messa
 			earliest = ts
 		}
 	}
+	// The index write must be reported: the list is already saved, so a lost
+	// ZADD strands a due message that the scheduler never wakes for, while the
+	// writer was told the save succeeded.
 	if earliest > 0 {
-		rdb.ZAdd(ctx, "scheduled:due_channels", redis.Z{Score: earliest, Member: slug})
-	} else {
-		rdb.ZRem(ctx, "scheduled:due_channels", slug)
+		if err := rdb.ZAdd(ctx, "scheduled:due_channels", redis.Z{Score: earliest, Member: slug}).Err(); err != nil {
+			return fmt.Errorf("index scheduled messages of %s: %w", slug, err)
+		}
+	} else if err := rdb.ZRem(ctx, "scheduled:due_channels", slug).Err(); err != nil {
+		return fmt.Errorf("unindex scheduled messages of %s: %w", slug, err)
 	}
 
 	return nil
@@ -1126,6 +1204,19 @@ func dbGetChannel(ctx context.Context, slug string) (*ChannelData, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	featuresKey := fmt.Sprintf("channel:%s:features", slug)
+	featuresJSON, err := rdb.Get(ctx, featuresKey).Result()
+	if err != nil && err != redis.Nil {
+		return nil, fmt.Errorf("load features for %s: %w", slug, err)
+	}
+	return channelFromRecords(slug, h, featuresJSON, err == nil)
+}
+
+// channelFromRecords assembles a ChannelData from its two Redis records, so
+// the single-channel read and the pipelined list read cannot drift apart.
+// hasFeatures is false when the features key does not exist.
+func channelFromRecords(slug string, h map[string]string, featuresJSON string, hasFeatures bool) (*ChannelData, error) {
 	if len(h) == 0 {
 		return nil, redis.Nil
 	}
@@ -1146,17 +1237,11 @@ func dbGetChannel(ctx context.Context, slug string) (*ChannelData, error) {
 		channel.CreatedAt = t
 	}
 
-	// Load features. A failed read must surface rather than silently serving a
+	// A failed features read must surface rather than silently serving a
 	// zero-valued ChannelFeatures: RequireAuth/RequireAuthFiles defaulting to
 	// false on a transient error would fail open on an auth toggle. Only a
-	// genuinely absent key (redis.Nil) keeps the zero value.
-	featuresKey := fmt.Sprintf("channel:%s:features", slug)
-	featuresJSON, err := rdb.Get(ctx, featuresKey).Result()
-	if err != nil {
-		if err != redis.Nil {
-			return nil, fmt.Errorf("load features for %s: %w", slug, err)
-		}
-	} else {
+	// genuinely absent key keeps the zero value.
+	if hasFeatures {
 		var features ChannelFeatures
 		if err := json.Unmarshal([]byte(featuresJSON), &features); err != nil {
 			return nil, fmt.Errorf("unmarshal features for %s: %w", slug, err)
@@ -1167,20 +1252,59 @@ func dbGetChannel(ctx context.Context, slug string) (*ChannelData, error) {
 	return channel, nil
 }
 
+// dbListChannelsBatch bounds one pipeline so a platform with tens of
+// thousands of channels never builds a single multi-megabyte reply.
+const dbListChannelsBatch = 500
+
 func dbListChannels(ctx context.Context) ([]*ChannelData, error) {
 	slugs, err := rdb.ZRange(ctx, "channels:list", 0, -1).Result()
 	if err != nil {
 		return nil, err
 	}
 
-	var channels []*ChannelData
-	for _, slug := range slugs {
-		ch, err := dbGetChannel(ctx, slug)
-		if err != nil {
-			log.Printf("Failed to get channel %s: %v\n", slug, err)
-			continue
+	// Never nil: an empty platform must list as [] and not as JSON null, which
+	// the super-admin screen does not treat as a list.
+	channels := make([]*ChannelData, 0, len(slugs))
+
+	// Pipelined: the two records per channel used to be read one channel at a
+	// time, so the super-admin list, the statistics reset and the ads/magnet
+	// lock sync all cost two round trips per channel and ran out of their
+	// handler budgets somewhere in the low thousands of channels.
+	for start := 0; start < len(slugs); start += dbListChannelsBatch {
+		end := min(start+dbListChannelsBatch, len(slugs))
+		batch := slugs[start:end]
+
+		pipe := rdb.Pipeline()
+		hashes := make([]*redis.MapStringStringCmd, len(batch))
+		features := make([]*redis.StringCmd, len(batch))
+		for i, slug := range batch {
+			hashes[i] = pipe.HGetAll(ctx, fmt.Sprintf("channel:%s", slug))
+			features[i] = pipe.Get(ctx, fmt.Sprintf("channel:%s:features", slug))
 		}
-		channels = append(channels, ch)
+		// Exec reports the first failed command, and a missing features key
+		// is a redis.Nil "failure" here; only a real error aborts the list.
+		if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+			return nil, err
+		}
+
+		for i, slug := range batch {
+			h, err := hashes[i].Result()
+			if err != nil {
+				log.Printf("Failed to get channel %s: %v\n", slug, err)
+				continue
+			}
+			featuresJSON, err := features[i].Result()
+			if err != nil && err != redis.Nil {
+				log.Printf("Failed to get channel %s: load features: %v\n", slug, err)
+				continue
+			}
+			ch, err := channelFromRecords(slug, h, featuresJSON, err == nil)
+			if err != nil {
+				log.Printf("Failed to get channel %s: %v\n", slug, err)
+				continue
+			}
+			channels = append(channels, ch)
+		}
 	}
 
 	return channels, nil
@@ -1189,8 +1313,111 @@ func dbListChannels(ctx context.Context) ([]*ChannelData, error) {
 func dbDeleteChannel(ctx context.Context, slug string) error {
 	p := slug
 
-	// Step 1: collect all message keys and reaction keys from the sorted set (avoids SCAN)
-	messageKeys, _ := rdb.ZRange(ctx, fmt.Sprintf("channel:%s:m_times", p), 0, -1).Result()
+	// Step 0: revoke every per-channel role for this slug FIRST. This used to
+	// be the last step, after the keys were gone: if it failed (or the 60s
+	// budget ran out on a channel with many uploads), the channel was already
+	// deleted but the grants survived, and recreating the same slug handed the
+	// old grantees their access back. Revoking first means a failure further
+	// down leaves a channel that still exists and can simply be deleted again.
+	if err := dbUpdateUsersList(ctx, func(users []User) []User {
+		for i := range users {
+			delete(users[i].ChannelRoles, slug) // delete on a nil map is a no-op
+		}
+		return users
+	}); err != nil {
+		return fmt.Errorf("clear roles for %s: %w", slug, err)
+	}
+	if err := initializePrivilegeUsers(); err != nil {
+		log.Printf("initializePrivilegeUsers after dbDeleteChannel: %v\n", err)
+	}
+
+	// Step 0b: fence the channel. Revoking roles does not stop every writer:
+	// the API-key import path authenticates with the channel's secret, not a
+	// role, and a super admin passes hasChannelRole outright — so until the
+	// hash went in the final pipeline both could still post during the
+	// (long) file sweep below and leave an unindexed message hash behind.
+	// Disabled is the one flag channelMiddleware and addNewPost both refuse
+	// on. A delete that fails past this point leaves a disabled channel,
+	// which is the safer state: the operator deletes it again (deleteChannel
+	// checks existence only) or re-enables it from the features form.
+	if err := dbUpdateChannelFeatures(ctx, slug, func(f *ChannelFeatures) { f.Disabled = true }); err != nil {
+		return fmt.Errorf("fence %s: %w", slug, err)
+	}
+	// Tell the hubs once more, now that the fence is up. deleteChannel
+	// published the control event before calling here, but until the fence
+	// channelMiddleware still admitted /events: a viewer whose stream had
+	// just been closed reconnected and built a fresh hub — on another replica
+	// one that no stop reaches — which then never saw a control event, sat on
+	// the deleted key, and fanned the events of whatever tenant re-created
+	// the slug to viewers who never passed that channel's middleware. Any hub
+	// built in the window reads this entry and retires; a second control
+	// event is a no-op for a client and a hub that already got the first.
+	// The entry goes with the stream in the final pipeline.
+	publishEvent(ctx, slug, []byte(sseChannelGoneEvent))
+
+	// Step 1: release every uploaded file through the normal delete path so
+	// hash refcounts are decremented and the R2/disk blob is removed once the
+	// last reference is gone. The tracking set is NOT deleted up front: it is
+	// the only record of which blobs still need cleanup, so destroying it before
+	// the loop finishes would orphan every remaining blob permanently if the
+	// context expires or the process dies mid-delete. The per-file index removal
+	// is skipped instead (removeFromIndex=false) to keep the loop O(N); the set
+	// itself is dropped with the fixed keys below once the loop completes.
+	//
+	// Two passes over the set: the fence above refuses new uploads, but one
+	// admitted just before it can still index its file while this sweep runs
+	// (an R2 write has a minute's budget), and a single snapshot left that
+	// blob and its reference count orphaned when the set was dropped. The
+	// second pass re-reads the set and releases only what the first missed.
+	fileKeys := make([]string, 0)
+	swept := make(map[string]bool)
+	for pass := 0; pass < 2; pass++ {
+		fileMembers, err := rdb.ZRange(ctx, channelFilesKey(p), 0, -1).Result()
+		if err != nil {
+			return fmt.Errorf("list files of %s: %w", slug, err)
+		}
+		unreleased := 0
+		for _, m := range fileMembers {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			fileID, _, ok := decodeFileMember(m)
+			if !ok || swept[fileID] {
+				continue
+			}
+			swept[fileID] = true
+			if len(fileID) >= 4 {
+				// A file that could not be released (a failed read or claim)
+				// keeps its record and its index: deleting them regardless
+				// orphaned the blob and its reference count for good, behind a
+				// success response. The channel survives and is deleted again.
+				if _, released := deleteFileByID(ctx, p, fileID, false); !released {
+					unreleased++
+					continue
+				}
+			}
+			fileKeys = append(fileKeys, "file:"+fileID)
+		}
+		if unreleased > 0 {
+			return fmt.Errorf("%d of %d files of %s could not be released; delete the channel again", unreleased, len(fileMembers), slug)
+		}
+	}
+
+	// Step 1b: collect all message keys and reaction keys from the sorted set
+	// (avoids SCAN). Every index read below must succeed before anything is
+	// deleted: an ignored error left the slice empty, Step 2 then dropped the
+	// index itself, and every message, reaction, report hash and — worst —
+	// every file blob and hash refcount it pointed at was orphaned for good,
+	// while the handler still reported success.
+	//
+	// Taken after the file sweep, not before it: a post admitted before the
+	// fence can land while the sweep runs, and a snapshot from before it left
+	// that message hash behind when the index was deleted — to resurface on a
+	// re-created slug.
+	messageKeys, err := rdb.ZRange(ctx, fmt.Sprintf("channel:%s:m_times", p), 0, -1).Result()
+	if err != nil {
+		return fmt.Errorf("list messages of %s: %w", slug, err)
+	}
 	reactionKeys := make([]string, 0, len(messageKeys))
 	reporterKeys := make([]string, 0, len(messageKeys))
 	for _, mk := range messageKeys {
@@ -1202,32 +1429,11 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 		reporterKeys = append(reporterKeys, fmt.Sprintf("channel:%s:message:%s:reporters", p, id))
 	}
 
-	// Step 1b: release every uploaded file through the normal delete path so
-	// hash refcounts are decremented and the R2/disk blob is removed once the
-	// last reference is gone. The tracking set is NOT deleted up front: it is
-	// the only record of which blobs still need cleanup, so destroying it before
-	// the loop finishes would orphan every remaining blob permanently if the
-	// context expires or the process dies mid-delete. The per-file index removal
-	// is skipped instead (removeFromIndex=false) to keep the loop O(N); the set
-	// itself is dropped with the fixed keys below once the loop completes.
-	fileMembers, _ := rdb.ZRange(ctx, channelFilesKey(p), 0, -1).Result()
-	fileKeys := make([]string, 0, len(fileMembers))
-	for _, m := range fileMembers {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		fileID, _, ok := decodeFileMember(m)
-		if !ok {
-			continue
-		}
-		if len(fileID) >= 4 {
-			deleteFileByID(ctx, p, fileID, false)
-		}
-		fileKeys = append(fileKeys, "file:"+fileID)
-	}
-
 	// Step 1c: collect the individual report hashes referenced by the reports index
-	reportKeys, _ := rdb.ZRange(ctx, fmt.Sprintf("channel:%s:reports:list", p), 0, -1).Result()
+	reportKeys, err := rdb.ZRange(ctx, fmt.Sprintf("channel:%s:reports:list", p), 0, -1).Result()
+	if err != nil {
+		return fmt.Errorf("list reports of %s: %w", slug, err)
+	}
 
 	// Step 1d: monthly SSE statistics keys have no index; enumerate the possible
 	// month/year combinations instead of running a SCAN across the keyspace.
@@ -1248,6 +1454,7 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 		fmt.Sprintf("channel:%s:reports:closed", p),
 		fmt.Sprintf("channel:%s:report:next_id", p),
 		fmt.Sprintf("channel:%s:scheduled_messages:list", p),
+		fmt.Sprintf("channel:%s:scheduled:dispatched", p),
 		fmt.Sprintf("channel:%s:peak_sse_connections", p),
 		fmt.Sprintf("channel:%s:storage:used_bytes", p),
 		fmt.Sprintf("channel:%s:storage:quota_bytes", p),
@@ -1279,22 +1486,6 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 		return err
 	}
 
-	// Step 3: revoke every per-channel role for this slug, otherwise recreating
-	// the same slug would immediately hand the old grantees their access back.
-	// A failure here must surface to the caller — returning success while stale
-	// roles survive is the exact regression this step exists to prevent.
-	if err := dbUpdateUsersList(ctx, func(users []User) []User {
-		for i := range users {
-			delete(users[i].ChannelRoles, slug) // delete on a nil map is a no-op
-		}
-		return users
-	}); err != nil {
-		return fmt.Errorf("clear roles for %s: %w", slug, err)
-	}
-	if err := initializePrivilegeUsers(); err != nil {
-		log.Printf("initializePrivilegeUsers after dbDeleteChannel: %v\n", err)
-	}
-
 	return nil
 }
 
@@ -1312,10 +1503,51 @@ func dbSetChannelFeatures(ctx context.Context, slug string, features *ChannelFea
 	return nil
 }
 
+// dbUpdateChannelFeatures applies mutate to the channel's stored features
+// under WATCH/MULTI, retrying when another writer got in between. The
+// features blob is one JSON string with several independent writers (the
+// super-admin features form, the ads and magnet lock syncs), and a blind
+// read-modify-SET from any of them replayed a stale snapshot over the others':
+// a channel disabled while a lock sync was running came back enabled.
+func dbUpdateChannelFeatures(ctx context.Context, slug string, mutate func(*ChannelFeatures)) error {
+	featuresKey := fmt.Sprintf("channel:%s:features", slug)
+	const maxRetries = 10
+	for i := 0; i < maxRetries; i++ {
+		err := rdb.Watch(ctx, func(tx *redis.Tx) error {
+			var features ChannelFeatures
+			raw, err := tx.Get(ctx, featuresKey).Result()
+			if err != nil && err != redis.Nil {
+				return err
+			}
+			if err == nil {
+				if err := json.Unmarshal([]byte(raw), &features); err != nil {
+					return fmt.Errorf("unmarshal features for %s: %w", slug, err)
+				}
+			}
+			mutate(&features)
+			out, err := json.Marshal(&features)
+			if err != nil {
+				return fmt.Errorf("failed to marshal features: %v", err)
+			}
+			_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+				pipe.Set(ctx, featuresKey, out, 0)
+				return nil
+			})
+			return err
+		}, featuresKey)
+		if err == redis.TxFailedErr {
+			continue
+		}
+		return err
+	}
+	return fmt.Errorf("update features for %s: too many concurrent writers", slug)
+}
+
 func dbAssignChannelRole(ctx context.Context, email, slug string, role ChannelRole) error {
+	email = normEmail(email)
 	return dbUpdateUsersList(ctx, func(users []User) []User {
 		for i, u := range users {
-			if u.Email == email {
+			if normEmail(u.Email) == email {
 				if users[i].ChannelRoles == nil {
 					users[i].ChannelRoles = make(map[string]ChannelRole)
 				}
@@ -1593,9 +1825,32 @@ func dbIncrFileHashRefsResult(ctx context.Context, hash string) (int64, error) {
 	return rdb.Incr(ctx, "file:hash:"+hash+":refs").Result()
 }
 
-// dbDelFileHashRefs removes the ref counter entirely (used once it reaches zero).
-func dbDelFileHashRefs(ctx context.Context, hash string) error {
-	return rdb.Del(ctx, "file:hash:"+hash+":refs").Err()
+// delFileHashRefsIfUnreferenced removes the counter only while nothing holds a
+// reference; otherwise it answers the count that keeps it alive. GET on an
+// absent key is false in Lua, hence the "or 0".
+var delFileHashRefsIfUnreferenced = redis.NewScript(`
+	local n = tonumber(redis.call('GET', KEYS[1]) or 0)
+	if n <= 0 then
+		redis.call('DEL', KEYS[1])
+		return 0
+	end
+	return n
+`)
+
+// dbDelFileHashRefs removes the ref counter once it reached zero, and returns
+// 0 when it did (or when the counter was already gone). A plain DEL was not
+// safe: the last-reference delete reads the counter before removing the blob,
+// and an upload of the same bytes could claim (INCR) the hash between that
+// read and the DEL — it then waits on the per-hash lock and writes the blob
+// anew, but its reference was wiped. The check and the removal are one
+// atomic step here; a positive return is the count that kept the counter.
+func dbDelFileHashRefs(ctx context.Context, hash string) (int64, error) {
+	return delFileHashRefsIfUnreferenced.Run(ctx, rdb, []string{"file:hash:" + hash + ":refs"}).Int64()
+}
+
+// dbGetFileHashRefs reads the current count; an absent counter is redis.Nil.
+func dbGetFileHashRefs(ctx context.Context, hash string) (int64, error) {
+	return rdb.Get(ctx, "file:hash:"+hash+":refs").Int64()
 }
 
 // dbDecrFileHashRefs decrements ref count; returns new count.

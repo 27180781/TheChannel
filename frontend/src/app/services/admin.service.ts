@@ -127,28 +127,83 @@ export class AdminService {
   }
 
   async setScheduledMessage(message: ChatMessage): Promise<ResponseResult> {
-    // The update endpoint replaces the whole list, so the cache must be loaded
-    // first — otherwise an empty/null cache posts an empty body (400) or wipes
-    // the messages already scheduled. A failed load rejects instead of saving.
-    const list = this.schedulingMessages ?? await this.fetchScheduledMessages();
+    // The update endpoint replaces the whole list, so it is built on the
+    // server's current copy, never on the cache. The cache is refreshed only
+    // by the dispatch event, and a tab that missed it (an SSE gap, or the
+    // event skipped while hasNewMessages is set) re-posted the already
+    // published entry with its past timestamp — and the dispatcher posted it
+    // a second time. A failed load rejects instead of saving, as before an
+    // empty/null cache posted an empty body (400) or wiped the list.
+    const list = await this.fetchScheduledMessages();
     this.schedulingMessages = list;
-    list.unshift(message);
-    return this.updateSchedulingMessages();
+    return this.commitSchedulingMessages([message, ...list]);
   }
 
-  editScheduledMessage(message: ChatMessage): Promise<ResponseResult> {
-    if (message.id === undefined || !this.schedulingMessages) return Promise.reject('Message ID is undefined');
-    this.schedulingMessages[message.id] = message;
-    return this.updateSchedulingMessages();
+  /**
+   * `original` is the entry object the feed displayed (the one the editor was
+   * opened on); `updated` is the copy to store in its place.
+   */
+  async editScheduledMessage(original: ChatMessage | undefined, updated: ChatMessage): Promise<ResponseResult> {
+    const { list, at } = await this.locateScheduled(original);
+    if (at < 0) return Promise.reject('Scheduled message is no longer in the list');
+    const next = list.slice();
+    next[at] = updated;
+    return this.commitSchedulingMessages(next);
   }
 
-  deleteScheduledMessage(id: number | undefined): Promise<ResponseResult> {
-    if (id === undefined || !this.schedulingMessages) return Promise.reject('Message ID is undefined');
-    this.schedulingMessages.splice(id, 1);
-    return this.updateSchedulingMessages();
+  async deleteScheduledMessage(original: ChatMessage | undefined): Promise<ResponseResult> {
+    const { list, at } = await this.locateScheduled(original);
+    if (at < 0) return Promise.reject('Scheduled message is no longer in the list');
+    return this.commitSchedulingMessages(list.filter((_, i) => i !== at));
   }
 
-  private updateSchedulingMessages(): Promise<ResponseResult> {
-    return firstValueFrom(this.http.post<ResponseResult>(`/api/channel/${this.slug}/admin/scheduled-messages/update`, this.schedulingMessages ?? []));
+  /**
+   * Re-reads the list from the server and finds the entry the caller holds —
+   * the feed's own object — by its time and text. The key used to be the
+   * entry's index in the CACHED list, but the cache is replaced under an open
+   * editor (every SSE reconnect reloads it) and after a rejected save while
+   * the feed keeps its older array, and once a dispatched entry earlier in the
+   * list had shifted the indexes, that index resolved to a neighbour. The
+   * object the user actually saw cannot drift that way. -1 means it is no
+   * longer scheduled (dispatched, or removed by another writer); the feed is
+   * then refreshed from the fresh list so the stale row disappears.
+   */
+  private async locateScheduled(wanted: ChatMessage | undefined): Promise<{ list: ChatMessage[]; at: number }> {
+    const list = await this.fetchScheduledMessages();
+    this.schedulingMessages = list;
+    if (!wanted) return { list, at: -1 };
+    // The timestamp is a string off the wire but may be a Date on a client
+    // copy kept after a failed re-read, so both are compared as epoch millis
+    // (NaN never equals itself, hence the fallback for an unparsable value).
+    const when = (m: ChatMessage) => new Date(m.timestamp as any).getTime() || 0;
+    const at = list.findIndex(m => when(m) === when(wanted) && m.text === wanted.text);
+    if (at < 0) this.reloadSchedulingMessage();
+    return { list, at };
+  }
+
+  /**
+   * Copy, post, then commit. The list is shared with the feed's scheduled
+   * section, so mutating it before the POST left every viewer of it with a
+   * list the server had rejected. Callers refresh the feed through
+   * reloadSchedulingMessage() once this resolves.
+   */
+  private async commitSchedulingMessages(next: ChatMessage[]): Promise<ResponseResult> {
+    let res: ResponseResult;
+    try {
+      res = await firstValueFrom(this.http.post<ResponseResult>(`/api/channel/${this.slug}/admin/scheduled-messages/update`, next));
+    } catch (e) {
+      // Any non-2xx — including the 503 the server answers while the
+      // dispatcher holds the list's lock — leaves the server's list as it
+      // was, but the cache was already replaced by the fresh read above while
+      // the feed still shows its older array. Both are realigned here, so a
+      // retry acts on what is on screen and no stale row lingers.
+      this.schedulingMessages = await this.fetchScheduledMessages().catch(() => this.schedulingMessages);
+      this.reloadSchedulingMessage();
+      throw e;
+    }
+    // The server stamps fields the client does not know (the scheduler's
+    // name), so the cache is re-read rather than kept as the client copy.
+    this.schedulingMessages = await this.fetchScheduledMessages().catch(() => next);
+    return res;
   }
 }

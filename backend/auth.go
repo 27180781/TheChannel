@@ -66,6 +66,13 @@ func login(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	var auth Auth
 
+	// Rationed first: the round trip to Google is the expensive part, but the
+	// failure paths below each spawn an audit-log write too, so an unlimited
+	// stream of malformed requests was an unlimited stream of goroutines.
+	if !allowOrRetryAfter(w, loginLimiter(clientKey(r)), "too many login attempts — please wait") {
+		return
+	}
+
 	if err := json.NewDecoder(r.Body).Decode(&auth); err != nil {
 		go saveLoginFailedLog("Decode", err)
 		http.Error(w, "error", http.StatusBadRequest)
@@ -123,7 +130,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	email, _ := dyno.GetString(payload.Claims["email"])
-	go registeringEmail("", email)
+	go registeringEmail("", normEmail(email))
 
 	u, err := getUser(ctx, payload.Claims)
 	if err != nil {
@@ -228,7 +235,8 @@ func getUserInfo(w http.ResponseWriter, r *http.Request) {
 func getUser(ctx context.Context, claims map[string]any) (*User, error) {
 	var user User
 
-	email, _ := dyno.GetString(claims["email"])
+	rawEmail, _ := dyno.GetString(claims["email"])
+	email := normEmail(rawEmail)
 	if email == "" {
 		return nil, errors.New("email not found in claims")
 	}
@@ -239,7 +247,8 @@ func getUser(ctx context.Context, claims map[string]any) (*User, error) {
 	id, _ := dyno.GetString(claims["sub"]) // Google user ID
 
 	if v, ok := privilegesUsers.Load(email); ok {
-		user = v.(User)
+		stored := v.(User)
+		user = stored
 		if user.ID != id && id != "" {
 			user.ID = id
 		}
@@ -252,12 +261,20 @@ func getUser(ctx context.Context, claims map[string]any) (*User, error) {
 		if user.PublicName == "" {
 			user.PublicName = name
 		}
+		// Only write when a profile field actually changed. Every privileged
+		// login used to rewrite the whole users:list blob under WATCH, so a
+		// burst of logins contended with each other and with role edits, and
+		// the loser's login answered 500 — for a write that changed nothing.
+		if user.ID == stored.ID && user.Username == stored.Username &&
+			user.Email == stored.Email && user.PublicName == stored.PublicName {
+			return &user, nil
+		}
 		// Refresh only the profile fields, atomically. Writing the whole in-memory
 		// User back would race with (and undo) a concurrent role edit, and the
 		// roles are owned by the admin paths, not by a login.
 		if err := dbUpdateUsersList(ctx, func(users []User) []User {
 			for i := range users {
-				if users[i].Email == email {
+				if normEmail(users[i].Email) == email {
 					users[i].ID = user.ID
 					users[i].Username = user.Username
 					users[i].Email = user.Email
@@ -278,10 +295,13 @@ func getUser(ctx context.Context, claims map[string]any) (*User, error) {
 			privilegesUsers.Store(email, c)
 		}
 	} else {
+		// PublicName is what posts and the audit trail show; a first-time user
+		// used to get none, so their first message carried an empty author.
 		user = User{
-			ID:       id,
-			Username: name,
-			Email:    email,
+			ID:         id,
+			Username:   name,
+			Email:      email,
+			PublicName: name,
 		}
 	}
 

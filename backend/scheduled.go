@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -40,6 +41,118 @@ func releaseScheduledLock(slug, token string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	scheduledLockRelease.Run(ctx, rdb, []string{scheduledLockKey(slug)}, token)
+}
+
+// claimScheduled takes the per-channel dispatch claim for ttl, retrying
+// briefly, and returns the token to release it with. Channel deletion holds
+// it for the whole delete: a dispatch that straddled the delete wrote the
+// pruned list and the due entry back after the keys were gone, and a channel
+// re-created under the same slug inherited — and posted — them.
+func claimScheduled(ctx context.Context, slug string, ttl, wait time.Duration) (string, bool) {
+	token := generatedRandomID(16)
+	if token == "" {
+		return "", false
+	}
+	attempts := int(wait / (200 * time.Millisecond))
+	if attempts < 1 {
+		attempts = 1
+	}
+	for attempt := 0; attempt < attempts; attempt++ {
+		ok, err := rdb.SetNX(ctx, scheduledLockKey(slug), token, ttl).Result()
+		if err == nil && ok {
+			return token, true
+		}
+		if ctx.Err() != nil {
+			return "", false
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return "", false
+}
+
+// deferScheduledChannel pushes a channel's due score forward so a channel the
+// dispatcher cannot serve (disabled, feature off) rotates out of the window
+// of lowest scores. Left in place, such entries accumulated at the front of
+// the due set until the bounded read returned nothing but them, and every
+// channel with a genuinely due post behind them was never dispatched again.
+// A re-enabled channel resumes within this delay, or on its next list save.
+const scheduledSkipBackoff = 10 * time.Minute
+
+func deferScheduledChannel(slug string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	rdb.ZAdd(ctx, "scheduled:due_channels", redis.Z{
+		Score:  float64(time.Now().Add(scheduledSkipBackoff).Unix()),
+		Member: slug,
+	})
+}
+
+// forgetScheduledChannel drops the due entry and the pending list of a
+// channel that no longer exists.
+func forgetScheduledChannel(slug string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	pipe := rdb.Pipeline()
+	pipe.ZRem(ctx, "scheduled:due_channels", slug)
+	pipe.Del(ctx, fmt.Sprintf("channel:%s:scheduled_messages:list", slug))
+	pipe.Del(ctx, scheduledDispatchedKey(slug))
+	pipe.Exec(ctx)
+}
+
+// scheduledDispatchedKey is the set of fingerprints of the entries the
+// dispatcher has posted, kept for scheduledDispatchedTTL so that a stale
+// client snapshot cannot resurrect one (see dropDispatchedScheduled).
+func scheduledDispatchedKey(slug string) string {
+	return fmt.Sprintf("channel:%s:scheduled:dispatched", slug)
+}
+
+// scheduledDispatchedTTL is how long a dispatched entry is remembered. A tab
+// left open over a weekend still holds its snapshot, so an hour is too short;
+// the set is one short line per post and is refreshed on every dispatch.
+const scheduledDispatchedTTL = 7 * 24 * time.Hour
+
+// scheduledFingerprint identifies an entry by the two things a client hands
+// back unchanged: its scheduled time and its text.
+func scheduledFingerprint(m Message) string {
+	return fmt.Sprintf("%d:%x", m.Timestamp.UnixNano(), sha256.Sum256([]byte(m.Text)))
+}
+
+// rememberScheduledDispatch records that msg was posted. Best effort: a lost
+// write only leaves the old behaviour (a stale save can repost the entry).
+func rememberScheduledDispatch(ctx context.Context, slug string, msg Message) {
+	key := scheduledDispatchedKey(slug)
+	pipe := rdb.Pipeline()
+	pipe.SAdd(ctx, key, scheduledFingerprint(msg))
+	pipe.Expire(ctx, key, scheduledDispatchedTTL)
+	if _, err := pipe.Exec(ctx); err != nil {
+		log.Printf("rememberScheduledDispatch: %s: %v\n", slug, err)
+	}
+}
+
+// dropDispatchedScheduled removes from a submitted list every entry the
+// dispatcher has already posted. A tab that missed the dispatch event (a
+// backgrounded phone, an SSE gap) still holds the entry with its past
+// timestamp and hands it back on its next save, and the next tick posted,
+// pushed and webhooked it a second time. Not an error: the rest of the save
+// is what the user meant, and the entry is simply already done.
+func dropDispatchedScheduled(ctx context.Context, slug string, messages []Message) []Message {
+	dispatched, err := rdb.SMembers(ctx, scheduledDispatchedKey(slug)).Result()
+	if err != nil || len(dispatched) == 0 {
+		return messages
+	}
+	seen := make(map[string]struct{}, len(dispatched))
+	for _, fp := range dispatched {
+		seen[fp] = struct{}{}
+	}
+	kept := make([]Message, 0, len(messages))
+	for _, m := range messages {
+		if _, ok := seen[scheduledFingerprint(m)]; ok {
+			log.Printf("updateScheduledMessages: %s: dropping an entry the scheduler already posted (due %s)\n", slug, m.Timestamp.Format(time.RFC3339))
+			continue
+		}
+		kept = append(kept, m)
+	}
+	return kept
 }
 
 // runScheduledMessages only processes channels that have at least one message
@@ -95,6 +208,31 @@ func runScheduledMessages() {
 			continue
 		}
 
+		// The dispatcher is the one writer that never passes through
+		// channelMiddleware, so neither the super admin's kill switch nor the
+		// scheduled-messages feature toggle reached it: a disabled channel
+		// kept posting, firing its webhook and pushing to subscribers every
+		// minute. The pending list and the due-set entry are left untouched,
+		// so re-enabling the channel simply resumes it.
+		ctxCh, cancelCh := context.WithTimeout(context.Background(), 5*time.Second)
+		channel, cherr := dbGetChannel(ctxCh, slug)
+		cancelCh()
+		switch {
+		case cherr == redis.Nil:
+			// Deleted: nothing will ever serve this entry, and the slug is
+			// free to be re-created, so its leftovers go now.
+			forgetScheduledChannel(slug)
+			releaseScheduledLock(slug, token)
+			continue
+		case cherr != nil:
+			releaseScheduledLock(slug, token)
+			continue
+		case channel.Features.Disabled || !channel.Features.ScheduledMessages:
+			deferScheduledChannel(slug)
+			releaseScheduledLock(slug, token)
+			continue
+		}
+
 		ctxGet, cancelGet := context.WithTimeout(context.Background(), 5*time.Second)
 		list, err := dbGetScheduledMessages(ctxGet, slug)
 		cancelGet()
@@ -104,6 +242,8 @@ func runScheduledMessages() {
 		}
 
 		nowTime := time.Now()
+		// One snapshot per channel per tick, for the re-labelling below.
+		ops := currentOperators()
 		newList := make([]Message, 0)
 		for _, msg := range *list {
 			if !msg.Timestamp.Before(nowTime) {
@@ -125,14 +265,27 @@ func runScheduledMessages() {
 			m := msg
 			m.ID = id
 			m.Timestamp = time.Now()
-			m.Author = "Scheduled"
-			m.AuthorId = "0"
+			// Entries scheduled before the author was recorded carry no name;
+			// the literal is kept for them (and for the client, which still
+			// recognises it as a scheduled post).
+			if m.Author == "" {
+				m.Author = "Scheduled"
+				m.AuthorId = "0"
+			}
+			// An entry an operator scheduled before operators were anonymised
+			// still carries their name; the post it becomes must not.
+			ops.anonymiseOperatorAuthor(&m)
 			if serr := setMessage(postCtx, slug, &m, false); serr != nil {
 				log.Printf("Failed to post scheduled message on %s: %v\n", slug, serr)
 				postCancel()
 				newList = append(newList, msg)
 				continue
 			}
+			// Remembered under the entry's own scheduled time (msg, not m):
+			// that is what a tab holding a stale snapshot hands back, and
+			// what updateScheduledMessages drops so the next tick cannot
+			// post it a second time.
+			rememberScheduledDispatch(postCtx, slug, msg)
 			// Posting can take a while under a degraded Redis; refresh the claim
 			// after each message so it cannot expire mid-run and let a second
 			// replica re-read the still-unsaved list and re-post everything.
@@ -193,16 +346,34 @@ func updateScheduledMessages(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "error decoding messages", http.StatusBadRequest)
 		return
 	}
+	session, _ := store.Get(r, cookieName)
+	user, _ := session.Values["user"].(Session)
 
 	// Any non-positive Unix timestamp (not just the exact zero time) would be
 	// stored as an entry the earliest-due computation in dbSaveScheduledMessages
 	// skips, and a lone such entry takes the channel out of the scheduler's due
 	// set entirely — stranding it forever.
-	for _, m := range messages {
+	for i, m := range messages {
 		if m.Timestamp.Unix() <= 0 {
 			http.Error(w, "scheduled message requires a timestamp", http.StatusBadRequest)
 			return
 		}
+		// Dispatch stores the text verbatim, so the cap the live write paths
+		// enforce has to hold here too.
+		if len(m.Text) > maxMessageTextLen {
+			http.Error(w, "text too long", http.StatusBadRequest)
+			return
+		}
+		// Only the fields a scheduled post is made of are kept. The dispatcher
+		// stores the struct as sent, so client-supplied views, deleted or
+		// reactions used to land in the live message hash — a "deleted" post
+		// born already hidden. is_ads stays: the composer's ad toggle is an
+		// ordinary writer control on the live path too.
+		typ := m.Type
+		if typ == "" {
+			typ = "md"
+		}
+		messages[i] = Message{Type: typ, Text: m.Text, Timestamp: m.Timestamp, IsAds: m.IsAds}
 	}
 
 	// Take the same per-channel claim the dispatcher holds: dbSaveScheduledMessages
@@ -226,6 +397,49 @@ func updateScheduledMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer releaseScheduledLock(slug, token)
+
+	// Entries the dispatcher has already posted are not saved back, whatever
+	// snapshot the client built the list from.
+	messages = dropDispatchedScheduled(ctx, slug, messages)
+
+	// Dispatch used to post every scheduled message as the English literal
+	// "Scheduled", shown to moderators and sent to webhooks. The scheduler's
+	// own name is recorded now: an entry that already exists in the stored
+	// list (same time and text) keeps its original author, so a moderator
+	// editing one message does not re-attribute the others, and a new entry
+	// is stamped with the session — never with a client-supplied name.
+	//
+	// An operator's entries are signed operatorName, as addMessage signs an
+	// operator's post: the stored list is read back by every moderator, and
+	// the dispatcher posts the entry under the author recorded here.
+	ops := currentOperators()
+	if stored, err := dbGetScheduledMessages(ctx, slug); err == nil && stored != nil {
+		type authorKey struct {
+			at   int64
+			text string
+		}
+		authors := make(map[authorKey]Message, len(*stored))
+		for _, sm := range *stored {
+			authors[authorKey{sm.Timestamp.UnixNano(), sm.Text}] = sm
+		}
+		for i := range messages {
+			if sm, ok := authors[authorKey{messages[i].Timestamp.UnixNano(), messages[i].Text}]; ok && sm.Author != "" {
+				messages[i].Author, messages[i].AuthorId = sm.Author, sm.AuthorId
+				// Recorded before operators were anonymised.
+				ops.anonymiseOperatorAuthor(&messages[i])
+			}
+		}
+	}
+	superAdmin := isSuperAdmin(r)
+	for i := range messages {
+		if messages[i].Author == "" {
+			messages[i].Author = sessionDisplayName(user)
+			messages[i].AuthorId = user.ID
+			if superAdmin {
+				messages[i].Author, messages[i].AuthorId = operatorName, operatorAuthorId
+			}
+		}
+	}
 
 	if err := dbSaveScheduledMessages(ctx, slug, &messages); err != nil {
 		http.Error(w, "error saving messages", http.StatusInternalServerError)

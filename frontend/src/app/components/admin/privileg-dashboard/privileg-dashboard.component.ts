@@ -5,6 +5,15 @@ import { FormsModule } from '@angular/forms';
 import { AuthService } from '../../../services/auth.service';
 import { SlugService } from '../../../services/slug.service';
 
+// Mirrors normEmail on the server, so the duplicate check here sees what the
+// server will actually merge on.
+function normalizeEmail(email: string | undefined): string {
+  return (email ?? '').trim().toLowerCase();
+}
+
+// Deliberately loose: one '@' with something on both sides and a dot after it.
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 @Component({
   selector: 'app-privileg-dashboard',
   imports: [
@@ -56,7 +65,13 @@ export class PrivilegDashboardComponent implements OnInit {
   }
 
   saveChanges() {
-    this.adminService.setChannelUsers([...this.usersList, ...this.removedUsers])
+    // The server applies the list in order, last write wins — so a removal that
+    // trailed a re-grant of the same address ("delete alice, add alice back as
+    // writer") revoked her. Removals go first, and one whose address is being
+    // granted again is dropped altogether.
+    const granted = new Set(this.usersList.map(u => normalizeEmail(u.email)));
+    const removals = this.removedUsers.filter(u => !granted.has(normalizeEmail(u.email)));
+    this.adminService.setChannelUsers([...removals, ...this.usersList])
       .then(() => {
         this.removedUsers = [];
         this.toastService.success('', 'השינויים נשמרו בהצלחה!');
@@ -71,8 +86,23 @@ export class PrivilegDashboardComponent implements OnInit {
   }
 
   saveNewUser() {
-    if (!this.newUserEmail) return;
-    this.usersList.push({ email: this.newUserEmail, role: this.newUserRole });
+    // The server normalises and silently skips a blank address, and stores an
+    // invalid one for good — where it can never match a Google login. Catch the
+    // typo here, while the owner is still looking at it.
+    const email = normalizeEmail(this.newUserEmail);
+    if (!email) {
+      this.toastService.warning('', 'יש להזין כתובת מייל');
+      return;
+    }
+    if (!EMAIL_SHAPE.test(email)) {
+      this.toastService.warning('', 'כתובת המייל אינה תקינה');
+      return;
+    }
+    if (this.usersList.some(u => normalizeEmail(u.email) === email)) {
+      this.toastService.warning('', 'כתובת המייל כבר קיימת ברשימה');
+      return;
+    }
+    this.usersList.push({ email, role: this.newUserRole });
     this.newUserEmail = '';
     this.newUserRole = 'writer';
     this.addingNewUser = false;

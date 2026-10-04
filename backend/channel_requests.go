@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi"
@@ -97,7 +98,11 @@ func listChannelRequests(w http.ResponseWriter, r *http.Request) {
 
 	requests, err := dbListChannelRequests(ctx)
 	if err != nil {
-		requests = []*ChannelRequest{}
+		// An empty 200 rendered "אין בקשות" over a Redis outage, and the
+		// screen's error toast never ran; the sibling handlers answer 500.
+		log.Printf("listChannelRequests: %v\n", err)
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -159,10 +164,23 @@ func approveChannelRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The stored request is the one write path that never had the name
+	// checked; the same trim/empty/length rules as the other creation paths.
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		http.Error(w, "Channel name is required", http.StatusBadRequest)
+		return
+	}
+	if channelFieldTooLong(name, maxChannelNameLen) {
+		http.Error(w, "Channel name is too long", http.StatusBadRequest)
+		return
+	}
+
+	ownerEmail := normEmail(req.Email)
 	channel := &ChannelData{
 		Slug:       finalSlug,
-		Name:       req.Name,
-		OwnerEmail: req.Email,
+		Name:       name,
+		OwnerEmail: ownerEmail,
 		CreatedAt:  time.Now(),
 		Features:   defaultChannelFeatures(),
 	}
@@ -176,10 +194,12 @@ func approveChannelRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := dbAssignChannelRole(ctx, req.Email, finalSlug, RoleOwner); err != nil {
-		log.Printf("approveChannelRequest: %s created but owner role for %s not assigned: %v\n", finalSlug, req.Email, err)
+	if err := dbAssignChannelRole(ctx, ownerEmail, finalSlug, RoleOwner); err != nil {
+		log.Printf("approveChannelRequest: %s created but owner role for %s not assigned: %v\n", finalSlug, ownerEmail, err)
 	}
-	initializePrivilegeUsers()
+	if err := initializePrivilegeUsers(); err != nil {
+		log.Printf("initializePrivilegeUsers after approveChannelRequest(%s): %v\n", finalSlug, err)
+	}
 
 	req.Status = RequestStatusApproved
 	req.ApprovedSlug = finalSlug

@@ -19,6 +19,7 @@ import { ChatService } from '../../../services/chat.service';
 import { NotificationsService } from '../../../services/notifications.service';
 import { SlugService } from '../../../services/slug.service';
 import { AdminPanelComponent } from "../../admin/admin-panel.component";
+import { SupportBoxComponent } from '../../support/support-box.component';
 import { User } from '../../../models/user.model';
 
 @Component({
@@ -72,6 +73,14 @@ export class ChannelHeaderComponent implements OnInit, OnDestroy {
           title: 'פאנל מנהל-על',
           icon: 'shield-outline',
         }] : []),
+        // For every signed-in user, not only those who can open the admin
+        // panel: the support box otherwise lives on the landing page (which
+        // redirects anyone signed in) and in a panel tab (moderator and above),
+        // so a writer or a plain reader had no way to reach it at all.
+        {
+          title: 'פנייה לתמיכה',
+          icon: 'question-mark-circle-outline',
+        },
         {
           title: 'התנתק',
           icon: 'log-out',
@@ -126,6 +135,9 @@ export class ChannelHeaderComponent implements OnInit, OnDestroy {
           case 'shield-outline':
             this.router.navigate(['/super-admin']);
             break;
+          case 'question-mark-circle-outline':
+            this.openSupport();
+            break;
         }
       });
 
@@ -136,6 +148,28 @@ export class ChannelHeaderComponent implements OnInit, OnDestroy {
     this.menuSub?.unsubscribe();
     // ViewerJS appends its container to document.body — destroy it with the header.
     this.v?.destroy();
+  }
+
+  /**
+   * The guard and the landing page record where the visitor was before
+   * sending them to Google; this button did not, so a reader who signed in
+   * from /channel/foo came back to /channel (the "my channel" page, or the
+   * onboarding form) with no way back to the channel they were reading. Worse,
+   * a stale returnUrl from an earlier guard redirect sent them somewhere else
+   * entirely. Record the current URL first, the same way the guard does.
+   */
+  async login() {
+    try {
+      localStorage.setItem('returnUrl', this.router.url);
+    } catch {
+      // Storage unavailable — the login page falls back to /channel.
+    }
+    try {
+      await this._authService.loginWithGoogle();
+    } catch {
+      // GET /auth/google failed; without this the click did nothing at all.
+      this.toastrService.danger("", "ההתחברות אינה זמינה כרגע, נסו שוב מאוחר יותר");
+    }
   }
 
   async logout() {
@@ -178,6 +212,19 @@ export class ChannelHeaderComponent implements OnInit, OnDestroy {
 
   updateScreenSize() {
     this.isSmallScreen = window.innerWidth < 768;
+  }
+
+  /** The same box the admin panel shows in its 'פנייה למערכת' tab, as a dialog. */
+  openSupport() {
+    this.dialogService.open(SupportBoxComponent, {
+      closeOnBackdropClick: true,
+      context: {
+        signedIn: true,
+        channelSlug: this._slugService.slug,
+        dialogMode: true,
+        subtitle: 'שאלה, תקלה או בקשה — הפנייה מגיעה להנהלת המערכת, והתשובה תופיע כאן.',
+      },
+    });
   }
 
   openContactUs() {

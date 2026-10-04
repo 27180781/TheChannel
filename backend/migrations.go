@@ -17,6 +17,35 @@ import (
 // migrationsAppliedKey holds the set of migration IDs that have already run.
 const migrationsAppliedKey = "migrations:applied"
 
+// migrationsR2CopiedKey holds the blob hashes the R2 copy has already put in
+// the bucket, so a retry is O(remaining) instead of one HEAD per blob per boot.
+const migrationsR2CopiedKey = "migrations:r2-copied"
+
+// migrationLockTTL bounds the per-migration claim (see runMigrations): a
+// replica killed mid-migration leaves its lock behind, and until it expires
+// every restart skips that migration, so it is only slightly longer than the
+// budget a run can actually use.
+const migrationLockTTL = migrationBudget + time.Minute
+
+var migrationUnlock = redis.NewScript(`
+	if redis.call('get', KEYS[1]) == ARGV[1] then
+		return redis.call('del', KEYS[1])
+	end
+	return 0
+`)
+
+// budgetExhausted turns an expired migration context into the error that
+// leaves the migration unmarked. Every per-record loop checks it: without
+// this, a deadline that landed mid-run made the remaining reads fail as
+// "skipped" records and the function returned nil, marking the migration
+// applied with most of the corpus untouched.
+func budgetExhausted(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("boot budget exhausted, will continue on next start: %w", err)
+	}
+	return nil
+}
+
 // channelFeaturesBackfillID is the one-shot backfill that derives the
 // operator-controlled ChannelFeatures toggles from what each channel was
 // actually configured to do before those toggles were enforced.
@@ -74,6 +103,12 @@ func runMigrations(ctx context.Context) {
 	}
 
 	for _, m := range migrations {
+		// Each migration gets the whole budget: sharing one across the list
+		// meant a long message backfill on a large corpus ate the time of
+		// every migration after it, and the last ones failed on every boot.
+		ctx, cancelMigration := context.WithTimeout(context.WithoutCancel(ctx), migrationBudget)
+		defer cancelMigration()
+
 		applied, err := rdb.SIsMember(ctx, migrationsAppliedKey, m.id).Result()
 		if err != nil {
 			log.Printf("migrations: cannot read applied set, skipping %s this boot: %v", m.id, err)
@@ -83,8 +118,26 @@ func runMigrations(ctx context.Context) {
 			continue
 		}
 
+		// Two replicas booting together both saw "not applied" and both ran
+		// the migration; the slower one then wrote its stale snapshot over
+		// changes a super admin had already made through the faster one.
+		// Claim the migration first, and re-check once the claim is held.
+		lockKey := "migrations:lock:" + m.id
+		token := generatedRandomID(16)
+		claimed, err := rdb.SetNX(ctx, lockKey, token, migrationLockTTL).Result()
+		if err != nil || !claimed {
+			log.Printf("migrations: %s is being run by another replica (or the lock could not be taken: %v), skipping this boot", m.id, err)
+			continue
+		}
+		if applied, err := rdb.SIsMember(ctx, migrationsAppliedKey, m.id).Result(); err != nil || applied {
+			migrationUnlock.Run(ctx, rdb, []string{lockKey}, token)
+			continue
+		}
+
 		log.Printf("migrations: running %s", m.id)
-		if err := m.run(ctx); err != nil {
+		err = m.run(ctx)
+		migrationUnlock.Run(context.WithoutCancel(ctx), rdb, []string{lockKey}, token)
+		if err != nil {
 			// A deliberate skip is not a failure, but it must leave the ID
 			// unmarked just the same so the migration still runs later.
 			if errors.Is(err, errMigrationSkipped) {
@@ -150,6 +203,9 @@ func backfillChannelFeatures(ctx context.Context) error {
 
 	var changed int
 	for _, ch := range channels {
+		if err := budgetExhausted(ctx); err != nil {
+			return err
+		}
 		settings, err := dbGetSettings(ctx, ch.Slug)
 		if err != nil {
 			// Do not mark the migration applied if we could not read a channel.
@@ -218,6 +274,9 @@ func backfillChannelFeaturesV2(ctx context.Context) error {
 
 	var changed int
 	for _, ch := range channels {
+		if err := budgetExhausted(ctx); err != nil {
+			return err
+		}
 		before := ch.Features
 		f := ch.Features
 		f.Reactions = true
@@ -270,6 +329,9 @@ func backfillFileChannelSlugs(ctx context.Context) error {
 		}
 
 		for _, m := range members {
+			if err := budgetExhausted(ctx); err != nil {
+				return err
+			}
 			fileID, _, ok := decodeFileMember(m)
 			if !ok {
 				continue
@@ -284,6 +346,9 @@ func backfillFileChannelSlugs(ctx context.Context) error {
 
 			meta, err := dbGetFileMetadata(ctx, fileID)
 			if err != nil {
+				if berr := budgetExhausted(ctx); berr != nil {
+					return berr
+				}
 				// A tracked id whose metadata is gone (neither in Redis nor on
 				// disk) is index debris, not a reason to abandon the run.
 				log.Printf("migrations: %s: no metadata for tracked file %s, skipping", ch.Slug, fileID)
@@ -372,6 +437,9 @@ func backfillFileSlugsFromMessages(ctx context.Context) error {
 			return fmt.Errorf("list messages for %s: %w", ch.Slug, err)
 		}
 		for _, mk := range messageKeys {
+			if err := budgetExhausted(ctx); err != nil {
+				return err
+			}
 			text, err := rdb.HGet(ctx, mk, "text").Result()
 			if err != nil {
 				if err == redis.Nil {
@@ -422,6 +490,22 @@ func migrateLocalFilesToR2(ctx context.Context) error {
 	// Blobs are content-addressed and deduplicated across channels, so the same
 	// hash can appear in many file indexes; handle each one once per run.
 	done := make(map[string]bool)
+	// Hashes copied by an earlier boot. Without this record every retry
+	// re-HEADed the whole corpus first and, past a few thousand blobs, spent
+	// its entire budget confirming old copies and never reached a new one.
+	copiedList, err := rdb.SMembers(ctx, migrationsR2CopiedKey).Result()
+	if err != nil {
+		return fmt.Errorf("read %s: %w", migrationsR2CopiedKey, err)
+	}
+	copied := make(map[string]bool, len(copiedList))
+	for _, h := range copiedList {
+		copied[h] = true
+	}
+	markCopied := func(hash string) {
+		if err := rdb.SAdd(ctx, migrationsR2CopiedKey, hash).Err(); err != nil {
+			log.Printf("migrations: r2 copy: could not record %s as copied: %v", hash, err)
+		}
+	}
 
 	for _, ch := range channels {
 		members, err := rdb.ZRange(ctx, channelFilesKey(ch.Slug), 0, -1).Result()
@@ -430,6 +514,9 @@ func migrateLocalFilesToR2(ctx context.Context) error {
 		}
 
 		for _, m := range members {
+			if err := budgetExhausted(ctx); err != nil {
+				return err
+			}
 			fileID, _, ok := decodeFileMember(m)
 			if !ok {
 				continue
@@ -445,6 +532,9 @@ func migrateLocalFilesToR2(ctx context.Context) error {
 
 			meta, err := dbGetFileMetadata(ctx, fileID)
 			if err != nil {
+				if berr := budgetExhausted(ctx); berr != nil {
+					return berr
+				}
 				log.Printf("migrations: r2 copy: %s: no metadata for tracked file %s, skipping", ch.Slug, fileID)
 				continue
 			}
@@ -460,7 +550,7 @@ func migrateLocalFilesToR2(ctx context.Context) error {
 				malformed++
 				continue
 			}
-			if done[meta.Hash] {
+			if done[meta.Hash] || copied[meta.Hash] {
 				continue
 			}
 			done[meta.Hash] = true
@@ -477,6 +567,7 @@ func migrateLocalFilesToR2(ctx context.Context) error {
 			key := r2ObjectKey(meta.Hash)
 			if r2Exists(ctx, key) {
 				alreadyPresent++
+				markCopied(meta.Hash)
 				continue
 			}
 
@@ -489,6 +580,7 @@ func migrateLocalFilesToR2(ctx context.Context) error {
 				continue
 			}
 			uploaded++
+			markCopied(meta.Hash)
 		}
 	}
 
@@ -521,7 +613,11 @@ func copyBlobToR2(ctx context.Context, localPath, key string, meta *FileMetadata
 	return r2Upload(upCtx, key, f, contentType)
 }
 
-// migrationContext is the budget for the whole migration step at boot.
+// migrationBudget is the time each migration gets at boot (see runMigrations).
+const migrationBudget = 2 * time.Minute
+
+// migrationContext is the parent context of the migration step at boot; the
+// per-migration budget is applied inside runMigrations.
 func migrationContext() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), 2*time.Minute)
+	return context.WithCancel(context.Background())
 }

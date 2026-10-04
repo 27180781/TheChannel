@@ -85,7 +85,7 @@ export class SupportService {
   getTicket(id: string, token?: string): Promise<SupportTicket> {
     return firstValueFrom(
       this.http.get<SupportTicket>(`/api/support/tickets/${id}`, {
-        params: token ? { token } : {},
+        headers: this.tokenHeaders(token),
       }),
     );
   }
@@ -93,9 +93,18 @@ export class SupportService {
   reply(id: string, body: string, token?: string): Promise<SupportTicket> {
     return firstValueFrom(
       this.http.post<SupportTicket>(`/api/support/tickets/${id}/reply`, { body }, {
-        params: token ? { token } : {},
+        headers: this.tokenHeaders(token),
       }),
     );
+  }
+
+  /**
+   * The anonymous access token travels in a header. As a query parameter it
+   * was written to the server's request log on every read and reply, and it
+   * is the only credential on an anonymous thread.
+   */
+  private tokenHeaders(token?: string): Record<string, string> {
+    return token ? { 'X-Ticket-Token': token } : {};
   }
 
   // --- super admin ---

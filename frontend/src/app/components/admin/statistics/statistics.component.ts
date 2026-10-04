@@ -26,7 +26,7 @@ export class StatisticsComponent implements OnInit {
     datasets: [
       {
         data: [],
-        label: 'סטטיסטקת חיבורים לימים אחרונים',
+        label: 'סטטיסטיקת חיבורים לימים אחרונים',
         backgroundColor: 'rgba(148,159,177,0.2)',
         borderColor: 'rgba(148,159,177,1)',
         pointBackgroundColor: 'rgba(148,159,177,1)',
@@ -72,8 +72,11 @@ export class StatisticsComponent implements OnInit {
   updateData() {
     this.adminService.getStatistics().then(statistics => {
       this.statistics = statistics;
-      this.lineChartData.datasets[0].data = statistics.connectionsStatistics.date;
-      this.lineChartData.labels = statistics.connectionsStatistics.labels;
+      // The server reads the series with ZREVRANGE, so index 0 is the newest
+      // minute and, plotted as-is, the x-axis ran backwards in time. Reverse a
+      // copy so the oldest point is on the left and pan/zoom follow the clock.
+      this.lineChartData.datasets[0].data = [...statistics.connectionsStatistics.date].reverse();
+      this.lineChartData.labels = [...statistics.connectionsStatistics.labels].reverse();
       this.chart?.update();
     }).catch(() => this.toastrService.danger('', 'שגיאה בטעינת הסטטיסטיקות'));
   }
