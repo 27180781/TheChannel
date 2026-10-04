@@ -242,6 +242,8 @@ func runScheduledMessages() {
 		}
 
 		nowTime := time.Now()
+		// One snapshot per channel per tick, for the re-labelling below.
+		ops := currentOperators()
 		newList := make([]Message, 0)
 		for _, msg := range *list {
 			if !msg.Timestamp.Before(nowTime) {
@@ -270,6 +272,9 @@ func runScheduledMessages() {
 				m.Author = "Scheduled"
 				m.AuthorId = "0"
 			}
+			// An entry an operator scheduled before operators were anonymised
+			// still carries their name; the post it becomes must not.
+			ops.anonymiseOperatorAuthor(&m)
 			if serr := setMessage(postCtx, slug, &m, false); serr != nil {
 				log.Printf("Failed to post scheduled message on %s: %v\n", slug, serr)
 				postCancel()
@@ -403,6 +408,11 @@ func updateScheduledMessages(w http.ResponseWriter, r *http.Request) {
 	// list (same time and text) keeps its original author, so a moderator
 	// editing one message does not re-attribute the others, and a new entry
 	// is stamped with the session — never with a client-supplied name.
+	//
+	// An operator's entries are signed operatorName, as addMessage signs an
+	// operator's post: the stored list is read back by every moderator, and
+	// the dispatcher posts the entry under the author recorded here.
+	ops := currentOperators()
 	if stored, err := dbGetScheduledMessages(ctx, slug); err == nil && stored != nil {
 		type authorKey struct {
 			at   int64
@@ -415,13 +425,19 @@ func updateScheduledMessages(w http.ResponseWriter, r *http.Request) {
 		for i := range messages {
 			if sm, ok := authors[authorKey{messages[i].Timestamp.UnixNano(), messages[i].Text}]; ok && sm.Author != "" {
 				messages[i].Author, messages[i].AuthorId = sm.Author, sm.AuthorId
+				// Recorded before operators were anonymised.
+				ops.anonymiseOperatorAuthor(&messages[i])
 			}
 		}
 	}
+	superAdmin := isSuperAdmin(r)
 	for i := range messages {
 		if messages[i].Author == "" {
 			messages[i].Author = sessionDisplayName(user)
 			messages[i].AuthorId = user.ID
+			if superAdmin {
+				messages[i].Author, messages[i].AuthorId = operatorName, operatorAuthorId
+			}
 		}
 	}
 

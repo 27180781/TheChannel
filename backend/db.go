@@ -177,13 +177,22 @@ func setMessage(ctx context.Context, slug string, m *Message, isUpdate bool) err
 			// and reaction toggle that landed in between, so both counters
 			// silently lost increments on each save. The caller still fills
 			// them in on m, but only for the SSE payload published below.
-			p.HSet(ctx, messageKey, map[string]any{
+			fields := map[string]any{
 				"type":      m.Type,
 				"text":      m.Text,
 				"last_edit": m.LastEdit,
 				"deleted":   m.Deleted,
 				"is_ads":    m.IsAds,
-			})
+			}
+			// The author travels with the edit only when the caller carries
+			// it: updateMessage copies it from the stored record, re-labelled
+			// when the record still names an operator (see currentOperators),
+			// so a legacy operator post is stored anonymised from its first
+			// edit. An update without an author leaves the stored one alone.
+			if m.Author != "" {
+				fields["author"], fields["authorId"] = m.Author, m.AuthorId
+			}
+			p.HSet(ctx, messageKey, fields)
 		} else {
 			p.HSet(ctx, messageKey, m)
 		}
