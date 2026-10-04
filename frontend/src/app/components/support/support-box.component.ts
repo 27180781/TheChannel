@@ -95,7 +95,7 @@ import { SupportService, SupportTicket } from '../../services/support.service';
                   @for (m of t.messages; track $index) {
                     <div class="msg" [class.msg--admin]="m.author === 'admin'">
                       <div class="msg__meta">
-                        {{ m.author === 'admin' ? 'הנהלת המערכת' : m.authorName }}
+                        {{ m.author === 'admin' ? 'ניהול' : m.authorName }}
                         · {{ m.createdAt | date:'dd/MM/yyyy HH:mm' }}
                       </div>
                       <div class="msg__body">{{ m.body }}</div>

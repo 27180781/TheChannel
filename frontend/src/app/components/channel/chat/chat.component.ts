@@ -261,7 +261,12 @@ export class ChatComponent implements OnInit, OnDestroy {
           this.zone.run(() => {
             this.messages.unshift(message.message);
             this.rebuildItems();
-            this.thereNewMessages = !this.isAtBottom() && message.message.authorId !== this.userInfo?.id;
+            const authorId = message.message.authorId;
+            // An operator's posts carry a shared stand-in id rather than their
+            // own, so their own post must not raise the new-messages dot.
+            const mine = authorId === this.userInfo?.id
+              || (authorId === 'operator' && this.userInfo?.globalRole === 'super_admin');
+            this.thereNewMessages = !this.isAtBottom() && !mine;
             this.setLastReadMessage(message.message.id!.toString());
             if (this.hasWriteRole() && this.scheduledMessages && message.message.author === "Scheduled") {
               this.loadScheduledMessages(true);

@@ -113,9 +113,15 @@ func SendWebhook(ctx context.Context, slug string, action string, message *Messa
 		return
 	}
 
+	// The webhook goes to wherever the channel owner points it, so an operator
+	// post must reach it re-labelled like everywhere else. A copy: the caller's
+	// message is shared with the push notification running alongside.
+	msg := *message
+	currentOperators().anonymiseOperatorAuthor(&msg)
+
 	payload := WebhookPayload{
 		Action:      action,
-		Message:     *message,
+		Message:     msg,
 		Timestamp:   time.Now(),
 		VerifyToken: cfg.VerifyToken,
 	}

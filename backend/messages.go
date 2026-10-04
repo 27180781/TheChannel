@@ -71,11 +71,13 @@ func getMessages(w http.ResponseWriter, r *http.Request) {
 	// ETag: skip expensive query if content hasn't changed since client's copy.
 	// The body varies by viewer (admins see real authors and soft-deleted
 	// posts), so the validator has to carry those inputs and the response must
-	// never be reused across identities.
+	// never be reused across identities. The "op" marker retires validators
+	// minted before operator posts were re-labelled, whose cached bodies still
+	// name the operator.
 	w.Header().Set("Cache-Control", "private, no-cache")
 	w.Header().Set("Vary", "Cookie")
 	if lm := getLastModified(ctx, slug); lm != "" {
-		etag := `"` + lm + "-" + strconv.FormatBool(isAdmin) + "-" + strconv.FormatBool(countViews) + `"`
+		etag := `"` + lm + "-" + strconv.FormatBool(isAdmin) + "-" + strconv.FormatBool(countViews) + `-op"`
 		w.Header().Set("ETag", etag)
 		if r.Header.Get("If-None-Match") == etag {
 			w.WriteHeader(http.StatusNotModified)
@@ -88,6 +90,15 @@ func getMessages(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Failed to get messages: %v\n", err)
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
+	}
+	// Staff get real authors from the Lua, and posts an operator wrote before
+	// they were signed as operatorName still carry the operator's name and
+	// Google id. Everyone else already gets "Anonymous".
+	if isAdmin {
+		ops := currentOperators()
+		for i := range messages {
+			ops.anonymiseOperatorAuthor(&messages[i])
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -121,9 +132,17 @@ func addMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
+	recordAuthorID(ctx, user)
+
 	message.Type = body.Type
 	message.Author = user.PublicName
 	message.AuthorId = user.ID
+	// An operator posting is the platform speaking, and the post is served to
+	// the channel's staff, its webhook and the event stream: none of them may
+	// learn who the operator is.
+	if isSuperAdmin(r) {
+		message.Author, message.AuthorId = operatorName, operatorAuthorId
+	}
 	message.Timestamp = time.Now()
 	message.Text = body.Text
 	message.File = body.File
@@ -200,6 +219,9 @@ func updateMessage(w http.ResponseWriter, r *http.Request) {
 	// the composer republishes it, which the edit form promises to the user.
 	body.Author = stored["author"]
 	body.AuthorId = stored["authorId"]
+	// Re-saving an operator post written before operators were anonymised
+	// would re-broadcast their identity; store it re-labelled instead.
+	currentOperators().anonymiseOperatorAuthor(&body)
 	body.Views, _ = strconv.Atoi(stored["views"])
 	if ts, perr := time.Parse(time.RFC3339Nano, stored["timestamp"]); perr == nil {
 		body.Timestamp = ts
@@ -331,6 +353,11 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 		data := ev.data
 		if !isWriter {
 			data = maskEventAuthor(data)
+		} else {
+			// Staff see real authors, but never an operator's: events stored
+			// before operators were anonymised still name them. The snapshot is
+			// per event so an operator added mid-connection is covered.
+			data = currentOperators().anonymiseOperatorEvent(data)
 		}
 		if _, err := fmt.Fprintf(w, "id: %s\ndata: %s\n\n", ev.id, data); err != nil {
 			return false

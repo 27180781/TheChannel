@@ -102,6 +102,12 @@ func reportMessage(w http.ResponseWriter, r *http.Request) {
 	report.ReporterID = s.ID
 	report.ReportedEmail = s.Email
 	report.ReporterName = s.Username
+	// Reports are read by the channel's moderators, who must not learn who the
+	// operator is. The reporters set above still dedups on the real id; it is
+	// never returned.
+	if isSuperAdmin(r) {
+		report.ReporterID, report.ReportedEmail, report.ReporterName = operatorAuthorId, "", operatorName
+	}
 
 	if err := dbReportMessage(ctx, slug, &report); err != nil {
 		log.Println("Error saving report:", err)
@@ -132,6 +138,12 @@ func getReports(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error retrieving reports: %v\n", err)
 		http.Error(w, "Error retrieving reports", http.StatusInternalServerError)
 		return
+	}
+	// Reports an operator filed before they were anonymised still hold their
+	// email, Google name and id.
+	ops := currentOperators()
+	for _, rep := range reports {
+		ops.anonymiseOperatorReport(rep)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
