@@ -25,7 +25,9 @@ const defined = new Set();
 for (const m of css.matchAll(/\.((?:[a-zA-Z0-9_-]|\\[.:%/])+)/g)) defined.add(m[1].replace(/\\/g, ''));
 
 // Bootstrap's utility and component prefixes; everything else is component CSS.
-const bs = /^(d|flex|justify-content|align-items|align-self|align-content|order|gap|row-gap|column-gap|m[tbsexy]?|p[tbsexy]?|text|fs|fw|fst|lh|rounded|border|bg|shadow|overflow|w|h|mw|mh|vw|vh|position|top|bottom|start|end|visually-hidden|text-truncate|container|row|col|g|gx|gy|btn-close|form-label|form-control|form-text|badge|alert|card|spinner|table|img|ratio|small|lead|list-unstyled|list-inline|mx-auto|ms-auto|me-auto)(-|$)/;
+// Component names (card, badge, alert, table) are matched exactly, because
+// component styles reuse those words for their own BEM classes (.card-head).
+const bs = /^(?:(?:d|flex|justify-content|align-items|align-self|align-content|order|gap|row-gap|column-gap|m[tbsexy]?|p[tbsexy]?|text|fs|fw|fst|lh|rounded|border|bg|shadow|overflow|w|h|mw|mh|vw|vh|position|top|bottom|start|end|container|row|col|g|gx|gy|spinner|img|ratio)(?:-|$)|(?:visually-hidden|text-truncate|btn-close|form-label|form-control|form-text|small|lead|list-unstyled|list-inline|mx-auto|ms-auto|me-auto|card|card-body|card-title|card-subtitle|card-text|card-header|card-footer|card-img|card-img-top|card-link|badge|alert|alert-primary|alert-secondary|alert-success|alert-danger|alert-warning|alert-info|alert-light|alert-dark|alert-link|alert-heading|table|table-sm|table-striped|table-hover|table-bordered|table-responsive)$)/;
 
 const used = new Map();
 for (const file of walk(join(root, 'src'))) {

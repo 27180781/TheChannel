@@ -15,7 +15,7 @@ const seoTestIndex = `<!doctype html>
 <html dir="rtl" lang="he">
 <head>
   <meta charset="utf-8">
-  <title></title>
+  <title>הערוץ (ברירת מחדל)</title>
   <meta name="description" content="generic description">
 </head>
 <body><app-root></app-root></body>

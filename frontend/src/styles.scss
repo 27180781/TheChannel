@@ -43,6 +43,16 @@
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
+// A shorter header on phones: the theme's 4.75rem bar left a 360px screen
+// with little room for the feed. Every layout rule reads the token, so the
+// fixed-header offsets follow.
+@media (max-width: 575.98px) {
+  .nb-theme-custom {
+    --header-height: 4.25rem;
+    --header-padding: 0.75rem;
+  }
+}
+
 // Buttons answer the pointer: a short colour/shadow transition and a slight
 // press. Nebular styles them without any transition.
 [nbButton],

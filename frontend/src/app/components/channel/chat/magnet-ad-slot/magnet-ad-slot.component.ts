@@ -7,7 +7,6 @@ import {
   OnDestroy,
   ViewChild,
 } from '@angular/core';
-import { NbUserModule } from '@nebular/theme';
 import { MagnetAdsService } from '../../../../services/magnet-ads.service';
 import { ChatService } from '../../../../services/chat.service';
 
@@ -52,7 +51,7 @@ const STORAGE_SHIM = `(function(){` +
 @Component({
   selector: 'app-magnet-ad-slot',
   standalone: true,
-  imports: [NbUserModule],
+  imports: [],
   templateUrl: './magnet-ad-slot.component.html',
   styleUrl: './magnet-ad-slot.component.scss',
 })

@@ -19,6 +19,10 @@ var channelPagePathRe = regexp.MustCompile(`^/channel/([^/]+)/?$`)
 // channel page can carry its own instead of a second, conflicting tag.
 var descriptionMetaRe = regexp.MustCompile(`<meta name="description" content="[^"]*">`)
 
+// titleRe matches the <title> index.html ships (a default, so the tab is
+// never blank in a dev server either), which every served page replaces.
+var titleRe = regexp.MustCompile(`<title>[^<]*</title>`)
+
 // defaultSiteName is the product name link previews and the tab show when
 // the operator has not set a custom title.
 const defaultSiteName = "הערוץ"
@@ -124,8 +128,7 @@ func injectHeadTags(content []byte, origin, siteName, path string, ch *ChannelDa
 	// the document with no <title> at all, and stray text inside <head> makes
 	// the parser close the head early. Escaped, because both the operator's
 	// title and a channel name are free text landing inside markup.
-	content = bytes.Replace(content, []byte("<title></title>"),
-		[]byte("<title>"+html.EscapeString(title)+"</title>"), 1)
+	content = titleRe.ReplaceAllLiteral(content, []byte("<title>"+html.EscapeString(title)+"</title>"))
 	if description != "" {
 		content = descriptionMetaRe.ReplaceAllLiteral(content,
 			[]byte(`<meta name="description" content="`+html.EscapeString(description)+`">`))

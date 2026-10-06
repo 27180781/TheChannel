@@ -16,49 +16,28 @@ import {
   NbToastrModule
 } from "@nebular/theme";
 import { provideAnimationsAsync } from "@angular/platform-browser/animations/async";
-import { NbEvaIconsModule } from "@nebular/eva-icons";
+import { provideEvaIconSubset } from './eva-icons.provider';
 import { provideMarkdown } from "ngx-markdown";
 import { MarkdownConfig } from "./markdown.config";
 import { NgIconsModule, provideIcons } from "@ng-icons/core"; // Import NgIconsModule and provideIcons
-import {
-  heroBold,
-  heroCheck,
-  heroCodeBracket,
-  heroItalic,
-  heroLockClosed,
-  heroLockOpen,
-  heroPaperAirplane,
-  heroPaperClip,
-  heroQuestionMarkCircle,
-  heroUnderline,
-  heroXMark
-} from "@ng-icons/heroicons/outline";
+import { heroBold, heroItalic, heroUnderline } from "@ng-icons/heroicons/outline";
 import { provideCharts, withDefaultRegisterables } from 'ng2-charts';
 
 export const appConfig: ApplicationConfig = {
   providers: [
+    // Only the Eva icons in use (scripts/gen-eva-subset.mjs) instead of the
+    // whole pack.
+    provideEvaIconSubset(),
     provideZoneChangeDetection({ eventCoalescing: true }),
     provideRouter(routes), // withHashLocation()
     provideHttpClient(withInterceptors([channelDisabledInterceptor])),
     provideAnimationsAsync(),
     provideMarkdown(MarkdownConfig),
-    provideIcons({
-      heroBold,
-      heroItalic,
-      heroUnderline,
-      heroCodeBracket,
-      heroPaperClip,
-      heroQuestionMarkCircle,
-      heroPaperAirplane,
-      heroCheck,
-      heroXMark,
-      heroLockClosed,
-      heroLockOpen
-    }),
+    // The composer's three formatting buttons; everything else is Eva.
+    provideIcons({ heroBold, heroItalic, heroUnderline }),
     importProvidersFrom(
       NbThemeModule.forRoot({ name: 'custom' }, undefined, undefined, NbLayoutDirection.RTL),
       NbIconModule,
-      NbEvaIconsModule,
       NbMenuModule.forRoot(),
       NbDialogModule.forRoot(),
       NbToastrModule.forRoot({

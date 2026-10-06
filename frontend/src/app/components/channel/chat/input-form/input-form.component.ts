@@ -1,5 +1,5 @@
 import { uploadErrorMessage } from '../../../../services/upload-error';
-import { Component, ElementRef, EventEmitter, OnDestroy, OnInit, Output, ViewChild } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, EventEmitter, OnDestroy, OnInit, Output, ViewChild } from '@angular/core';
 
 import { HttpEventType } from "@angular/common/http";
 import { FormsModule } from "@angular/forms";
@@ -7,16 +7,13 @@ import { firstValueFrom, Subscription } from "rxjs";
 import {
   NbAlertModule,
   NbButtonModule,
-  NbCardModule,
   NbDialogService,
-  NbFormFieldModule,
   NbIconModule,
   NbInputModule,
-  NbProgressBarModule,
-  NbSpinnerModule,
-  NbTagModule,
+  NbPopoverModule,
   NbToastrService,
-  NbToggleModule
+  NbToggleModule,
+  NbTooltipModule
 } from "@nebular/theme";
 import { MarkdownComponent } from "ngx-markdown";
 import { NgIconsModule } from "@ng-icons/core";
@@ -24,6 +21,7 @@ import { Attachment, ChatFile, ChatMessage, ChatService } from '../../../../serv
 import { AdminService, EditMsg } from '../../../../services/admin.service';
 import { AutosizeModule } from "ngx-autosize";
 import { TimePickerComponent } from './time-picker/time-picker.component';
+import { MessageTimePipe } from '../../../../pipes/message-time.pipe';
 
 // Per-user client-side preference: the server never consumed this setting, and
 // the channel settings endpoint it used to arrive through is owner-only, so a
@@ -37,23 +35,25 @@ const ENTER_SENDS_MESSAGE_KEY = 'enterSendsMessage';
     NbInputModule,
     NbIconModule,
     NbButtonModule,
-    NbProgressBarModule,
-    NbCardModule,
-    NbFormFieldModule,
     NbToggleModule,
-    NbSpinnerModule,
     MarkdownComponent,
-    NbTagModule,
     NbAlertModule,
     NgIconsModule,
-    AutosizeModule
+    NbTooltipModule,
+    NbPopoverModule,
+    AutosizeModule,
+    MessageTimePipe,
   ],
   templateUrl: './input-form.component.html',
   styleUrl: './input-form.component.scss'
 })
-export class InputFormComponent implements OnInit, OnDestroy {
+export class InputFormComponent implements OnInit, AfterViewInit, OnDestroy {
 
   protected readonly maxMessageLength: number = 2048;
+  /** The counter appears from here on, so a writer sees the limit before hitting it. */
+  protected readonly counterFrom: number = 1800;
+  // The first line of a reply is the quote token the message component builds.
+  private readonly quoteLine = /^\[quote-embedded#\]\([^\n]*\)[ \t]*\n?/;
 
   message?: ChatMessage;
 
@@ -72,12 +72,47 @@ export class InputFormComponent implements OnInit, OnDestroy {
 
   @Output() inputHeightChanged = new EventEmitter<number>();
 
+  // Anything that changes the composer's height — the edit banner, an
+  // attachment chip, the preview, a toolbar that wraps on resize — has to reach
+  // the shell, which places the feed above the composer by this height. The
+  // textarea's own resize event only covered the textarea.
+  private sizeObserver?: ResizeObserver;
+
   constructor(
     private adminService: AdminService,
     private toastrService: NbToastrService,
     private dialogService: NbDialogService,
     protected chatService: ChatService,
+    private host: ElementRef<HTMLElement>,
   ) { }
+
+  ngAfterViewInit(): void {
+    if (typeof ResizeObserver === 'undefined') return;
+    this.sizeObserver = new ResizeObserver(() => {
+      this.inputHeightChanged.emit(this.host.nativeElement.offsetHeight);
+    });
+    this.sizeObserver.observe(this.host.nativeElement);
+  }
+
+  /** Whether the message being composed starts with a quote of another message. */
+  get hasQuote(): boolean {
+    return this.quoteLine.test(this.input);
+  }
+
+  /** Drops the quote line, keeping whatever the writer typed under it. */
+  removeQuote() {
+    this.input = this.input.replace(this.quoteLine, '');
+    this.inputTextArea?.nativeElement.focus();
+  }
+
+  /**
+   * The send button is live once there is something to send. Files still
+   * uploading do not disable it: sendMessage() explains that case itself.
+   */
+  get canSend(): boolean {
+    if (this.isSending) return false;
+    return !!this.input.trim() || this.attachments.length > 0;
+  }
 
   ngOnInit() {
     this.enterSendsMessage = localStorage.getItem(ENTER_SENDS_MESSAGE_KEY) === '1';
@@ -118,6 +153,7 @@ export class InputFormComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.subscription.unsubscribe();
+    this.sizeObserver?.disconnect();
   }
 
   onFileSelected(event: Event) {
@@ -315,7 +351,7 @@ export class InputFormComponent implements OnInit, OnDestroy {
 
   openMarkdownDocs() {
     let markdownDocsUrl = 'https://www.markdownguide.org/basic-syntax/';
-    window.open(markdownDocsUrl, '_blank');
+    window.open(markdownDocsUrl, '_blank', 'noopener,noreferrer');
   }
 
   checkScrollbar() {

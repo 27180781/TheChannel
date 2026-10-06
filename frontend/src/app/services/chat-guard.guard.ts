@@ -1,8 +1,8 @@
 import { inject } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
 import { CanActivateFn, Router } from '@angular/router';
-import { firstValueFrom } from 'rxjs';
 import { AuthService } from './auth.service';
+import { ChatService } from './chat.service';
+import { SlugService } from './slug.service';
 import { User } from '../models/user.model';
 
 /**
@@ -12,9 +12,9 @@ import { User } from '../models/user.model';
  * anonymous visitor gets 401 there. A channel whose /info answers anonymously
  * is therefore public and has to stay reachable without logging in.
  */
-const channelRequiresAuth = async (http: HttpClient, slug: string): Promise<boolean> => {
+const channelRequiresAuth = async (chatService: ChatService): Promise<boolean> => {
   try {
-    await firstValueFrom(http.get(`/api/channel/${slug}/info`));
+    await chatService.updateChannelInfo();
     return false;
   } catch (err: any) {
     return err?.status === 401;
@@ -24,7 +24,20 @@ const channelRequiresAuth = async (http: HttpClient, slug: string): Promise<bool
 export const AuthGuard: CanActivateFn = async (route, state) => {
   const router = inject(Router);
   const authService = inject(AuthService);
-  const http = inject(HttpClient);
+  const chatService = inject(ChatService);
+  const slugService = inject(SlugService);
+
+  // The channel's /info is needed either way — by this guard for an anonymous
+  // visitor, by every component right after — so it starts now, beside the
+  // session check, instead of after it. The answer lands in ChatService's
+  // cache, which initChannel keeps for this slug.
+  const slug = route.paramMap.get('slug');
+  let infoProbe: Promise<boolean> | undefined;
+  if (slug) {
+    slugService.slug = slug;
+    chatService.clearCache();
+    infoProbe = channelRequiresAuth(chatService);
+  }
 
   let userInfo: User | null | undefined;
   try {
@@ -46,8 +59,7 @@ export const AuthGuard: CanActivateFn = async (route, state) => {
   // handled the same way below.
   //
   // A public channel stays open to anonymous visitors.
-  const slug = route.paramMap.get('slug');
-  if (slug && !(await channelRequiresAuth(http, slug))) return true;
+  if (infoProbe && !(await infoProbe)) return true;
 
   // Redirect via a UrlTree rather than `router.navigate(...) + false`.
   // Returning false cancels the navigation outright: the router then has no
