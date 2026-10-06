@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { Component, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import {
   NbButtonModule, NbCardModule, NbDatepickerModule, NbDialogRef, NbIconModule, NbInputModule, NbTooltipModule,
@@ -20,13 +20,22 @@ import { MessageTimePipe } from '../../../../../pipes/message-time.pipe';
   templateUrl: './time-picker.component.html',
   styleUrl: './time-picker.component.scss'
 })
-export class TimePickerComponent {
+export class TimePickerComponent implements OnInit {
 
   constructor(
     private dialogRef: NbDialogRef<TimePickerComponent>
   ) { }
 
   date: Date | undefined = undefined;
+
+  // A scheduled entry opened for editing hands its timestamp over exactly as
+  // the wire delivered it (an RFC3339 string). isPreset() below calls
+  // getTime() on every render, so coerce once here instead of crashing.
+  ngOnInit() {
+    if (this.date && !(this.date instanceof Date)) {
+      this.date = new Date(this.date as unknown as string);
+    }
+  }
 
   /** One-tap choices for the common cases; the picker below stays for anything else. */
   readonly presets: { label: string; at: () => Date }[] = [

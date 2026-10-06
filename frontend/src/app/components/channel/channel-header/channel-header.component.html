@@ -10,9 +10,11 @@
 
   <div class="ch__text">
     <h1 class="ch__name">{{ channelName || 'טוען את הערוץ…' }}</h1>
-    <!-- Its visible text is its accessible name; the tooltip says what a tap does. -->
+    <!-- Its visible text is its accessible name. No nbTooltip next to nbPopover:
+         both directives provide the same overlay handler on their host, and the
+         one built last owns the trigger — a tooltip here left the popover dead. -->
     <button type="button" class="ch__sub" [nbPopover]="aboutPopover" nbPopoverTrigger="click"
-            nbPopoverPlacement="bottom" aria-haspopup="dialog" nbTooltip="לתיאור המלא ולפרטי הערוץ">
+            nbPopoverPlacement="bottom" aria-haspopup="dialog">
       <span class="ch__meta">
         <nb-icon icon="people-outline"></nb-icon>
         {{ chatService.channelInfo?.views || 0 }} משתתפים
@@ -27,7 +29,7 @@
   <div class="ch__actions">
     <button nbButton ghost shape="round" status="basic" class="ch__btn" type="button"
             [nbContextMenu]="shareMenu" [nbContextMenuTag]="shareMenuTag" [nbContextMenuPlacement]="NbPosition.BOTTOM"
-            aria-label="שיתוף הערוץ" aria-haspopup="menu" nbTooltip="שיתוף הערוץ">
+            aria-label="שיתוף הערוץ" aria-haspopup="menu">
       <nb-icon icon="share-outline"></nb-icon>
     </button>
 
@@ -51,7 +53,6 @@
                [nbContextMenu]="userMenu" [nbContextMenuTag]="userMenuTag" [nbContextMenuPlacement]="NbPosition.BOTTOM"
                [picture]="userInfo.picture || ''" [onlyPicture]="isSmallScreen"
                role="button" tabindex="0" aria-haspopup="menu" aria-label="החשבון שלי ומעבר בין ערוצים"
-               nbTooltip="החשבון שלי ומעבר בין ערוצים"
                (click)="loadMyChannels()" (keydown.enter)="$any($event.target).click()"
                (keydown.space)="$event.preventDefault(); $any($event.target).click()">
       </nb-user>

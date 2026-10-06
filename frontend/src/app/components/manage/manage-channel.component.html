@@ -32,7 +32,7 @@
             @for (c of switcherChannels; track c.slug) {
               <nb-option [value]="c.slug">
                 <span class="switch__name">{{ c.slug === slug ? channelName : (c.name || c.slug) }}</span>
-                <span class="switch__role">{{ roleLabels[c.role] }}</span>
+                <span class="switch__role">{{ switcherSynthetic && c.slug === slug ? 'מנהל-על' : roleLabels[c.role] }}</span>
               </nb-option>
             }
           </nb-select>
@@ -151,7 +151,11 @@
               </nb-card-body>
             </nb-card>
           } @else {
-            @switch (tab) {
+            <!-- Keyed on the role-filtered menu, not the raw id: an owner-only
+                 section a moderator deep-links to lands on the not-found card
+                 instead of being mounted, answering 403 and claiming their
+                 role "changed". -->
+            @switch (section ? tab : '') {
               @case ('info') { <app-channel-info-form></app-channel-info-form> }
               @case ('settings') { <app-settings (accessDenied)="onAccessDenied()"></app-settings> }
               @case ('users') { <app-privileg-dashboard (accessDenied)="onAccessDenied()"></app-privileg-dashboard> }
@@ -164,7 +168,7 @@
               @case ('reports-all') { <app-reports [status]="'all'" (accessDenied)="onAccessDenied()"></app-reports> }
               @case ('guide') { <app-guide></app-guide> }
               @case ('support') {
-                <app-support-box [channelSlug]="slug" [signedIn]="true" title="פנייה להנהלת המערכת"
+                <app-support-box [channelSlug]="slug" [signedIn]="true" title="פנייה לתמיכה"
                   subtitle="שאלה, תקלה או בקשה — הפנייה מגיעה להנהלת המערכת, והתשובה תופיע כאן.">
                 </app-support-box>
               }

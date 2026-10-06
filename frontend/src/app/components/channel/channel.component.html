@@ -27,13 +27,21 @@
               הערוץ <code class="state-card__slug" dir="ltr">{{ channelDisabled }}</code>
               הושבת על ידי הנהלת המערכת ואינו זמין כרגע.
             </p>
-            <p class="state-card__hint">אם לדעתכם מדובר בטעות — פנו להנהלת המערכת דרך "פנייה לתמיכה" בדף הבית.</p>
+            @if (userInfo) {
+              <p class="state-card__hint">אם לדעתכם מדובר בטעות — אפשר לפנות להנהלת המערכת מכאן.</p>
+            } @else {
+              <p class="state-card__hint">אם לדעתכם מדובר בטעות — פנו להנהלת המערכת דרך "יצירת קשר" בדף הבית.</p>
+            }
             <div class="state-card__actions">
               <!-- /channel is guarded: for a visitor it only leads to /login. -->
               @if (userInfo) {
                 <button nbButton status="primary" type="button" (click)="backToMyChannels()">
                   <nb-icon aria-hidden="true" icon="grid-outline"></nb-icon>
                   לערוצים שלי
+                </button>
+                <button nbButton appearance="outline" status="primary" type="button" (click)="openSupport()">
+                  <nb-icon aria-hidden="true" icon="message-circle-outline"></nb-icon>
+                  פנייה לתמיכה
                 </button>
               } @else {
                 <button nbButton status="primary" type="button" (click)="goHome()">
@@ -208,7 +216,7 @@
                   <div class="hub-card__actions">
                     <button nbButton status="primary" type="button" class="hub-card__enter"
                             (click)="enterOwnedChannel(channel.slug)">
-                      <nb-icon aria-hidden="true" icon="arrow-forward-outline"></nb-icon>
+                      <nb-icon aria-hidden="true" icon="arrow-back-outline"></nb-icon>
                       כניסה לערוץ
                     </button>
                     @if (canManage(channel.role)) {

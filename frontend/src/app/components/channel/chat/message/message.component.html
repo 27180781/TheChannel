@@ -37,7 +37,8 @@
     @if (hasActions) {
       <button nbButton ghost shape="round" status="basic" type="button" class="msg__kebab"
               [nbPopover]="actionsTpl" nbPopoverTrigger="click" nbPopoverPlacement="bottom"
-              #actionsMenu="nbPopover" aria-label="פעולות על ההודעה" aria-haspopup="menu" nbTooltip="פעולות">
+              (nbPopoverShowStateChange)="onActionsState($event.isShown)"
+              #actionsMenu="nbPopover" aria-label="פעולות על ההודעה" aria-haspopup="menu">
         <nb-icon icon="more-vertical-outline"></nb-icon>
       </button>
     }
@@ -95,7 +96,7 @@
 
 <!-- The kebab menu. Declared here so the component's scoped styles reach it. -->
 <ng-template #actionsTpl>
-  <div class="msg-actions" role="menu">
+  <div class="msg-actions" role="menu" (keydown)="onActionsKeydown($event)">
     @if (message && canModify(message)) {
       <button type="button" role="menuitem" class="msg-actions__item" (click)="editMessage(message)">
         <nb-icon icon="edit-outline"></nb-icon>

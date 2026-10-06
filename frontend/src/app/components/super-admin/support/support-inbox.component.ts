@@ -85,7 +85,7 @@ export class SupportInboxComponent implements OnInit {
       case 'open': return 'אין פניות שממתינות למענה. כל הכבוד.';
       case 'answered': return 'אין פניות שנענו ועדיין פתוחות.';
       case 'closed': return 'אין פניות סגורות.';
-      default: return 'עדיין לא הגיעו פניות. הן נשלחות מהאתר ומהמסך "פנייה למערכת" של כל ערוץ.';
+      default: return 'עדיין לא הגיעו פניות. הן נשלחות מהאתר ומהמסך "פנייה לתמיכה" של כל ערוץ.';
     }
   }
 

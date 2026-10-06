@@ -22,7 +22,6 @@
     "@angular/service-worker": "^20.3.7",
     "@angular/youtube-player": "^19.2.8",
     "@ctrl/ngx-emoji-mart": "^9.2.0",
-    "@nebular/eva-icons": "^16.0.0",
     "@nebular/theme": "^16.0.0",
     "@ng-icons/core": "^30.3.0",
     "@ng-icons/heroicons": "^30.3.0",

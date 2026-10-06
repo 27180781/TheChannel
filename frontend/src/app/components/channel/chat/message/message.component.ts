@@ -242,6 +242,53 @@ export class MessageComponent implements OnInit, AfterViewInit, OnDestroy {
     this.actionsMenu?.hide();
   }
 
+  /**
+   * The popover renders into the overlay container at the end of the page and
+   * manages no focus of its own, so after Enter on the kebab, Tab would have
+   * carried on through the feed and the actions were mouse-only. Focus goes
+   * into the menu when it opens and back to the kebab when it closes — unless
+   * the user has already clicked somewhere else, which must not be undone.
+   */
+  onActionsState(shown: boolean) {
+    if (shown) {
+      setTimeout(() => document.querySelector<HTMLElement>('.msg-actions .msg-actions__item')?.focus());
+      return;
+    }
+    const active = document.activeElement;
+    if (!active || active === document.body || active.closest('.msg-actions')) {
+      this.host.nativeElement.querySelector<HTMLElement>('.msg__kebab')?.focus();
+    }
+  }
+
+  onActionsKeydown(event: KeyboardEvent) {
+    const menu = event.currentTarget as HTMLElement;
+    const items = Array.from(menu.querySelectorAll<HTMLElement>('.msg-actions__item'));
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    switch (event.key) {
+      case 'ArrowDown':
+      case 'ArrowUp': {
+        event.preventDefault();
+        const step = event.key === 'ArrowDown' ? 1 : -1;
+        items[(at + step + items.length) % items.length]?.focus();
+        break;
+      }
+      case 'Home':
+      case 'End':
+        event.preventDefault();
+        items[event.key === 'Home' ? 0 : items.length - 1]?.focus();
+        break;
+      case 'Escape':
+        event.preventDefault();
+        event.stopPropagation();
+        this.closeActions();
+        break;
+      case 'Tab':
+        // Tab leaves the menu; close it rather than leave an open overlay behind.
+        this.closeActions();
+        break;
+    }
+  }
+
   editMessage(message: ChatMessage) {
     this.closeActions();
     // A scheduled entry is handed over as the object itself: the service finds
@@ -322,8 +369,9 @@ export class MessageComponent implements OnInit, AfterViewInit, OnDestroy {
       }
       this._adminService.setEditMessage({ new: true, message: newMessage, isScheduling: this.isSchedulingMessage });
     } else {
-      m.message.text = `[quote-embedded#](${message.id}@${newMsgText})\n${m.message.text}`;
-      this._adminService.setEditMessage(m);
+      // The composer prepends it to the text on screen; the entry itself is
+      // left as the server knows it (see EditMsg.prepend).
+      this._adminService.setEditMessage({ ...m, prepend: `[quote-embedded#](${message.id}@${newMsgText})\n` });
     }
   }
 

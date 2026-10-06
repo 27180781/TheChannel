@@ -86,8 +86,8 @@ export class MagnetAdsComponent implements OnInit {
   loaded = false;
   loading = true;
   loadFailed = false;
-  // Super-admin lock on this area: the form still saves, but the public
-  // endpoint serves the global config and everything saved here is ignored.
+  // Super-admin lock on this area: the public endpoint serves the global
+  // config, so Save is disabled rather than accepting values nobody sees.
   locked = false;
   private lastLoaded: Setting[] = [];
   private snapshot = '';

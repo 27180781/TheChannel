@@ -1,4 +1,4 @@
-import { Component, OnDestroy, OnInit } from '@angular/core';
+import { Component, HostListener, OnDestroy, OnInit } from '@angular/core';
 import { Title } from '@angular/platform-browser';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import {
@@ -160,6 +160,14 @@ export class LoginComponent implements OnInit, OnDestroy {
     }
 
     this.router.navigate(['/channel']);
+  }
+
+  // Back from Google's account picker restores this page from the
+  // back-forward cache with its state intact — i.e. the spinner that replaced
+  // the button. A restored page is idle again.
+  @HostListener('window:pageshow', ['$event'])
+  onPageShow(event: PageTransitionEvent) {
+    if (event.persisted) this.redirecting = false;
   }
 
   async login() {

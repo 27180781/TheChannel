@@ -13,6 +13,7 @@ import {
   NbListModule,
   NbMenuModule,
   NbSidebarModule,
+  NbDialogService,
   NbSpinnerModule,
   NbToastrService,
 } from "@nebular/theme";
@@ -34,6 +35,7 @@ import { MAX_CHANNELS_PER_ACCOUNT } from '../../services/channel.service';
 import { MyChannel, ROLE_LABELS, canManage } from '../../models/my-channel.model';
 import { CreateChannelFormComponent } from '../channel-create/create-channel-form.component';
 import { PlatformAttributionComponent } from './platform-attribution/platform-attribution.component';
+import { SupportBoxComponent } from '../support/support-box.component';
 import { Subscription } from 'rxjs';
 
 @Component({
@@ -90,6 +92,7 @@ export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
     private myChannelsService: MyChannelsService,
     private share: ShareService,
     private titleService: Title,
+    private dialogService: NbDialogService,
   ) { }
 
   ad: Ad = { src: '', width: 0 };
@@ -300,8 +303,13 @@ export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
     this.noChannel = false;
     this.showChannelsList = false;
     this.channelsError = '';
-    // A flag raised for the previous channel must not follow us to the next one.
-    this.channelStatus.reset();
+    // A flag raised for the previous channel must not follow us to the next
+    // one — but the guard's own /info probe may already have answered for THIS
+    // slug (not found / disabled); wiping that would mount the chat shell for
+    // one round trip and request everything again before the card appears.
+    if (slug === null || (this.channelStatus.notFoundSlug() !== slug && this.channelStatus.disabledSlug() !== slug)) {
+      this.channelStatus.reset();
+    }
     // Yield to Angular's change detection so the @if (slugReady) block
     // actually destroys ChatComponent before we reinitialise with the new slug.
     // Without this, false→true in the same synchronous frame is collapsed and
@@ -398,6 +406,20 @@ export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
 
   // For a visitor on the disabled / not-found card: /channel is guarded and
   // would only bounce them to /login, so they are offered the landing page.
+  /** The disabled-channel card: the same support box the header menu opens. */
+  openSupport(): void {
+    this.dialogService.open(SupportBoxComponent, {
+      closeOnBackdropClick: true,
+      context: {
+        signedIn: true,
+        channelSlug: this.channelDisabled || '',
+        dialogMode: true,
+        title: 'פנייה לתמיכה',
+        subtitle: 'שאלה, תקלה או בקשה — הפנייה מגיעה להנהלת המערכת, והתשובה תופיע כאן.',
+      },
+    });
+  }
+
   goHome(): void {
     this.channelStatus.reset();
     this.router.navigate(['/']);

@@ -355,7 +355,7 @@ export class ChannelHeaderComponent implements OnInit, OnDestroy {
     this.isSmallScreen = window.innerWidth < 768;
   }
 
-  /** The same box the manage page shows in its 'פנייה למערכת' section, as a dialog. */
+  /** The same box the manage page shows in its 'פנייה לתמיכה' section, as a dialog. */
   openSupport() {
     this.dialogService.open(SupportBoxComponent, {
       closeOnBackdropClick: true,
@@ -363,6 +363,7 @@ export class ChannelHeaderComponent implements OnInit, OnDestroy {
         signedIn: true,
         channelSlug: this._slugService.slug,
         dialogMode: true,
+        title: 'פנייה לתמיכה',
         subtitle: 'שאלה, תקלה או בקשה — הפנייה מגיעה להנהלת המערכת, והתשובה תופיע כאן.',
       },
     });

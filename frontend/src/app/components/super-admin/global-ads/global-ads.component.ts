@@ -73,10 +73,10 @@ export class GlobalAdsComponent implements OnInit {
     return !!this.snapshot && JSON.stringify(this.config) !== this.snapshot;
   }
 
-  /** Same rule the server applies: an absolute http(s) address or nothing. */
+  /** Same rule the server applies (isFramableURL): http(s) or protocol-relative, or nothing. */
   get srcInvalid(): boolean {
     const v = (this.config.src || '').trim();
-    return !!v && !/^https?:\/\/\S+$/i.test(v);
+    return !!v && !/^(https?:)?\/\/\S+$/i.test(v);
   }
 
   /** Whether the saved settings reach any channel at all. */
@@ -99,7 +99,7 @@ export class GlobalAdsComponent implements OnInit {
 
   save() {
     if (this.srcInvalid) {
-      this.toastr.warning('', 'כתובת הפרסומת חייבת להיות כתובת מלאה שמתחילה ב-https://');
+      this.toastr.warning('', 'כתובת הפרסומת חייבת להיות כתובת מלאה שמתחילה ב-http:// או https://');
       return;
     }
     this.saving = true;

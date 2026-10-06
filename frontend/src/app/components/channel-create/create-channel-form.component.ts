@@ -412,7 +412,7 @@ export class CreateChannelFormComponent implements OnInit, AfterViewInit, OnDest
         return;
       case 403:
         this.formErrorKind = 'limit';
-        this.formError = `אפשר לפתוח עד ${this.maxChannels} ערוצים לחשבון, וכבר יש לכם ${this.maxChannels}. כדי לפתוח ערוץ חדש צריך לסגור אחד מהקיימים.`;
+        this.formError = `אפשר לפתוח עד ${this.maxChannels} ערוצים לחשבון, וכבר יש לכם ${this.maxChannels}. כדי לפתוח ערוץ נוסף פנו להנהלת המערכת ("פנייה לתמיכה" בתפריט החשבון).`;
         return;
       case 429: {
         const minutes = retryAfterMinutes(err) ?? 20;
@@ -459,7 +459,11 @@ export class CreateChannelFormComponent implements OnInit, AfterViewInit, OnDest
   private queueSlugCheck(): void {
     this.formError = '';
     this.suggestedSlug = '';
+    // Bumping the sequence orphans a running suggestFreeSlug(): its finally
+    // block no longer owns the flag, so it is cleared here or the
+    // "looking for a free address" line would stay on for good.
     this.suggestSeq++;
+    this.suggesting = false;
     if (this.recheckTimer) clearTimeout(this.recheckTimer);
     if (!this.slug) {
       this.slugState = 'empty';

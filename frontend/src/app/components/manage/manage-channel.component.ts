@@ -93,6 +93,8 @@ export class ManageChannelComponent implements OnInit, OnDestroy {
   accessDenied = false;
 
   switcherChannels: MyChannel[] = [];
+  /** The current channel is in the switcher only because a super admin is here, not by role. */
+  switcherSynthetic = false;
   readonly roleLabels = ROLE_LABELS;
 
   readonly reportFilters = [
@@ -277,7 +279,8 @@ export class ManageChannelComponent implements OnInit, OnDestroy {
         const list = rows.filter(r => this.isSuperAdmin || canManage(r.role));
         // A super admin can manage a channel they hold no role on; keep the
         // current one selectable so the select never shows an empty label.
-        if (!list.some(r => r.slug === this.slug)) {
+        this.switcherSynthetic = !list.some(r => r.slug === this.slug);
+        if (this.switcherSynthetic) {
           list.unshift({
             slug: this.slug, name: this.channelName, description: '', logoUrl: this.logoUrl,
             role: 'owner', createdAt: '', disabled: false, participants: 0,

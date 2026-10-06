@@ -202,16 +202,18 @@
     height: 1rem;
   }
 
+  // Light tint with the dark shade of the same hue: white on success-500
+  // was 1.9:1, unreadable for the one verdict the form hinges on.
   &--available {
-    background: var(--color-success-500);
-    border-color: var(--color-success-500);
-    color: var(--color-basic-100);
+    background: var(--color-success-100);
+    border-color: var(--color-success-400);
+    color: var(--color-success-700);
   }
 
   &--unavailable {
-    background: var(--color-danger-500);
-    border-color: var(--color-danger-500);
-    color: var(--color-basic-100);
+    background: var(--color-danger-100);
+    border-color: var(--color-danger-400);
+    color: var(--color-danger-700);
   }
 
   &--checking {

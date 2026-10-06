@@ -102,17 +102,19 @@
                    inputmode="numeric" dir="ltr" [(ngModel)]="config.perSeconds" placeholder="300">
             <p class="sa-field__hint">{{ byTime ? 'למשל 300 — פרסומת אחרי כל חמש דקות.' : 'לא בשימוש בשיטה "לפי הודעות".' }}</p>
           </div>
-          <div class="sa-field">
+          <!-- Each gap guards the other mode's counter: the message counter
+               is held back by time, the timer by messages. -->
+          <div class="sa-field" [class.field--muted]="byTime">
             <label class="sa-field__label" for="magnetMinTime">הפסקה מינימלית בין פרסומות (שניות)</label>
             <input nbInput fullWidth id="magnetMinTime" name="magnetMinTime" type="number" min="0" step="1"
                    inputmode="numeric" dir="ltr" [(ngModel)]="config.minTimeSeconds" placeholder="60">
-            <p class="sa-field__hint">גם אם הספירה הגיעה — לא תוצג פרסומת לפני שעבר הזמן הזה מהקודמת.</p>
+            <p class="sa-field__hint">{{ byTime ? 'לא בשימוש בשיטה "לפי זמן".' : 'גם אם הספירה הגיעה — לא תוצג פרסומת לפני שעבר הזמן הזה מהקודמת.' }}</p>
           </div>
-          <div class="sa-field">
+          <div class="sa-field" [class.field--muted]="!byTime">
             <label class="sa-field__label" for="magnetMinMessages">מינימום הודעות בין פרסומות</label>
             <input nbInput fullWidth id="magnetMinMessages" name="magnetMinMessages" type="number" min="0" step="1"
                    inputmode="numeric" dir="ltr" [(ngModel)]="config.minMessagesSinceLast" placeholder="5">
-            <p class="sa-field__hint">כמה הודעות לפחות צריכות להופיע בין פרסומת לפרסומת.</p>
+            <p class="sa-field__hint">{{ byTime ? 'גם אם הזמן עבר — לא תוצג פרסומת לפני שהופיעו כל כך הרבה הודעות מהקודמת.' : 'לא בשימוש בשיטה "לפי הודעות".' }}</p>
           </div>
         </div>
       </nb-card-body>

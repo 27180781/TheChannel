@@ -133,7 +133,9 @@ export class InputFormComponent implements OnInit, AfterViewInit, OnDestroy {
         return;
       }
       if (edit.isScheduling) {
-        this.schedulingMessage = edit.message?.timestamp;
+        // The feed's entry carries the timestamp as the wire string; the time
+        // picker needs a real Date.
+        this.schedulingMessage = edit.message?.timestamp ? new Date(edit.message.timestamp as unknown as string) : undefined;
       } else if (!edit.new) {
         // Editing a LIVE message: a schedule time picked earlier must not
         // survive, or send takes the scheduling branch with a live message
@@ -143,9 +145,13 @@ export class InputFormComponent implements OnInit, AfterViewInit, OnDestroy {
       }
       if (edit.new) {
         this.input = this.input ? `${this.input}\n${edit.message.text}` : edit.message.text || '';
+      } else if (edit.prepend && this.message === edit.message) {
+        // A quote added to the edit already open here: goes in front of the
+        // text as typed so far, the target object stays as it is.
+        this.input = edit.prepend + this.input;
       } else {
         this.message = edit.message;
-        this.input = this.message?.text || '';
+        this.input = (edit.prepend || '') + (this.message?.text || '');
         this.isAds = this.message?.is_ads || false;
       }
     });
@@ -337,6 +343,9 @@ export class InputFormComponent implements OnInit, AfterViewInit, OnDestroy {
 
   clearInputs() {
     this.input = '';
+    // Sending from preview mode must not leave an empty, read-only preview
+    // behind (the toggle is disabled while the input is empty).
+    this.showMarkdownPreview = false;
     this.attachments = [];
     this.message = undefined;
     this.isAds = false;

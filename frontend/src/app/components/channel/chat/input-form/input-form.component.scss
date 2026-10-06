@@ -36,6 +36,8 @@
 
   button {
     margin-inline-start: auto;
+    // Tiny ghost buttons are ~24px high; these are the one way out of a mode.
+    min-height: 2.5rem;
   }
 }
 
@@ -173,8 +175,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 2rem;
-  height: 2rem;
+  width: 2.5rem;
+  height: 2.5rem;
   border: 0;
   border-radius: 50%;
   background: transparent;

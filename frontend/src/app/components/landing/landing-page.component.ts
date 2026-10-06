@@ -1,4 +1,4 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, HostListener, OnInit } from '@angular/core';
 import { Title } from '@angular/platform-browser';
 import { RouterLink, Router } from '@angular/router';
 import {
@@ -288,5 +288,12 @@ export class LandingPageComponent implements OnInit {
       this.starting = false;
       this.router.navigate(['/login'], { queryParams: { returnUrl: '/channel' } });
     }
+  }
+
+  // Back from Google's account picker restores this page from the
+  // back-forward cache with `starting` still true, i.e. both CTAs greyed out.
+  @HostListener('window:pageshow', ['$event'])
+  onPageShow(event: PageTransitionEvent) {
+    if (event.persisted) this.starting = false;
   }
 }
