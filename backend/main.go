@@ -111,6 +111,18 @@ func main() {
 	// The backend port must therefore never be exposed directly, since RealIP
 	// trusts whatever header it is given.
 	r.Use(middleware.RealIP)
+	// gzip for the text responses: the bundles under /assets, index.html and
+	// every JSON reply. Caddy in the shipped docker-compose does not `encode`,
+	// so without this a first visit downloaded the JavaScript and CSS (over
+	// 3 MB before this change) uncompressed. The type list is explicit on
+	// purpose: the SSE stream (text/event-stream) must stay out, because a
+	// compressing writer buffers events instead of delivering them, and the
+	// uploaded media is already compressed.
+	r.Use(middleware.Compress(5,
+		"text/html", "text/css", "text/plain", "text/javascript",
+		"application/javascript", "application/x-javascript", "application/json",
+		"application/manifest+json", "image/svg+xml",
+	))
 	r.Use(limitRequestBody)
 
 	// Auth routes
@@ -131,6 +143,9 @@ func main() {
 		// never from the body, so nobody can claim a slug for someone else.
 		r.Post("/api/channels/create", createChannelSelfService)
 		r.Get("/api/channels/slug-available", checkSlugAvailable)
+		// Every channel the user holds a role on, with names and logos: what
+		// the "my channels" page and the channel switcher list.
+		r.Get("/api/my-channels", listMyChannels)
 	})
 
 	// Super admin routes

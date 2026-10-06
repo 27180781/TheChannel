@@ -294,3 +294,22 @@ R2_PUBLIC_URL=
 - `github.com/aws/aws-sdk-go-v2` — AWS SDK v2 (used for R2 via S3-compatible API)
 - `github.com/aws/aws-sdk-go-v2/credentials`
 - `github.com/aws/aws-sdk-go-v2/service/s3`
+
+---
+
+## UX overhaul (October 2026)
+
+A visual and structural rework of the whole frontend, plus two backend additions. Behaviour and endpoints are unchanged unless listed here.
+
+### Backend
+- `GET /api/my-channels` — every channel the signed-in user holds a role on (name, logo, role, disabled flag, participant count), sorted owners first. Backs the "my channels" page and the channel switcher.
+- gzip compression (chi `middleware.Compress`) for HTML, CSS, JavaScript, JSON and SVG. The SSE stream and media are excluded by content type.
+
+### Frontend
+- Brand theme registered through Nebular tokens (`frontend/src/themes.scss`); every screen reads colours, radii and shadows from it. The prebuilt Nebular `default.css` is no longer loaded (it duplicated the compiled theme), Bootstrap is compiled from a subset (`frontend/src/bootstrap-subset.scss`), the Bootstrap Icons CDN stylesheet and the 24 MB NotoColorEmoji font are gone (system emoji font).
+- Lazy routes: landing, login, super-admin and the new manage page load on demand; the channel page stays in the initial bundle. Firebase is imported only on channels with push enabled.
+- The channel admin panel is now a page: `/channel/:slug/manage/:tab` (ChannelManagerGuard), with a channel switcher. The header's user menu lists the user's other channels for one-tap switching.
+- "My channels" hub at `/channel` with names, logos, roles, share buttons and the 5-channel cap explained; one-moment channel creation with a live URL preview and a share-ready success screen.
+- Shared primitives: `ShareService` (copy / WhatsApp / OS share), `ConfirmService` + `ConfirmDialogComponent` (replaces `window.confirm` / `alert`), `MyChannelsService`.
+- Message times use `Intl` instead of moment.
+

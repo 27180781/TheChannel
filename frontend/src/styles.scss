@@ -1,25 +1,55 @@
 @use 'themes' as *;
 @use '@nebular/theme/styles/globals' as *;
-@use '@ctrl/ngx-emoji-mart/picker';
 
+// Nebular's global styles (layout, typography, scrollbars), compiled once for
+// the registered `custom` theme. The prebuilt default.css that used to be
+// loaded beside this was a second full copy of the same framework CSS with the
+// default palette, which this compilation then had to override rule by rule —
+// roughly half of the stylesheet bytes every visitor downloaded.
 @include nb-install() {
-    @include nb-theme-global();
+  @include nb-theme-global();
 }
 
-/* You can add global styles to this file, and also import other style files */
-@import url('https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css');
+:root {
+  // Measured at runtime by the channel page (fixed header / composer heights).
+  // Declared here so a selector reading them before the first measurement
+  // resolves to 0 instead of an invalid value.
+  --chrome-height: 0px;
+  --input-height: 0px;
 
-markdown,
-markdown p {
-    font-weight: 500;
-    font-size: clamp(0.875rem, 2.5vw, 1.15rem);
+  // Emoji render with the colour-emoji font every OS ships. The 24 MB
+  // NotoColorEmoji.ttf that was served from /assets for this purpose — larger
+  // than the rest of the app several times over — is gone.
+  --font-emoji: 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji', 'Twemoji Mozilla', sans-serif;
 }
 
-@font-face {
-    font-family: 'Noto Color Emoji';
-    src: url('assets/fonts/NotoColorEmoji-Regular/NotoColorEmoji-Regular.ttf') format('truetype');
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 .emoji {
-    font-family: 'Noto Color Emoji', sans-serif;
+  font-family: var(--font-emoji);
+}
+
+markdown,
+markdown p {
+  font-weight: 500;
+  font-size: clamp(0.875rem, 2.5vw, 1.15rem);
+}
+
+// Honour the OS "reduce motion" setting for every transition the theme adds.
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

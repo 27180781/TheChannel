@@ -1,4 +1,4 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, ViewEncapsulation } from '@angular/core';
 import { ChatService } from '../../../services/chat.service';
 import { NbToastrService, NbCardModule, NbButtonModule, NbIconModule, NbListModule } from '@nebular/theme';
 import { AdminService } from '../../../services/admin.service';
@@ -14,7 +14,10 @@ import { PickerModule } from '@ctrl/ngx-emoji-mart';
     NbListModule
 ],
   templateUrl: './emojis.component.html',
-  styleUrl: './emojis.component.scss'
+  styleUrl: './emojis.component.scss',
+  // Global on purpose: the stylesheet is the emoji-mart picker's, whose
+  // elements live in a child component that emulated encapsulation would miss.
+  encapsulation: ViewEncapsulation.None,
 })
 export class EmojisComponent implements OnInit {
   emojis: string[] | undefined = [];

@@ -1,0 +1,58 @@
+<nb-layout>
+  <nb-layout-header fixed>
+    <div class="manage-header">
+      <a nbButton ghost status="basic" size="small" [routerLink]="['/channel', slug]" class="manage-header__back">
+        <nb-icon icon="arrow-forward-outline"></nb-icon>
+        חזרה לערוץ
+      </a>
+      <div class="manage-header__title">
+        <span class="manage-header__name">{{ channelName || slug }}</span>
+        <span class="manage-header__sub">ניהול הערוץ</span>
+      </div>
+    </div>
+  </nb-layout-header>
+
+  <nb-layout-column>
+    <div class="manage">
+      <aside class="manage__nav">
+        <nb-menu [items]="menu" tag="manage-menu"></nb-menu>
+      </aside>
+
+      <section class="manage__content">
+        @if (section; as s) {
+          <header class="manage__intro">
+            <h1 class="manage__title">{{ s.title }}</h1>
+            <p class="manage__description">{{ s.description }}</p>
+          </header>
+        }
+
+        @switch (tab) {
+          @case ('info') { <app-channel-info-form></app-channel-info-form> }
+          @case ('settings') { <app-settings></app-settings> }
+          @case ('users') { <app-privileg-dashboard></app-privileg-dashboard> }
+          @case ('statistics') { <app-statistics></app-statistics> }
+          @case ('emojis') { <app-emojis></app-emojis> }
+          @case ('magnet-ads') { <app-magnet-ads></app-magnet-ads> }
+          @case ('storage') { <app-channel-storage [slug]="slug"></app-channel-storage> }
+          @case ('reports') { <app-reports [status]="'open'"></app-reports> }
+          @case ('reports-closed') { <app-reports [status]="'closed'"></app-reports> }
+          @case ('reports-all') { <app-reports [status]="'all'"></app-reports> }
+          @case ('guide') { <app-guide></app-guide> }
+          @case ('support') {
+            <app-support-box [channelSlug]="slug" [signedIn]="true"
+              subtitle="שאלה, תקלה או בקשה — הפנייה מגיעה להנהלת המערכת, והתשובה תופיע כאן.">
+            </app-support-box>
+          }
+          @default {
+            <nb-card>
+              <nb-card-body>
+                <p>המסך המבוקש לא נמצא.</p>
+                <a nbButton status="primary" size="small" [routerLink]="['/channel', slug, 'manage', 'info']">לפרטי הערוץ</a>
+              </nb-card-body>
+            </nb-card>
+          }
+        }
+      </section>
+    </div>
+  </nb-layout-column>
+</nb-layout>

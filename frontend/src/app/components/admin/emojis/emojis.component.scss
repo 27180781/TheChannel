@@ -1,0 +1,6 @@
+// The emoji-mart picker's stylesheet. It used to be @use'd from the global
+// styles.scss, so every visitor downloaded it for a picker only channel
+// managers ever open; from here it ships inside the lazily loaded manage
+// chunk instead. ViewEncapsulation.None on the component is what makes these
+// rules reach the <emoji-mart> child's own elements.
+@use '@ctrl/ngx-emoji-mart/picker';
