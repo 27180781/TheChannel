@@ -113,3 +113,10 @@ $nb-themes: nb-register-theme((
   scrollbar-background-color: transparent,
   scrollbar-width: 0.375rem,
 ), custom, default);
+
+// Only the brand theme is emitted. nb-install() otherwise writes a CSS block
+// for every registered theme, so the `default` parent — which no element ever
+// carries, NbThemeModule is started with `custom` — cost 211 KB of custom
+// properties in every visitor's stylesheet. It stays registered: the brand
+// theme inherits the tokens it does not override from it.
+$nb-enabled-themes: (custom);

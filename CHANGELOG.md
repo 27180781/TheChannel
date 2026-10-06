@@ -303,7 +303,8 @@ A visual and structural rework of the whole frontend, plus two backend additions
 
 ### Backend
 - `GET /api/my-channels` — every channel the signed-in user holds a role on (name, logo, role, disabled flag, participant count), sorted owners first. Backs the "my channels" page and the channel switcher.
-- gzip compression (chi `middleware.Compress`) for HTML, CSS, JavaScript, JSON and SVG. The SSE stream and media are excluded by content type.
+- gzip compression (chi `middleware.Compress`) for HTML, CSS, JavaScript, JSON and SVG. The SSE stream is routed around the middleware entirely (`backend/compress.go`): chi v1's compressing writer has no `SetWriteDeadline`, so wrapped, the 30 s write deadline `getEvents` arms could never be set and a dead viewer kept its connection slot until TCP timed out. Media is excluded by content type.
+- Link previews: `serveSpaFile` injects `<title>` and Open Graph tags (`backend/seo.go`). `/channel/<slug>` carries the channel's name, description and logo; every other page the platform card (`/assets/og.jpg`). Private and disabled channels get the generic card and leak nothing. `.webmanifest` is registered as `application/manifest+json`.
 
 ### Frontend
 - Brand theme registered through Nebular tokens (`frontend/src/themes.scss`); every screen reads colours, radii and shadows from it. The prebuilt Nebular `default.css` is no longer loaded (it duplicated the compiled theme), Bootstrap is compiled from a subset (`frontend/src/bootstrap-subset.scss`), the Bootstrap Icons CDN stylesheet and the 24 MB NotoColorEmoji font are gone (system emoji font).
@@ -312,4 +313,7 @@ A visual and structural rework of the whole frontend, plus two backend additions
 - "My channels" hub at `/channel` with names, logos, roles, share buttons and the 5-channel cap explained; one-moment channel creation with a live URL preview and a share-ready success screen.
 - Shared primitives: `ShareService` (copy / WhatsApp / OS share), `ConfirmService` + `ConfirmDialogComponent` (replaces `window.confirm` / `alert`), `MyChannelsService`.
 - Message times use `Intl` instead of moment.
+- Only the brand theme is emitted to CSS (`$nb-enabled-themes: (custom)`): the unused `default` parent block was 211 KB of custom properties in every visitor's stylesheet. Type-scale and motion tokens (`--text-*`, `--motion-*`, `--ease-out`) in `styles.scss`; buttons transition and press.
+- Toasts stay 5 s, close on click and do not stack duplicates (`app.config.ts`).
+- Brand assets in `frontend/public/`: SVG favicon, apple-touch-icon, 512px icon, web app manifest, Open Graph card.
 

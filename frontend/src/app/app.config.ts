@@ -61,7 +61,16 @@ export const appConfig: ApplicationConfig = {
       NbEvaIconsModule,
       NbMenuModule.forRoot(),
       NbDialogModule.forRoot(),
-      NbToastrModule.forRoot({ position: NbGlobalLogicalPosition.TOP_START }),
+      NbToastrModule.forRoot({
+        position: NbGlobalLogicalPosition.TOP_START,
+        // Nebular's 3 s default vanished while a writer on a phone was still
+        // looking at the keyboard; errors are the only feedback channel here,
+        // so they stay until read and the same error is not stacked twice.
+        duration: 5000,
+        destroyByClick: true,
+        preventDuplicates: true,
+        duplicatesBehaviour: 'previous',
+      }),
       NgIconsModule,
       NbSidebarModule.forRoot(),
       NbDatepickerModule.forRoot(),
