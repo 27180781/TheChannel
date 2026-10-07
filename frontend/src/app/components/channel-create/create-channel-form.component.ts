@@ -266,11 +266,13 @@ export class CreateChannelFormComponent implements OnInit, AfterViewInit, OnDest
   }
 
   onSlugChange(): void {
-    // An emptied field hands the address back to the name — which is what the
-    // "נקבעת לפי השם" chip then says.
-    this.slugTouched = this.slug.length > 0;
     // Normalise as they type so the field can never hold an illegal character.
     const clean = sanitizeSlugInput(this.slug);
+    // An emptied field hands the address back to the name — which is what the
+    // "נקבעת לפי השם" chip then says. Judged on the clean value: a field that
+    // only ever held illegal characters (Hebrew, punctuation) is empty too,
+    // or the chip would promise the name decides while nothing did.
+    this.slugTouched = clean.length > 0;
     // [(ngModel)] writes the model back into the <input> only when the bound
     // value changed. When all that was typed is an illegal character the model
     // lands on its previous value, so the input kept showing "abc!" while the

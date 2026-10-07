@@ -51,7 +51,15 @@ export const AuthGuard: CanActivateFn = async (route, state) => {
     userInfo = undefined;
   }
 
-  if (userInfo) return true;
+  if (userInfo) {
+    // Settled before the route activates, so a missing or disabled channel is
+    // already flagged when ChannelComponent initialises and it renders the
+    // card at once. Without this the signed-in path (user-info is memoised,
+    // so it resolved first) mounted the chat shell for a few frames, fired
+    // eight requests for a channel that does not exist and logged them all.
+    if (infoProbe) await infoProbe;
+    return true;
+  }
 
   // No session — either /api/user-info answered 401, or it resolved with an
   // empty body (204, a body-stripping proxy, an offline interstitial), which

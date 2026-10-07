@@ -3,6 +3,7 @@ import { provideRouter } from '@angular/router';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { routes } from './app.routes';
 import { channelDisabledInterceptor } from './interceptors/channel-disabled.interceptor';
+import { sessionExpiredInterceptor } from './interceptors/session-expired.interceptor';
 import {
   NbDatepickerModule,
   NbDialogModule,
@@ -30,7 +31,7 @@ export const appConfig: ApplicationConfig = {
     provideEvaIconSubset(),
     provideZoneChangeDetection({ eventCoalescing: true }),
     provideRouter(routes), // withHashLocation()
-    provideHttpClient(withInterceptors([channelDisabledInterceptor])),
+    provideHttpClient(withInterceptors([channelDisabledInterceptor, sessionExpiredInterceptor])),
     provideAnimationsAsync(),
     provideMarkdown(MarkdownConfig),
     // The composer's three formatting buttons; everything else is Eva.

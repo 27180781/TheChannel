@@ -382,19 +382,23 @@ export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
     this.slugReady = true;
 
     // The guard's /info probe already said "no such channel" / "disabled":
-    // the card renders off that flag and the shell never mounts, so there is
-    // nothing to fetch for it.
-    if (this.channelStatus.notFoundSlug() === slug || this.channelStatus.disabledSlug() === slug) return;
+    // the card renders off that flag and the shell never mounts, so nothing
+    // of the channel's is fetched for it. The session still is — the card's
+    // buttons ("לערוצים שלי", "פנייה לתמיכה", logout) depend on it, and
+    // /api/user-info is not a request for the missing channel.
+    const flagged = this.channelStatus.notFoundSlug() === slug || this.channelStatus.disabledSlug() === slug;
 
-    this.adsService.getAds().then(ad => {
-      this.ad = ad;
-    }).catch(() => {
-      // No ad column without settings; the chat shell does not depend on it.
-    });
+    if (!flagged) {
+      this.adsService.getAds().then(ad => {
+        this.ad = ad;
+      }).catch(() => {
+        // No ad column without settings; the chat shell does not depend on it.
+      });
+    }
     this._authService.loadUserInfo().then(res => {
       this.userInfo = res;
       // Count this signed-in viewer as a channel participant (fire-and-forget).
-      this._authService.registerChannelVisit(slug);
+      if (!flagged) this._authService.registerChannelVisit(slug);
     }).catch(() => {
       // Anonymous visitor on a public channel — read-only view.
       this.userInfo = undefined;

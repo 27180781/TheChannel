@@ -1,5 +1,4 @@
 @use '../../../themes' as *;
-@use "sass:meta";
 
 // Colours resolve through the active Nebular theme (nb-install-component emits
 // the CSS custom properties), so the onboarding and disabled states follow
@@ -329,14 +328,14 @@ app-advertising {
   .columns {
     position: relative !important;
     bottom: var(--input-height, 0px) !important;
-
-    @if (meta.variable-exists(--input-height)) {
-      //noinspection CssInvalidPropertyValue
-      // Plus the composer's height: the `bottom` lift above drags the top of
-      // the column up by that much, and the first day separator and the
-      // unread marker sat under the header and the attribution strip.
-      padding-top: calc(nb-theme(header-height) + nb-theme(header-padding) * 2 + var(--input-height, 0px)) !important;
-    }
+    // Compensates the lift: `bottom` drags the top of the column up by the
+    // composer's height, and the first day separator and the unread marker
+    // sat under the header and the attribution strip. Nebular's
+    // .layout-container already clears the fixed header. (This used to sit
+    // inside `@if meta.variable-exists(--input-height)`, a compile-time test
+    // for a Sass variable of that name — the CSS custom property is not one,
+    // so the rule was never emitted.)
+    padding-top: var(--input-height, 0px) !important;
   }
 }
 
