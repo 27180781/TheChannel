@@ -332,7 +332,10 @@ app-advertising {
 
     @if (meta.variable-exists(--input-height)) {
       //noinspection CssInvalidPropertyValue
-      padding-top: calc(nb-theme(header-height) + nb-theme(header-padding) * 2) !important;
+      // Plus the composer's height: the `bottom` lift above drags the top of
+      // the column up by that much, and the first day separator and the
+      // unread marker sat under the header and the attribution strip.
+      padding-top: calc(nb-theme(header-height) + nb-theme(header-padding) * 2 + var(--input-height, 0px)) !important;
     }
   }
 }

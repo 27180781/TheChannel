@@ -357,7 +357,9 @@ export class MessageComponent implements OnInit, AfterViewInit, OnDestroy {
     // Parentheses go too: the quote token is `[quote-embedded#](id@text)`, and
     // a ')' inside the text closed it early in the tokenizer, leaking the rest
     // of the quote into the message as plain text.
-    newMsgText = newMsgText?.slice(0, 100).replaceAll('>', '').replaceAll(/\n/g, ' ').replaceAll('*', '').replaceAll(/[()]/g, '');
+    // A markdown link collapses to its label first: the parenthesis strip
+    // below, or the 100-char cut, otherwise left half a link in the quote.
+    newMsgText = newMsgText?.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').slice(0, 100).replaceAll('>', '').replaceAll(/\n/g, ' ').replaceAll('*', '').replaceAll(/[()]/g, '');
     if (message.text && message.text.length > 100) {
       newMsgText += '...';
     }

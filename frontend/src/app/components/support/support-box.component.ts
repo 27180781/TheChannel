@@ -82,12 +82,22 @@ export class SupportBoxComponent implements OnInit {
 
   async submit(): Promise<void> {
     this.error = '';
+    // A new attempt clears the previous outcome too, or the green "sent"
+    // banner and a red validation error stood on screen together.
+    this.sent = false;
     if (!this.subject.trim() || !this.body.trim()) {
       this.error = 'יש למלא נושא ותוכן.';
       return;
     }
-    if (!this.signedIn && !this.email.trim()) {
+    const email = this.email.trim();
+    if (!this.signedIn && !email) {
       this.error = 'יש להזין כתובת אימייל כדי שנוכל לחזור אליכם.';
+      return;
+    }
+    // Same shape check as the server's looksLikeEmail, so a typo is caught
+    // here instead of by a 400 round trip.
+    if (!this.signedIn && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      this.error = 'יש להזין כתובת אימייל תקינה.';
       return;
     }
 

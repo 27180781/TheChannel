@@ -25,7 +25,7 @@
           <div class="usage__numbers">
             <span class="usage__used">{{ formatBytes(info.usedBytes) }}</span>
             <span class="usage__of">
-              @if (unlimited) { בשימוש, בלי הגבלת מקום } @else { מתוך {{ formatBytes(info.quotaBytes) }} }
+              @if (unlimited) { בשימוש, בלי הגבלת מקום } @else { מתוך <span class="ltr-figure">{{ formatBytes(info.quotaBytes) }}</span> }
             </span>
           </div>
           @if (!unlimited) {
@@ -33,7 +33,7 @@
                              aria-label="אחוז האחסון בשימוש"></nb-progress-bar>
             <p class="usage__free">
               @if (freeBytes > 0) {
-                נשארו {{ formatBytes(freeBytes) }} פנויים.
+                נשארו <span class="ltr-figure">{{ formatBytes(freeBytes) }}</span> פנויים.
               } @else {
                 לא נשאר מקום פנוי.
               }

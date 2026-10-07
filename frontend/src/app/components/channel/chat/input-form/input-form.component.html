@@ -109,8 +109,10 @@
         </button>
         <input type="file" #fileInput multiple (change)="onFileSelected($event)" hidden aria-hidden="true">
       }
-      <button nbButton ghost shape="round" type="button" class="tb" [nbPopover]="helpTpl" nbPopoverTrigger="click"
-              nbPopoverPlacement="top" aria-label="עזרה לעיצוב הטקסט" aria-haspopup="dialog">
+      <button nbButton ghost shape="round" type="button" class="tb tb--help" [nbPopover]="helpTpl" nbPopoverTrigger="click"
+              nbPopoverPlacement="top" aria-label="עזרה לעיצוב הטקסט" aria-haspopup="dialog" #helpPop="nbPopover"
+              [attr.aria-expanded]="helpShown" (nbPopoverShowStateChange)="onHelpState($event.isShown)"
+              (keydown.escape)="helpPop.hide()">
         <nb-icon icon="question-mark-circle-outline"></nb-icon>
       </button>
       <button nbButton ghost shape="round" type="button" class="tb tb--text" [class.tb--on]="showMarkdownPreview"
@@ -184,9 +186,9 @@
 
 <!-- Formatting help, in Hebrew and in place; the full (English) guide stays one tap away. -->
 <ng-template #helpTpl>
-  <div class="help" role="dialog" aria-label="עזרה לעיצוב הטקסט">
+  <div class="help" role="dialog" aria-label="עזרה לעיצוב הטקסט" tabindex="-1" (keydown)="onHelpKeydown($event)">
     <strong class="help__title">כך מעצבים טקסט בהודעה</strong>
-    <p class="help__lead">כפתורי העיצוב בסרגל מוסיפים את הסימנים האלה סביב הטקסט המסומן:</p>
+    <p class="help__lead">אלה הסימנים לעיצוב הטקסט; את ארבעת הראשונים כפתורי הסרגל מוסיפים גם בלחיצה, סביב הטקסט המסומן:</p>
     <dl class="help__list">
       <dt><code class="help__code">**טקסט**</code></dt><dd>טקסט <strong>מודגש</strong></dd>
       <dt><code class="help__code">*טקסט*</code></dt><dd>טקסט <em>נטוי</em></dd>

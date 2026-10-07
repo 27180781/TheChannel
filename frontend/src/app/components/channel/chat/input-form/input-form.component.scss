@@ -68,6 +68,8 @@
 /* ---------- formatting help (popover) ---------- */
 
 .help {
+  // Focused by script when it opens (see onHelpState); the ring belongs on the trigger.
+  outline: none;
   max-width: min(88vw, 22rem);
   display: flex;
   flex-direction: column;

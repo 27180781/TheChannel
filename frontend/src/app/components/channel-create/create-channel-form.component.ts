@@ -200,12 +200,14 @@ export class CreateChannelFormComponent implements OnInit, AfterViewInit, OnDest
       if (slug !== this.slug) return;
       if (!result) {
         this.markUnchecked(slug, status);
+        this.settleVerdict();
         return;
       }
       this.slugState = result.available ? 'available' : 'unavailable';
       this.slugMessage = result.available ? '' : this.reasonText(result.reason);
       // Offer a way out right away rather than after a failed submit.
       if (!result.available && result.reason === 'taken') this.suggestFreeSlug(slug, 3);
+      this.settleVerdict();
     });
   }
 
@@ -264,9 +266,18 @@ export class CreateChannelFormComponent implements OnInit, AfterViewInit, OnDest
   }
 
   onSlugChange(): void {
-    this.slugTouched = true;
+    // An emptied field hands the address back to the name — which is what the
+    // "נקבעת לפי השם" chip then says.
+    this.slugTouched = this.slug.length > 0;
     // Normalise as they type so the field can never hold an illegal character.
-    this.slug = sanitizeSlugInput(this.slug);
+    const clean = sanitizeSlugInput(this.slug);
+    // [(ngModel)] writes the model back into the <input> only when the bound
+    // value changed. When all that was typed is an illegal character the model
+    // lands on its previous value, so the input kept showing "abc!" while the
+    // model was "abc" — the view is written directly.
+    const el = this.slugInput?.nativeElement;
+    if (el && el.value !== clean) el.value = clean;
+    this.slug = clean;
     this.queueSlugCheck();
   }
 
@@ -316,6 +327,24 @@ export class CreateChannelFormComponent implements OnInit, AfterViewInit, OnDest
       this.formError = 'כדי לפתוח ערוץ צריך לתת לו שם.';
       this.nameInput?.nativeElement.focus();
       return;
+    }
+    // The address field was emptied and the name not touched since: derive
+    // the address now, as the chip promised.
+    if (!this.slug && !this.slugTouched) {
+      this.slug = slugifyChannelName(name);
+      this.queueSlugCheck();
+    }
+    // Enter right after typing lands here while the live check is still out;
+    // wait for its verdict so a taken address is reported as taken, not as
+    // "someone beat you to it" after a 409.
+    if (this.slugState === 'checking') {
+      this.submitting = true;
+      try {
+        // Typing meanwhile re-queues the check; wait for the last one.
+        while (this.slugState === 'checking') await this.pendingVerdict();
+      } finally {
+        this.submitting = false;
+      }
     }
     if (!this.slugValid) {
       this.formError = this.slug
@@ -456,9 +485,26 @@ export class CreateChannelFormComponent implements OnInit, AfterViewInit, OnDest
     }
   }
 
+  // Resolved whenever the live check leaves 'checking' (see submit()).
+  private verdictWaiters: (() => void)[] = [];
+
+  private pendingVerdict(): Promise<void> {
+    if (this.slugState !== 'checking') return Promise.resolve();
+    return new Promise<void>(resolve => this.verdictWaiters.push(resolve));
+  }
+
+  private settleVerdict(): void {
+    const waiters = this.verdictWaiters;
+    this.verdictWaiters = [];
+    waiters.forEach(w => w());
+  }
+
   private queueSlugCheck(): void {
     this.formError = '';
     this.suggestedSlug = '';
+    // Whatever was being checked is superseded; a submit waiting on it looks
+    // at the new state (and waits again if that is 'checking').
+    this.settleVerdict();
     // Bumping the sequence orphans a running suggestFreeSlug(): its finally
     // block no longer owns the flag, so it is cleared here or the
     // "looking for a free address" line would stay on for good.

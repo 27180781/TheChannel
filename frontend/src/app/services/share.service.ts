@@ -1,5 +1,4 @@
 import { Injectable } from '@angular/core';
-import { NbToastrService } from '@nebular/theme';
 
 export interface ShareData {
   title?: string;
@@ -19,8 +18,6 @@ export type ShareOutcome = 'shared' | 'cancelled' | 'unsupported';
  */
 @Injectable({ providedIn: 'root' })
 export class ShareService {
-  constructor(private toastr: NbToastrService) {}
-
   /** The direct, shareable URL of a channel — never a hardcoded domain. */
   channelUrl(slug: string): string {
     return `${window.location.origin}/channel/${slug}`;
@@ -33,8 +30,10 @@ export class ShareService {
 
   /**
    * Copies text to the clipboard and resolves true on success. On failure it
-   * tells the user to copy by hand (callers keep the text visible and
-   * selectable for exactly that case) unless `quiet` is set.
+   * hands the user the text itself to copy by hand — in a prompt, which shows
+   * it preselected and works on HTTP and in in-app browsers; a toast that
+   * only said "select the link" pointed at a link most callers never show —
+   * unless `quiet` is set.
    */
   async copy(text: string, opts: { quiet?: boolean } = {}): Promise<boolean> {
     try {
@@ -45,7 +44,7 @@ export class ShareService {
       return true;
     } catch {
       if (!opts.quiet) {
-        this.toastr.warning('', 'ההעתקה נחסמה בדפדפן — סמנו את הקישור והעתיקו אותו ידנית');
+        window.prompt('ההעתקה נחסמה בדפדפן — העתיקו את הקישור ידנית:', text);
       }
       return false;
     }

@@ -64,6 +64,12 @@
   white-space: nowrap;
 }
 
+// Desktop table: the icon-only actions are one toolbar. The auto table layout
+// wrapped them 4+2 as soon as a long owner e-mail made the columns compete for
+// width (the shared .sa-actions wraps on phones, where the rows are cards).
+.channels-table .sa-actions { flex-wrap: nowrap; }
+.channels-table .sa-actions [nbButton] { padding-inline: 0.25rem; }
+
 .row--disabled .identity,
 .row--disabled .owner {
   opacity: 0.6;

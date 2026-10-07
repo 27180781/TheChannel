@@ -76,7 +76,11 @@
   gap: 0.35rem;
   min-width: 0;
   max-width: 100%;
-  padding: 0;
+  // A 16px-tall line is the only way to the full description; the padding
+  // and the matching negative margin make a ~40px hit box without moving
+  // anything in the row.
+  padding: 0.75rem 0;
+  margin: -0.75rem 0;
   border: 0;
   border-radius: 0.25rem;
   background: none;
@@ -182,11 +186,21 @@
   .ch__login-text {
     display: none;
   }
+
+  // Icon-only here, so it gets the same 40px box as the other round buttons.
+  .ch__login {
+    width: 2.5rem;
+    height: 2.5rem;
+    padding: 0 !important;
+    justify-content: center;
+  }
 }
 
 // The "about" popover content. Rendered in an overlay, but the template is
 // declared here, so these scoped styles still reach it.
 .ch-about {
+  // Focused by script when it opens (see onAboutState); the ring belongs on the trigger.
+  outline: none;
   max-width: min(84vw, 22rem);
   display: flex;
   flex-direction: column;

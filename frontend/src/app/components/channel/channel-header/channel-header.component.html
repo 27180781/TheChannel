@@ -14,7 +14,8 @@
          both directives provide the same overlay handler on their host, and the
          one built last owns the trigger — a tooltip here left the popover dead. -->
     <button type="button" class="ch__sub" [nbPopover]="aboutPopover" nbPopoverTrigger="click"
-            nbPopoverPlacement="bottom" aria-haspopup="dialog">
+            nbPopoverPlacement="bottom" aria-haspopup="dialog" #aboutPop="nbPopover"
+            [attr.aria-expanded]="aboutShown" (nbPopoverShowStateChange)="onAboutState($event.isShown)">
       <span class="ch__meta">
         <nb-icon icon="people-outline"></nb-icon>
         {{ chatService.channelInfo?.views || 0 }} משתתפים
@@ -27,9 +28,10 @@
   </div>
 
   <div class="ch__actions">
-    <button nbButton ghost shape="round" status="basic" class="ch__btn" type="button"
+    <button nbButton ghost shape="round" status="basic" class="ch__btn ch__share" type="button"
             [nbContextMenu]="shareMenu" [nbContextMenuTag]="shareMenuTag" [nbContextMenuPlacement]="NbPosition.BOTTOM"
-            aria-label="שיתוף הערוץ" aria-haspopup="menu">
+            aria-label="שיתוף הערוץ" aria-haspopup="menu" [attr.aria-expanded]="openMenu === 'share-menu'"
+            (click)="onMenuTrigger('share-menu')">
       <nb-icon icon="share-outline"></nb-icon>
     </button>
 
@@ -49,11 +51,12 @@
     }
 
     @if (userInfo) {
-      <nb-user class="ch__user" [name]="userInfo.username" shape="round" size="medium"
+      <nb-user class="ch__user" [name]="userInfo.publicName || userInfo.username" shape="round" size="medium"
                [nbContextMenu]="userMenu" [nbContextMenuTag]="userMenuTag" [nbContextMenuPlacement]="NbPosition.BOTTOM"
                [picture]="userInfo.picture || ''" [onlyPicture]="isSmallScreen"
                role="button" tabindex="0" aria-haspopup="menu" aria-label="החשבון שלי ומעבר בין ערוצים"
-               (click)="loadMyChannels()" (keydown.enter)="$any($event.target).click()"
+               [attr.aria-expanded]="openMenu === 'user-menu'"
+               (click)="loadMyChannels(); onMenuTrigger('user-menu')" (keydown.enter)="$any($event.target).click()"
                (keydown.space)="$event.preventDefault(); $any($event.target).click()">
       </nb-user>
     } @else {
@@ -69,7 +72,7 @@
 <!-- The full description: the header is one line high, so the long text
      opens in a small card below it instead of growing the header. -->
 <ng-template #aboutPopover>
-  <div class="ch-about">
+  <div class="ch-about" role="dialog" aria-label="על הערוץ" tabindex="-1">
     <strong class="ch-about__name">{{ channelName }}</strong>
     @if (chatService.channelInfo?.description) {
       <p class="ch-about__desc">{{ chatService.channelInfo?.description }}</p>

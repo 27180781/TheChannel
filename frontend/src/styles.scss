@@ -53,6 +53,12 @@
   }
 }
 
+// Nebular's toast is a fixed 400px: on a 360px phone its left 48px, and the
+// end of the text, were off-screen. 1rem covers its 0.5rem margin on each side.
+nb-toast {
+  max-width: calc(100vw - 1rem);
+}
+
 // Buttons answer the pointer: a short colour/shadow transition and a slight
 // press. Nebular styles them without any transition.
 [nbButton],

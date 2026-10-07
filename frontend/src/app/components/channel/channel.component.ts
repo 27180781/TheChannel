@@ -1,4 +1,4 @@
-import { AfterViewChecked, Component, ElementRef, OnDestroy, OnInit, Renderer2, RendererStyleFlags2, ViewChild } from '@angular/core';
+import { AfterViewChecked, ChangeDetectorRef, Component, ElementRef, OnDestroy, OnInit, Renderer2, RendererStyleFlags2, ViewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Title } from '@angular/platform-browser';
 import { AdvertisingComponent } from "./advertising/advertising.component";
@@ -93,6 +93,7 @@ export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
     private share: ShareService,
     private titleService: Title,
     private dialogService: NbDialogService,
+    private cdr: ChangeDetectorRef,
   ) { }
 
   ad: Ad = { src: '', width: 0 };
@@ -186,13 +187,18 @@ export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
     this.showChannelsList = false;
     this.noChannel = true;
     this.titleService.setTitle('פתיחת ערוץ · הערוץ');
+    // The URL says what is on screen, so a reload or a shared link lands on
+    // the same view. A query-only navigation does not re-emit paramMap, so
+    // initChannel() is not re-run and the list is not refetched.
+    this.router.navigate([], { relativeTo: this.route, queryParams: { new: '1' }, replaceUrl: true });
   }
 
-  /** Back from the create form to the list (same URL, so no navigation). */
+  /** Back from the create form to the list (same route, query param dropped). */
   showMyChannelsList(): void {
     this.noChannel = false;
     this.showChannelsList = true;
     this.titleService.setTitle('הערוצים שלי · הערוץ');
+    this.router.navigate([], { relativeTo: this.route, queryParams: {}, replaceUrl: true });
     this.loadMyChannels();
   }
 
@@ -310,10 +316,12 @@ export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
     if (slug === null || (this.channelStatus.notFoundSlug() !== slug && this.channelStatus.disabledSlug() !== slug)) {
       this.channelStatus.reset();
     }
-    // Yield to Angular's change detection so the @if (slugReady) block
-    // actually destroys ChatComponent before we reinitialise with the new slug.
-    // Without this, false→true in the same synchronous frame is collapsed and
-    // the child is never torn down, leaving stale state (isVisible, messages, etc).
+    // Run change detection now so the @if (slugReady) block actually destroys
+    // ChatComponent and the header before we reinitialise with the new slug.
+    // A microtask yield alone was not enough: no tick runs in it, so
+    // false→true collapsed into one frame and the child was never torn down —
+    // switching channels kept the previous feed, its SSE stream and its title.
+    this.cdr.detectChanges();
     await Promise.resolve();
 
     if (!slug) {
@@ -360,6 +368,7 @@ export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
       return;
     }
 
+    if (seq !== this.initSeq) return;
     this.slugService.slug = slug;
     // Keep the /info the route guard already fetched for this channel.
     this.chatService.clearCache(slug);
@@ -372,8 +381,15 @@ export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
     this.magnetAds.clearCache();
     this.slugReady = true;
 
+    // The guard's /info probe already said "no such channel" / "disabled":
+    // the card renders off that flag and the shell never mounts, so there is
+    // nothing to fetch for it.
+    if (this.channelStatus.notFoundSlug() === slug || this.channelStatus.disabledSlug() === slug) return;
+
     this.adsService.getAds().then(ad => {
       this.ad = ad;
+    }).catch(() => {
+      // No ad column without settings; the chat shell does not depend on it.
     });
     this._authService.loadUserInfo().then(res => {
       this.userInfo = res;
@@ -400,8 +416,8 @@ export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
   }
 
   backToMyChannels(): void {
-    this.channelStatus.reset();
-    this.router.navigate(['/channel']);
+    // Same order as goHome(): leave the view, then clear the flag.
+    this.router.navigate(['/channel']).then(() => this.channelStatus.reset());
   }
 
   // For a visitor on the disabled / not-found card: /channel is guarded and
@@ -421,8 +437,10 @@ export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
   }
 
   goHome(): void {
-    this.channelStatus.reset();
-    this.router.navigate(['/']);
+    // Navigate first: clearing the flag while this view is still mounted let
+    // the chat shell appear for a frame and fire its requests for the missing
+    // channel on the way out. initChannel() resets a stale flag on arrival.
+    this.router.navigate(['/']).then(() => this.channelStatus.reset());
   }
 
   async logout(): Promise<void> {

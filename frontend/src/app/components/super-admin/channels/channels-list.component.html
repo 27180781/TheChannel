@@ -157,10 +157,18 @@
 
       @if (filtered.length === 0) {
         <div class="sa-state">
-          <span class="sa-state__icon"><nb-icon icon="search-outline"></nb-icon></span>
-          <p class="sa-state__title">לא נמצאו ערוצים שמתאימים לחיפוש</p>
-          <p class="sa-state__text">נסו מילה אחרת, או הציגו את כל הערוצים.</p>
-          <button nbButton ghost status="primary" size="small" type="button" (click)="clearFilter()">ניקוי החיפוש</button>
+          @if (query.trim()) {
+            <span class="sa-state__icon"><nb-icon icon="search-outline"></nb-icon></span>
+            <p class="sa-state__title">לא נמצאו ערוצים שמתאימים לחיפוש</p>
+            <p class="sa-state__text">נסו מילה אחרת, או הציגו את כל הערוצים.</p>
+            <button nbButton ghost status="primary" size="small" type="button" (click)="clearFilter()">ניקוי החיפוש</button>
+          } @else {
+            <!-- No search word: it is the status filter that has nothing to show. -->
+            <span class="sa-state__icon"><nb-icon [icon]="statusFilter === 'disabled' ? 'slash-outline' : 'checkmark-circle-2-outline'"></nb-icon></span>
+            <p class="sa-state__title">{{ statusFilter === 'disabled' ? 'אין ערוצים מושבתים' : 'אין ערוצים פעילים' }}</p>
+            <p class="sa-state__text">{{ statusFilter === 'disabled' ? 'כל הערוצים במערכת פעילים כרגע.' : 'כל הערוצים במערכת מושבתים כרגע.' }}</p>
+            <button nbButton ghost status="primary" size="small" type="button" (click)="clearFilter()">הצגת כל הערוצים</button>
+          }
         </div>
       } @else {
         <!-- Desktop: a table. -->

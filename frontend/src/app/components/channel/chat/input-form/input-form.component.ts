@@ -10,6 +10,7 @@ import {
   NbDialogService,
   NbIconModule,
   NbInputModule,
+  NbPopoverDirective,
   NbPopoverModule,
   NbToastrService,
   NbToggleModule,
@@ -69,6 +70,7 @@ export class InputFormComponent implements OnInit, AfterViewInit, OnDestroy {
   private subscription!: Subscription;
 
   @ViewChild('inputTextArea') inputTextArea!: ElementRef<HTMLTextAreaElement>;
+  @ViewChild('helpPop') private helpPop?: NbPopoverDirective;
 
   @Output() inputHeightChanged = new EventEmitter<number>();
 
@@ -356,6 +358,36 @@ export class InputFormComponent implements OnInit, AfterViewInit, OnDestroy {
   removeAttachment(attachment: Attachment) {
     this.attachments = this.attachments.filter((file) => file !== attachment);
     this.input = this.input.replaceAll(attachment.embedded ?? '', '');
+  }
+
+  /** The formatting-help popover is open (Nebular reports both states). */
+  helpShown = false;
+
+  onHelpState(shown: boolean) {
+    this.helpShown = shown;
+    // Focus moves into the card: Escape then closes it from there, and one Tab
+    // reaches its only control, the link to the full guide. The popover lives
+    // in the overlay container, outside this component's DOM.
+    if (shown) setTimeout(() => document.querySelector<HTMLElement>('.cdk-overlay-container .help')?.focus());
+  }
+
+  onHelpKeydown(event: KeyboardEvent) {
+    const card = event.currentTarget as HTMLElement;
+    const more = card.querySelector<HTMLElement>('.help__more');
+    const leaving = event.key === 'Tab' && (event.shiftKey ? document.activeElement === card : document.activeElement === more);
+    if (event.key !== 'Escape' && !leaving) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    // Tab is left to the browser: with focus back on the help button, it moves
+    // on to the neighbouring toolbar button instead of the end of the document.
+    this.closeHelp();
+  }
+
+  private closeHelp() {
+    this.helpPop?.hide();
+    this.host.nativeElement.querySelector<HTMLElement>('.tb--help')?.focus();
   }
 
   openMarkdownDocs() {

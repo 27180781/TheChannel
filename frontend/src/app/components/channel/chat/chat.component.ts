@@ -243,7 +243,10 @@ export class ChatComponent implements OnInit, OnDestroy {
         if (fragment) {
           const messageId = Number(fragment);
           if (!Number.isInteger(messageId)) return;
-          this.scrollToId({ messageId: messageId, mark: true });
+          // After NavigationEnd: nb-layout's restoreScrollTop scrolls to 0 in
+          // its own NavigationEnd handler, which undid an earlier
+          // scrollIntoView on a same-document #id change.
+          setTimeout(() => this.scrollToId({ messageId, mark: true }), 0);
         }
       });
     }, 800);
@@ -388,8 +391,14 @@ export class ChatComponent implements OnInit, OnDestroy {
             // own, so their own post must not raise the new-messages dot.
             const mine = authorId === this.userInfo?.id
               || (authorId === 'operator' && this.userInfo?.globalRole === 'super_admin');
-            this.thereNewMessages = !this.isAtBottom() && !mine;
+            // Measured before the new card is painted: at the bottom now means
+            // the reader wants to stay there — and the author of a post always
+            // does, or their own message sat hidden under the fixed composer
+            // with no scroll and no "newer messages" button to reach it.
+            const atBottom = this.isAtBottom();
+            this.thereNewMessages = !atBottom && !mine;
             this.newMessagesCount = this.thereNewMessages ? this.newMessagesCount + 1 : 0;
+            if (atBottom || mine) this.scrollToBottom(false);
             this.setLastReadMessage(message.message.id!.toString());
             if (this.hasWriteRole() && this.scheduledMessages && this.cameFromScheduler(message.message)) {
               this.loadScheduledMessages(true);

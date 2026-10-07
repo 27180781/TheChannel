@@ -52,6 +52,16 @@
   font-weight: 800;
   color: var(--text-basic-color);
   font-variant-numeric: tabular-nums;
+  // "0 B", not "B 0": the unit otherwise lands on the left in the RTL line.
+  direction: ltr;
+  unicode-bidi: isolate;
+  display: inline-block;
+}
+
+.ltr-figure {
+  direction: ltr;
+  unicode-bidi: isolate;
+  display: inline-block;
 }
 
 .usage__of {

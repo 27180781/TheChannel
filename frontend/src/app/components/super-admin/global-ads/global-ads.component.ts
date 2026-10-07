@@ -59,7 +59,13 @@ export class GlobalAdsComponent implements OnInit {
     this.loadFailed = false;
     this.superAdminService.getAdsConfig()
       .then(cfg => {
-        this.config = { ...this.config, ...cfg, lockedChannels: [...(cfg?.lockedChannels || [])] };
+        // A server without a stored width answers 0; the field's min is 1,
+        // so keep the component's 300 default rather than show 0.
+        this.config = {
+          ...this.config, ...cfg,
+          width: cfg?.width > 0 ? cfg.width : this.config.width || 300,
+          lockedChannels: [...(cfg?.lockedChannels || [])],
+        };
         this.snapshot = JSON.stringify(this.config);
       })
       .catch(() => {

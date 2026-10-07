@@ -82,7 +82,8 @@
       </div>
       }
       <!-- last read indicator -->
-      @if (message.id === lastReadMessageId + 1) {
+      <!-- 0 is "nothing stored / everything read", never a real position. -->
+      @if (lastReadMessageId > 0 && message.id === lastReadMessageId + 1) {
       <div class="last-read-indicator">
         <div class="last-read-indicator__line"></div>
         <div class="last-read-indicator__text">
