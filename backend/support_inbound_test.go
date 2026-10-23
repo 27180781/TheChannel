@@ -173,8 +173,8 @@ func TestInboundMailMatchesByEmailOnly(t *testing.T) {
 	useInboundSecret(t, testMailSecret)
 	from := "inb-email@example.com"
 	cleanupInbound(t, from, "<em-1@x>")
-	saveInboundFixture(t, ctx, "d4d4d4d4dddd0004", from, false, SupportStatusAnswered, time.Hour)
-	saveInboundFixture(t, ctx, "e5e5e5e5eeee0005", from, false, SupportStatusClosed, time.Minute)
+	saveInboundFixture(t, ctx, "d4d4d4d4dddd0004", from, true, SupportStatusAnswered, time.Hour)
+	saveInboundFixture(t, ctx, "e5e5e5e5eeee0005", from, true, SupportStatusClosed, time.Minute)
 
 	w, out := postInbound(t, testMailSecret, inboundMail(from, "<em-1@x>", nil))
 	if w.Code != http.StatusOK || out["action"] != "appended" || out["ticket_id"] != "d4d4d4d4dddd0004" {
@@ -182,6 +182,34 @@ func TestInboundMailMatchesByEmailOnly(t *testing.T) {
 	}
 	if n := len(mustTicket(t, ctx, "e5e5e5e5eeee0005").Messages); n != 1 {
 		t.Error("a closed ticket was reopened by mail")
+	}
+}
+
+// An anonymous web-form ticket carries whatever address was typed, and its
+// access token belongs to whoever typed it. A verified mail from the real
+// owner of that address must not land there, ref or no ref: it opens a
+// ticket of its own and the web ticket stays as it was.
+func TestInboundMailSkipsAnonymousWebTicket(t *testing.T) {
+	ctx := supportCtx(t)
+	useInboundSecret(t, testMailSecret)
+	from := "inb-victim@example.com"
+	cleanupInbound(t, from, "<anon-1@x>", "<anon-2@x>")
+	saveInboundFixture(t, ctx, "f6f6f6f6ffff0006", from, false, SupportStatusOpen, time.Minute)
+
+	// The ref printed in the web ticket's mails points at the untrusted thread.
+	w, out := postInbound(t, testMailSecret, inboundMail(from, "<anon-1@x>", map[string]any{"ticket_ref": "F6F6F6F6"}))
+	if w.Code != http.StatusOK || out["action"] != "created" || out["ticket_id"] == "f6f6f6f6ffff0006" {
+		t.Fatalf("with ref: status %d body %s, want a new ticket, not the anonymous web ticket", w.Code, w.Body)
+	}
+	opened, _ := out["ticket_id"].(string)
+	// Without a ref the sender's newest trusted thread is the one the first
+	// mail opened (a mail ticket), never the web ticket.
+	w, out = postInbound(t, testMailSecret, inboundMail(from, "<anon-2@x>", nil))
+	if w.Code != http.StatusOK || out["action"] != "appended" || out["ticket_id"] != opened {
+		t.Fatalf("no ref: status %d body %s, want appended to %s", w.Code, w.Body, opened)
+	}
+	if n := len(mustTicket(t, ctx, "f6f6f6f6ffff0006").Messages); n != 1 {
+		t.Errorf("the anonymous web ticket received %d messages, want 1", n)
 	}
 }
 
@@ -228,7 +256,7 @@ func TestInboundMailIsIdempotent(t *testing.T) {
 	useInboundSecret(t, testMailSecret)
 	from := "inb-idem@example.com"
 	cleanupInbound(t, from, "<idem-1@x>", "<idem-2@x>")
-	saveInboundFixture(t, ctx, "c9c9c9c9cccc0009", from, false, SupportStatusOpen, time.Minute)
+	saveInboundFixture(t, ctx, "c9c9c9c9cccc0009", from, true, SupportStatusOpen, time.Minute)
 
 	_, first := postInbound(t, testMailSecret, inboundMail(from, "<idem-1@x>", nil))
 	w, second := postInbound(t, testMailSecret, inboundMail(from, "<idem-1@x>", nil))

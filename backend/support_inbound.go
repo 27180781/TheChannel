@@ -267,7 +267,7 @@ func ingestInboundMail(ctx context.Context, req *inboundMailRequest, from string
 		if target != "" {
 			updated, err := dbUpdateSupportTicket(ctx, target, func(cur *SupportTicket) error {
 				// Judged again on the ticket as it stands at write time.
-				if !strings.EqualFold(cur.Email, from) {
+				if !strings.EqualFold(cur.Email, from) || !inboundTicketEmailTrusted(cur) {
 					return errInboundNoMatch
 				}
 				if cur.Status == SupportStatusClosed {
@@ -358,7 +358,7 @@ func findInboundTicket(ctx context.Context, from, ref string) (string, error) {
 			}
 			return "", err
 		}
-		if !strings.EqualFold(t.Email, from) {
+		if !strings.EqualFold(t.Email, from) || !inboundTicketEmailTrusted(t) {
 			continue
 		}
 		usable := t.Status != SupportStatusClosed && len(t.Messages) < maxSupportMessages
@@ -373,6 +373,17 @@ func findInboundTicket(ctx context.Context, from, ref string) (string, error) {
 		}
 	}
 	return latestOpen, nil
+}
+
+// inboundTicketEmailTrusted says whether a ticket's email can stand for the
+// sender of a verified mail. A signed-in requester's address came from the
+// session, and a ticket opened by mail hands out no access token, so neither
+// thread is readable by someone who merely typed the address. An anonymous
+// web-form ticket carries whatever was typed and its token is held by whoever
+// typed it: appending a verified sender's mail there would show that person
+// the mail and every operator answer to it, so such a ticket never matches.
+func inboundTicketEmailTrusted(t *SupportTicket) bool {
+	return t.Authenticated || t.Source == supportInboundSource
 }
 
 // backfillSupportMatchIndex puts the tickets written before the match index
