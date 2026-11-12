@@ -466,6 +466,12 @@ func createSupportTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Tell Magnet's staff a new thread is waiting (magnet_admin_events.go).
+	created := *ticket
+	dispatchMagnetMail(func(mctx context.Context) (*magnetMailEvent, bool) {
+		return supportActivityEvent(&created, 0, ticketMailChannel(mctx, &created))
+	})
+
 	// The token is returned exactly once, here, so an anonymous sender can keep
 	// the link and read the answer later.
 	w.Header().Set("Content-Type", "application/json")
@@ -572,6 +578,12 @@ func replySupportTicket(w http.ResponseWriter, r *http.Request) {
 		writeTicketUpdateError(w, err)
 		return
 	}
+	// The requester answered on the site: the thread is open again, and
+	// Magnet's staff hear about it the same way as a new one.
+	followUp, msgIndex := *updated, len(updated.Messages)-1
+	dispatchMagnetMail(func(mctx context.Context) (*magnetMailEvent, bool) {
+		return supportActivityEvent(&followUp, msgIndex, ticketMailChannel(mctx, &followUp))
+	})
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(publicView(updated))
 }
@@ -617,6 +629,42 @@ func adminListSupportTickets(w http.ResponseWriter, r *http.Request) {
 	out := make([]SupportTicket, 0, len(tickets))
 	for _, t := range tickets {
 		out = append(out, publicView(t))
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+// GET /api/super-admin/support/summary — what the Magnet tab's badge shows:
+// how many threads wait for an answer, and when the newest of them moved.
+func adminSupportSummary(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	tickets, err := dbListSupportTickets(ctx, supportTicketIndexKey)
+	if err != nil {
+		log.Printf("adminSupportSummary: %v\n", err)
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
+	}
+	out := struct {
+		Open       int        `json:"open"`
+		Answered   int        `json:"answered"`
+		Closed     int        `json:"closed"`
+		LastOpenAt *time.Time `json:"lastOpenAt"`
+	}{}
+	for _, t := range tickets {
+		switch t.Status {
+		case SupportStatusOpen:
+			out.Open++
+			if out.LastOpenAt == nil || t.UpdatedAt.After(*out.LastOpenAt) {
+				at := t.UpdatedAt
+				out.LastOpenAt = &at
+			}
+		case SupportStatusAnswered:
+			out.Answered++
+		case SupportStatusClosed:
+			out.Closed++
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
