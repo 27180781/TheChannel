@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -89,7 +90,13 @@ func requireMagnetAdmin(next http.Handler) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		op := cleanOperator(r.Header.Get(magnetAdminOperatorHeader))
+		// Magnet percent-encodes the label (a header carries Latin-1 only, and
+		// staff names are Hebrew); a plain label passes through unchanged.
+		rawOp := r.Header.Get(magnetAdminOperatorHeader)
+		if dec, err := url.QueryUnescape(rawOp); err == nil {
+			rawOp = dec
+		}
+		op := cleanOperator(rawOp)
 		if op == "" {
 			http.Error(w, "operator is required", http.StatusBadRequest)
 			return

@@ -104,6 +104,19 @@ func TestMagnetOperatorAbsentOnOrdinaryRequest(t *testing.T) {
 	}
 }
 
+// Magnet sends the Hebrew label percent-encoded; the log gets it readable.
+func TestMagnetAdminDecodesOperator(t *testing.T) {
+	withMagnetAdminSecret(t, "s3cret-value")
+	rec := magnetAdminCall(magnetAdminRouter(), "s3cret-value", "%D7%A0%D7%A1%D7%99%D7%9D%20%C2%B7%20a%40b.co")
+	var got struct {
+		Op string `json:"op"`
+	}
+	json.NewDecoder(rec.Body).Decode(&got)
+	if got.Op != "נסים · a@b.co" {
+		t.Fatalf("operator %q", got.Op)
+	}
+}
+
 func TestCleanOperatorKeepsValidUTF8WhenCut(t *testing.T) {
 	got := cleanOperator(strings.Repeat("א", 150)) // 300 bytes
 	if len(got) > maxMagnetOperatorLen {
