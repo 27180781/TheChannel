@@ -305,6 +305,11 @@ func sessionUser(r *http.Request) (User, bool) {
 }
 
 func isSuperAdmin(r *http.Request) bool {
+	// A request through the Magnet admin door (magnet_admin.go) acts as a
+	// super admin with no session of its own.
+	if _, ok := magnetOperator(r); ok {
+		return true
+	}
 	u, ok := sessionUser(r)
 	return ok && u.GlobalRole == RoleSuperAdmin
 }

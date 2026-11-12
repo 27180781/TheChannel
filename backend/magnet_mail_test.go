@@ -342,9 +342,10 @@ func TestMagnetMailSupportReply(t *testing.T) {
 	}
 }
 
-// Only the management's answer is mailed: the requester adding to their own
-// thread, an operator answering a thread they opened, and a ticket with no
-// address all send nothing.
+// Only the management's answer is mailed to the requester: the requester
+// adding to their own thread (that raises Magnet's internal support_activity
+// alert, nothing else), an operator answering a thread they opened, and a
+// ticket with no address all send no support_reply.
 func TestMagnetMailSupportReplyNotSent(t *testing.T) {
 	ctx := supportCtx(t)
 	useTestSessionStore(t)
@@ -376,8 +377,14 @@ func TestMagnetMailSupportReplyNotSent(t *testing.T) {
 	adminReply(t, &testOperator, noMail.ID, "תשובה")
 
 	magnetMailInFlight.Wait()
-	if n := f.count(); n != 0 {
-		t.Errorf("magnet got %d requests, want 0: %v", n, f.hits)
+	if n := f.count(); n != 1 {
+		t.Fatalf("magnet got %d requests, want only the follow-up alert: %v", n, f.hits)
+	}
+	if got := str(t, f.last(t).body, "event"); got != magnetMailEventSupportActivity {
+		t.Errorf("event = %q, want %q", got, magnetMailEventSupportActivity)
+	}
+	if got := str(t, f.last(t).body, "to"); got != "" {
+		t.Errorf("support_activity must not name a recipient, got %q", got)
 	}
 }
 

@@ -34,6 +34,9 @@ import (
 const (
 	magnetMailEventChannelCreated = "channel_created"
 	magnetMailEventSupportReply   = "support_reply"
+	// Not a mail to the requester: Magnet alerts its own staff and marks the
+	// "מערכת הערוצים" tab (magnet_admin_events.go).
+	magnetMailEventSupportActivity = "support_activity"
 
 	// defaultPublicBaseURL is where every link in the mail points when the
 	// operator has not configured a domain. Magnet refuses links to any other
@@ -79,13 +82,14 @@ type magnetMailTicket struct {
 }
 
 type magnetMailEvent struct {
-	Event          string             `json:"event"`
-	IdempotencyKey string             `json:"idempotency_key"`
-	To             string             `json:"to"`
-	ToName         *string            `json:"to_name"`
-	Channel        *magnetMailChannel `json:"channel"`
-	ContactURL     string             `json:"contact_url"`
-	Ticket         *magnetMailTicket  `json:"ticket,omitempty"`
+	Event          string                 `json:"event"`
+	IdempotencyKey string                 `json:"idempotency_key"`
+	To             string                 `json:"to"`
+	ToName         *string                `json:"to_name"`
+	Channel        *magnetMailChannel     `json:"channel"`
+	ContactURL     string                 `json:"contact_url"`
+	Ticket         *magnetMailTicket      `json:"ticket,omitempty"`
+	Support        *magnetSupportActivity `json:"support,omitempty"`
 }
 
 // magnetMailEnabled reports whether both halves of the configuration are

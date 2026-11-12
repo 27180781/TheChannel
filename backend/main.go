@@ -171,34 +171,14 @@ func main() {
 	r.Route("/api/super-admin", func(r chi.Router) {
 		r.Use(checkLogin)
 		r.Use(requireSuperAdmin)
+		mountSuperAdminRoutes(r)
+	})
 
-		r.Get("/channels", listChannels)
-		r.Post("/channels/create", createChannel)
-		r.Get("/channels/{slug}", getSuperAdminChannel)
-		r.Delete("/channels/{slug}", deleteChannel)
-		r.Put("/channels/{slug}/features", updateChannelFeatures)
-		r.Put("/channels/{slug}/seo", superAdminSetChannelSeo)
-		r.Get("/channels/{slug}/users", superAdminGetChannelUsers)
-		r.Post("/channels/{slug}/users", superAdminSetChannelUsers)
-		r.Get("/users/list", getPrivilegeUsersList)
-		r.Get("/consents.csv", exportOwnerConsents)
-		r.Get("/signins.csv", exportSignIns)
-		r.Post("/users/set", setPrivilegeUsers)
-		r.Get("/global-settings/get", getGlobalSettings)
-		r.Post("/global-settings/set", setGlobalSettings)
-		r.Get("/ads/config", getGlobalAdsConfig)
-		r.Post("/ads/config", setGlobalAdsConfig)
-		r.Get("/magnet/config", getGlobalMagnetConfig)
-		r.Post("/magnet/config", setGlobalMagnetConfig)
-		r.Get("/magnet/stats", getMagnetStats)
-		r.Get("/storage/config", getSuperAdminStorageConfig)
-		r.Post("/storage/config", setSuperAdminStorageConfig)
-		r.Get("/channels/{slug}/storage", getSuperAdminChannelStorage)
-		r.Put("/channels/{slug}/storage", setSuperAdminChannelStorage)
-		r.Post("/statistics/reset", resetStatistics)
-		r.Get("/support/tickets", adminListSupportTickets)
-		r.Post("/support/tickets/{id}/reply", adminReplySupportTicket)
-		r.Post("/support/tickets/{id}/status", adminSetSupportTicketStatus)
+	// The same super-admin endpoints, called by Magnet's admin tab server to
+	// server; see magnet_admin.go.
+	r.Route("/api/integrations/magnet/admin", func(r chi.Router) {
+		r.Use(requireMagnetAdmin)
+		mountSuperAdminRoutes(r)
 	})
 
 	// Support tickets. Creation and the thread view are deliberately outside
