@@ -947,7 +947,7 @@ func getFavicon(w http.ResponseWriter, r *http.Request) {
 	// be readable anonymously simply gets the platform default. That leaks
 	// neither the logo nor the fact that the channel exists.
 	if ch, chErr := dbGetChannel(ctx, slug); chErr != nil ||
-		ch.Features.Disabled || ch.Features.RequireAuth || ch.Features.RequireAuthFiles {
+		ch.Features.Disabled || ch.isPrivate() || ch.Features.RequireAuthFiles {
 		serveDefaultFavicon(w, r)
 		return
 	}

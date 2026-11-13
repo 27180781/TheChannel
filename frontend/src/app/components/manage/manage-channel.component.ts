@@ -21,6 +21,7 @@ import { MyChannel, ROLE_LABELS, canManage } from '../../models/my-channel.model
 import { ChannelInfoFormComponent } from '../channel/channel-info-form/channel-info-form.component';
 import { SettingsComponent } from '../admin/settings/settings.component';
 import { PrivilegDashboardComponent } from '../admin/privileg-dashboard/privileg-dashboard.component';
+import { ViewersComponent } from '../admin/viewers/viewers.component';
 import { StatisticsComponent } from '../admin/statistics/statistics.component';
 import { EmojisComponent } from '../admin/emojis/emojis.component';
 import { TagsComponent } from '../admin/tags/tags.component';
@@ -72,6 +73,7 @@ type LoadError = '' | 'notfound' | 'forbidden' | 'network';
     ChannelInfoFormComponent,
     SettingsComponent,
     PrivilegDashboardComponent,
+    ViewersComponent,
     StatisticsComponent,
     EmojisComponent,
     TagsComponent,
@@ -123,6 +125,12 @@ export class ManageChannelComponent implements OnInit, OnDestroy {
       nav: 'מי כותב ומי מנהל',
       description: 'מי כותב, מי מנהל ומי בעלים — ומוסיפים אנשים לפי כתובת המייל שלהם בגוגל.',
       help: 'הוספה היא לפי כתובת מייל: האדם צריך להתחבר לאתר עם חשבון גוגל של אותה כתובת, ורק אז ההרשאה נכנסת לתוקף. השינויים נשמרים בלחיצה על "שמירה".',
+    },
+    {
+      id: 'viewers', title: 'מי יכול לצפות', icon: 'lock-outline', access: 'owner',
+      nav: 'ערוץ נעול למורשים',
+      description: 'נועלים את הערוץ כך שרק מי שמתחבר עם אחת מכתובות המייל שברשימה יכול לקרוא אותו. הקישור לבד לא מספיק.',
+      help: 'כשהנעילה פעילה, מי שנכנס בלי להתחבר מתבקש להתחבר, ומי שמתחבר עם כתובת שאינה ברשימה רואה הודעה שאין לו גישה. אנשי הצוות (בעלים, מנהלים וכותבים) תמיד רואים את הערוץ, גם אם אינם ברשימה. הסרת כתובת מנתקת אותה תוך פחות מחצי דקה. הערוץ הנעול לא מופיע בגוגל, והתראות לנייד יוצאות בלי תוכן ההודעה.',
     },
     {
       id: 'statistics', title: 'סטטיסטיקות', icon: 'bar-chart-outline', access: 'moderator',

@@ -32,6 +32,7 @@ type Channel struct {
 	// itself publishes all of it (robots meta, title, description), and a
 	// private channel is never in search whatever its toggle says.
 	RequireAuth    bool   `json:"require_auth"`
+	ViewersOnly    bool   `json:"viewers_only"`
 	SeoHidden      bool   `json:"seo_hidden"`
 	SeoTitle       string `json:"seo_title"`
 	SeoDescription string `json:"seo_description"`
@@ -60,6 +61,7 @@ func getChannelInfo(w http.ResponseWriter, r *http.Request) {
 		channel.RequireAuthForViewFiles = ch.Features.RequireAuthFiles
 		channel.ContactUs = ch.ContactUs
 		channel.RequireAuth = ch.Features.RequireAuth
+		channel.ViewersOnly = ch.ViewersOnly
 		channel.SeoHidden = ch.SeoHidden
 		channel.SeoTitle = ch.SeoTitle
 		channel.SeoDescription = ch.SeoDescription

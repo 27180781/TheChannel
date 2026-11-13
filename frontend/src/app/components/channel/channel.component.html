@@ -57,7 +57,56 @@
   </nb-layout>
 }
 
-@if (channelNotFound && !channelDisabled) {
+@if (channelRestricted && !channelDisabled) {
+  <nb-layout>
+    <nb-layout-header fixed>
+      <div class="plain-header">
+        <a class="plain-header__brand" routerLink="/" aria-label="הערוץ — לדף הבית">
+          <span class="plain-header__mark" aria-hidden="true"><nb-icon aria-hidden="true" icon="radio-outline"></nb-icon></span>
+          הערוץ
+        </a>
+        @if (userInfo) {
+          <button nbButton ghost status="basic" size="small" type="button" (click)="logout()">
+            <nb-icon aria-hidden="true" icon="log-out-outline"></nb-icon>
+            התנתקות
+          </button>
+        }
+      </div>
+    </nb-layout-header>
+
+    <nb-layout-column>
+      <div class="state-container">
+        <nb-card class="state-card">
+          <nb-card-body class="state-card__body">
+            <span class="state-card__icon" aria-hidden="true">
+              <nb-icon aria-hidden="true" icon="lock-outline"></nb-icon>
+            </span>
+            <h1 class="state-card__title">הערוץ פתוח למורשים בלבד</h1>
+            <p class="state-card__text">
+              רק מי שבעלי הערוץ הוסיפו לרשימת המורשים יכול לצפות בו.
+              @if (userInfo?.email) {
+                התחברתם עם <bdi dir="ltr">{{ userInfo?.email }}</bdi>, והכתובת הזו אינה ברשימה.
+              }
+            </p>
+            <p class="state-card__hint">אם קיבלתם גישה עם כתובת אחרת, התנתקו והתחברו איתה. אחרת, בקשו מבעלי הערוץ להוסיף אתכם.</p>
+            <div class="state-card__actions">
+              <button nbButton status="primary" type="button" (click)="switchAccount()">
+                <nb-icon aria-hidden="true" icon="swap-outline"></nb-icon>
+                התחברות עם חשבון אחר
+              </button>
+              <button nbButton appearance="outline" status="primary" type="button" (click)="backToMyChannels()">
+                <nb-icon aria-hidden="true" icon="grid-outline"></nb-icon>
+                לערוצים שלי
+              </button>
+            </div>
+          </nb-card-body>
+        </nb-card>
+      </div>
+    </nb-layout-column>
+  </nb-layout>
+}
+
+@if (channelNotFound && !channelBlocked) {
   <nb-layout>
     <nb-layout-header fixed>
       <div class="plain-header">
@@ -108,7 +157,7 @@
   </nb-layout>
 }
 
-@if (showChannelsList && !channelDisabled) {
+@if (showChannelsList && !channelBlocked) {
   <nb-layout>
     <nb-layout-header fixed>
       <div class="plain-header">
@@ -287,7 +336,7 @@
   </nb-layout>
 }
 
-@if (noChannel && !channelDisabled) {
+@if (noChannel && !channelBlocked) {
   <nb-layout>
     <nb-layout-header fixed>
       <div class="plain-header">
@@ -358,7 +407,7 @@
   </nb-layout>
 }
 
-@if (slugReady && !channelDisabled && !channelNotFound) {
+@if (slugReady && !channelBlocked && !channelNotFound) {
   <nb-layout id="container">
     <nb-layout-header fixed>
       <app-channel-header [(userInfo)]="userInfo" style="flex: auto;"></app-channel-header>

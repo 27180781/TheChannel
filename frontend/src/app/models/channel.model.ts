@@ -22,6 +22,8 @@ export interface Channel {
   // Search-engine settings (backend/channel_seo.go). Absent means listed,
   // with the name and description as the search result's text.
   require_auth?: boolean;
+  /** Locked to the owner's list of emails (backend/viewers.go). */
+  viewers_only?: boolean;
   seo_hidden?: boolean;
   seo_title?: string;
   seo_description?: string;

@@ -1287,6 +1287,7 @@ func channelFromRecords(slug string, h map[string]string, featuresJSON string, h
 		SeoHidden:      h["seoHidden"] == "1",
 		SeoTitle:       h["seoTitle"],
 		SeoDescription: h["seoDescription"],
+		ViewersOnly:    h["viewersOnly"] == "1",
 	}
 	if h["slug"] == "" {
 		channel.Slug = slug
@@ -1507,6 +1508,7 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 		fmt.Sprintf("channel:%s:message:next_id", p),
 		fmt.Sprintf("channel:%s:subscriptions", p),
 		fmt.Sprintf("channel:%s:registered_emails", p),
+		allowedViewersKey(p),
 		fmt.Sprintf("channel:%s:emojis:list", p),
 		fmt.Sprintf("channel:%s:reports:list", p),
 		fmt.Sprintf("channel:%s:reports:open", p),

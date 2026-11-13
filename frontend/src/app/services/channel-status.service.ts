@@ -13,6 +13,7 @@ import { Injectable, signal } from '@angular/core';
 export class ChannelStatusService {
   private readonly _disabledSlug = signal<string | null>(null);
   private readonly _notFoundSlug = signal<string | null>(null);
+  private readonly _restrictedSlug = signal<string | null>(null);
 
   /** Slug of the channel that answered channel_disabled, or null. */
   readonly disabledSlug = this._disabledSlug.asReadonly();
@@ -24,6 +25,19 @@ export class ChannelStatusService {
    * there is no such channel.
    */
   readonly notFoundSlug = this._notFoundSlug.asReadonly();
+
+  /**
+   * Slug of a channel locked to authorized viewers that answered 403
+   * {"error":"channel_restricted"}: the visitor is signed in, but with an
+   * email that is not on the channel's list. Null otherwise.
+   */
+  readonly restrictedSlug = this._restrictedSlug.asReadonly();
+
+  markRestricted(slug: string): void {
+    if (this._restrictedSlug() !== slug) {
+      this._restrictedSlug.set(slug);
+    }
+  }
 
   markDisabled(slug: string): void {
     if (this._disabledSlug() !== slug) {
@@ -44,6 +58,9 @@ export class ChannelStatusService {
     }
     if (this._notFoundSlug() !== null) {
       this._notFoundSlug.set(null);
+    }
+    if (this._restrictedSlug() !== null) {
+      this._restrictedSlug.set(null);
     }
   }
 }
