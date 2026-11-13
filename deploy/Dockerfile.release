@@ -1,0 +1,13 @@
+# The image CapRover runs when GitHub Actions deploys (.github/workflows/deploy.yml).
+# Everything heavy is built on GitHub: the Angular production build ran out of
+# memory on the CapRover host and stalled there. This file only copies the
+# ready files, so the server's own build takes seconds. Same layout as the root
+# Dockerfile's last stage, which stays for building by hand.
+FROM debian:latest
+WORKDIR /app
+RUN apt-get update && apt-get install -y ca-certificates && update-ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY the-channel .
+COPY assets ./assets
+COPY ng /usr/share/ng
+RUN chmod +x the-channel
+CMD ["./the-channel"]

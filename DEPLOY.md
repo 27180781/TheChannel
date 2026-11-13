@@ -5,7 +5,18 @@ the database as its own app; `docker-compose.yml` in this repo describes a
 different, single-host layout and is **not** what CapRover uses — see
 [The `/app/files` trap](#the-appfiles-trap) for why that difference matters.
 
-CapRover builds from `captain-definition`, which points at the `Dockerfile`.
+**GitHub Actions builds, CapRover only runs.** Every push to `master` runs
+`.github/workflows/deploy.yml`: it builds the Angular frontend and a static Go
+binary on GitHub, packs them with `deploy/Dockerfile.release` (which only
+copies) and deploys the tarball to the CapRover app `thechannel`. The Angular
+production build used to run on the CapRover host and stalled there for lack of
+memory. The workflow needs the repository secrets `CAPROVER_SERVER` (the
+dashboard URL) and `CAPROVER_APP_TOKEN` (the app's Deployment tab → Enable App
+Token). The app's own GitHub webhook must be off, or every push builds twice.
+To redeploy without a push: Actions → deploy → Run workflow.
+
+The root `Dockerfile` and `captain-definition` still build everything in one
+place, for a host that has the memory, or by hand.
 Changing an environment variable restarts the container with the **existing**
 image; it does not rebuild. New code requires a Deploy, not a restart.
 
