@@ -135,6 +135,8 @@ func main() {
 		r.Get(p, serveGoogleVerificationFile)
 	}
 	r.Get("/sitemap.xml", getSitemap)
+	// The public channels directory (public_channels.go).
+	r.Get("/api/public/channels", getPublicChannels)
 	r.Get("/sitemap-pages.xml", getSitemapPages)
 	r.Get("/sitemap-channels-{n:[0-9]+}.xml", getSitemapChannels)
 	for _, p := range contentPages {

@@ -42,6 +42,12 @@
   }
 }
 
+.topbar__links {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
 .topbar__brand {
   display: inline-flex;
   align-items: center;

@@ -133,8 +133,8 @@ export class ChatService {
   get reportsEnabled(): boolean { return this.isFeatureEnabled('reports'); }
   get scheduledMessagesEnabled(): boolean { return this.isFeatureEnabled('scheduledMessages'); }
 
-  editChannelInfo(name: string, description: string, logoUrl: string, contactUs: string, seo?: ChannelSeoSettings): Observable<ResponseResult> {
-    return this.http.post<ResponseResult>(`/api/channel/${this.slug}/admin/edit-channel-info`, { name, description, logoUrl, contactUs, ...seo });
+  editChannelInfo(name: string, description: string, logoUrl: string, contactUs: string, seo?: ChannelSeoSettings, publicListed?: boolean): Observable<ResponseResult> {
+    return this.http.post<ResponseResult>(`/api/channel/${this.slug}/admin/edit-channel-info`, { name, description, logoUrl, contactUs, ...seo, publicListed });
   }
 
   // The newest page of the feed, started by the route guard while it is still

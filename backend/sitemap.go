@@ -233,6 +233,7 @@ func writeXML(w http.ResponseWriter, v any) {
 // staticSitemapURLs are the pages that exist regardless of the channels.
 func staticSitemapURLs(origin string) []xmlURL {
 	urls := []xmlURL{{Loc: origin + "/", LastMod: contentRevised, Priority: priorityHome}}
+	urls = append(urls, xmlURL{Loc: origin + publicChannelsPath, LastMod: contentRevised, Priority: priorityGuide})
 	for _, p := range contentPages {
 		urls = append(urls, xmlURL{Loc: origin + p.Path, LastMod: contentRevised, Priority: priorityGuide})
 	}
@@ -318,4 +319,8 @@ func resetSitemapCache() {
 	sitemapCache.Lock()
 	sitemapCache.channels = nil
 	sitemapCache.Unlock()
+	// The public directory is built from the same channel records and goes
+	// stale on the same events (a channel created, deleted, made private,
+	// disabled, or its managers' listing toggled).
+	resetPublicChannelsCache()
 }

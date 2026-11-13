@@ -108,6 +108,16 @@
   @include admin-field;
 }
 
+.field--directory {
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-basic-color-3);
+
+  .field__hint {
+    margin: 0.35rem 0 0;
+    padding-inline-start: 1.75rem;
+  }
+}
+
 .seo-header {
   @include admin-card-header;
 }
