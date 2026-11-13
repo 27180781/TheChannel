@@ -534,6 +534,12 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 			}
 
 		case <-heartbeat.C:
+			// A locked channel's allowlist can change mid-connection; a
+			// viewer removed from it (or a channel locked under them) is
+			// dropped here, and the reconnect then meets the middleware.
+			if !sseViewerStillAllowed(clientCtx, slug, viewerEmail) {
+				return
+			}
 			armWrite()
 			if _, err := fmt.Fprintf(w, "data: {\"type\": \"heartbeat\"}\n\n"); err != nil {
 				return

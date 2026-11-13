@@ -28,6 +28,8 @@ export const channelDisabledInterceptor: HttpInterceptorFn = (req, next) => {
         const match = CHANNEL_API.exec(new URL(req.url, window.location.origin).pathname);
         if (match && isChannelDisabledBody(err.error)) {
           channelStatus.markDisabled(decodeURIComponent(match[1]));
+        } else if (match && hasErrorCode(err.error, 'channel_restricted')) {
+          channelStatus.markRestricted(decodeURIComponent(match[1]));
         }
       }
       if (err instanceof HttpErrorResponse && err.status === 404) {
@@ -51,4 +53,11 @@ function isChannelDisabledBody(body: unknown): boolean {
   }
   return !!body && typeof body === 'object'
     && (body as { error?: unknown }).error === 'channel_disabled';
+}
+
+function hasErrorCode(body: unknown, code: string): boolean {
+  if (typeof body === 'string') {
+    return body.includes(code);
+  }
+  return !!body && typeof body === 'object' && (body as { error?: unknown }).error === code;
 }

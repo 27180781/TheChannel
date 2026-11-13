@@ -79,7 +79,7 @@ func (q *channelSeoRequest) hashArgs() ([]any, error) {
 // public, active, and not switched off by its managers. The sitemap and the
 // channel page's robots directive both ask this, so they cannot disagree.
 func channelSearchListed(ch *ChannelData) bool {
-	return ch != nil && !ch.Features.Disabled && !ch.Features.RequireAuth && !ch.SeoHidden
+	return ch != nil && !ch.Features.Disabled && !ch.isPrivate() && !ch.SeoHidden
 }
 
 // channelSearchTitle and channelSearchDescription are the text a search

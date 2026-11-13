@@ -335,6 +335,13 @@ func pushFcmMessage(slug string, m *Message) {
 		"title": truncateRunes(title, maxPushTitleRunes),
 		"body":  pushPreview(m.Text),
 	}
+	// Device tokens are not tied to an account, so a device registered before
+	// the channel was locked, or by someone since removed from its list,
+	// still receives pushes. On a locked channel the push only says that
+	// something was posted; the text stays behind the allowlist.
+	if chErr == nil && ch.ViewersOnly {
+		data["body"] = "הודעה חדשה בערוץ"
+	}
 
 	// The send loop gets its own budget: ctx above also covers the config and
 	// subscription lookups, and its deadline expiring mid-loop would silently

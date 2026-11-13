@@ -1,0 +1,117 @@
+<div class="viewers-page">
+  @if (loading) {
+    <div class="viewers-loading" [nbSpinner]="true" nbSpinnerStatus="primary" nbSpinnerMessage="טוענים…"></div>
+  } @else if (loadFailed) {
+    <nb-card>
+      <nb-card-body class="viewers-empty">
+        <nb-icon icon="wifi-off-outline"></nb-icon>
+        <strong>לא הצלחנו לטעון את ההגדרה</strong>
+        <button nbButton status="primary" size="small" type="button" (click)="load()">
+          <nb-icon icon="refresh-outline"></nb-icon> ניסיון נוסף
+        </button>
+      </nb-card-body>
+    </nb-card>
+  } @else {
+    <nb-card class="lock" [class.lock--on]="enabled">
+      <nb-card-body class="lock__body">
+        <nb-icon [icon]="enabled ? 'lock-outline' : 'unlock-outline'" class="lock__icon"></nb-icon>
+        <div class="lock__text">
+          <strong>ערוץ נעול למורשים בלבד</strong>
+          <span>
+            @if (enabled) {
+              רק מי שמתחבר עם כתובת מהרשימה למטה, ואנשי הצוות של הערוץ, יכולים לקרוא אותו.
+            } @else {
+              כבוי: כל מי שיש לו את הקישור יכול לקרוא את הערוץ (אלא אם הנהלת המערכת דרשה התחברות).
+            }
+          </span>
+        </div>
+        <nb-toggle [(ngModel)]="enabled" status="primary" aria-label="ערוץ נעול למורשים בלבד"></nb-toggle>
+      </nb-card-body>
+      @if (enabled && !emails.length) {
+        <nb-card-footer class="lock__warn" role="status">
+          <nb-icon icon="alert-triangle-outline"></nb-icon>
+          הרשימה ריקה: אחרי השמירה רק אנשי הצוות יוכלו לראות את הערוץ.
+        </nb-card-footer>
+      }
+    </nb-card>
+
+    <nb-card>
+      <nb-card-header class="card-head">
+        <nb-icon icon="person-add-outline"></nb-icon>
+        <h2>הוספת כתובות</h2>
+      </nb-card-header>
+      <nb-card-body>
+        <p class="lead">
+          מזינים את כתובת המייל שאיתה האדם מתחבר לאתר (חשבון גוגל). אפשר להדביק כמה כתובות יחד, אחת בכל שורה
+          או מופרדות בפסיק.
+        </p>
+        <form class="add" (ngSubmit)="addDraft()" novalidate>
+          <textarea nbInput fullWidth dir="ltr" name="draft" rows="3" [(ngModel)]="draft" (ngModelChange)="addError = ''"
+                    placeholder="name@gmail.com" [status]="addError ? 'danger' : 'basic'"
+                    aria-label="כתובות מייל להוספה"></textarea>
+          @if (addError) {
+            <span class="add__error" role="alert">{{ addError }}</span>
+          }
+          <div class="add__actions">
+            <button nbButton status="primary" type="submit">
+              <nb-icon icon="plus-outline"></nb-icon>
+              הוספה לרשימה
+            </button>
+          </div>
+        </form>
+      </nb-card-body>
+    </nb-card>
+
+    <nb-card>
+      <nb-card-header class="card-head">
+        <nb-icon icon="people-outline"></nb-icon>
+        <h2>המורשים לצפות</h2>
+        <span class="pill">{{ emails.length }}</span>
+      </nb-card-header>
+      <nb-card-body>
+        @if (!emails.length) {
+          <div class="viewers-empty">
+            <nb-icon icon="people-outline"></nb-icon>
+            <strong>עדיין אין כתובות ברשימה</strong>
+            <span>הוסיפו כתובות בטופס שלמעלה, ואז לחצו "שמירה".</span>
+          </div>
+        } @else {
+          @if (emails.length > 8) {
+            <input nbInput fullWidth dir="ltr" class="filter" type="search" name="filter" [(ngModel)]="filter"
+                   placeholder="חיפוש ברשימה" aria-label="חיפוש ברשימה">
+          }
+          <ul class="list">
+            @for (e of shown; track e) {
+              <li class="viewer" [class.is-pending]="pending.has(e)">
+                <span class="viewer__email" dir="ltr">{{ e }}</span>
+                @if (e === myEmail) { <span class="pill pill--me">זה אתם</span> }
+                @if (pending.has(e)) { <span class="pill pill--pending">טרם נשמר</span> }
+                <button nbButton ghost status="danger" size="small" type="button" class="viewer__remove"
+                        (click)="remove(e)" [attr.aria-label]="'הסרת ' + e" nbTooltip="הסרה מהרשימה">
+                  <nb-icon icon="trash-2-outline"></nb-icon>
+                </button>
+              </li>
+            } @empty {
+              <li class="viewer viewer--none">אין כתובת שמתאימה לחיפוש</li>
+            }
+          </ul>
+        }
+      </nb-card-body>
+    </nb-card>
+
+    <div class="save-bar">
+      <button nbButton status="primary" type="button" [disabled]="saving || !dirty" (click)="save()"
+              [nbSpinner]="saving" nbSpinnerStatus="control" nbSpinnerSize="small">
+        <nb-icon icon="save-outline"></nb-icon>
+        {{ saving ? 'שומרים…' : 'שמירה' }}
+      </button>
+      @if (dirty && !saving) {
+        <button nbButton ghost status="basic" size="small" type="button" (click)="load()">ביטול שינויים</button>
+      }
+      <span class="save-bar__spacer"></span>
+      <span class="save-bar__state" [class.is-dirty]="dirty" aria-live="polite">
+        {{ dirty ? 'יש שינויים שלא נשמרו' : 'הכול שמור' }}
+      </span>
+    </div>
+  }
+</div>

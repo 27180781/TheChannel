@@ -85,6 +85,7 @@ export class ChannelInfoFormComponent implements OnInit {
 
   /** A private channel never reaches search, whatever its toggle says. */
   get seoBlockedReason(): string {
+    if (this.channel.viewers_only) return 'הערוץ נעול למורשים בלבד, ולכן לא יופיע בגוגל בכל מקרה.';
     return this.channel.require_auth
       ? 'הערוץ פרטי (כניסה חובה לצפייה), ולכן לא יופיע בגוגל בכל מקרה.'
       : '';

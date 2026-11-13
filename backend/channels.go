@@ -49,6 +49,8 @@ type ChannelData struct {
 	SeoHidden      bool   `json:"seoHidden"`
 	SeoTitle       string `json:"seoTitle"`
 	SeoDescription string `json:"seoDescription"`
+	// ViewersOnly locks the channel to its allowlist of emails (viewers.go).
+	ViewersOnly bool `json:"viewersOnly"`
 }
 
 type ctxKey string
@@ -159,7 +161,11 @@ func requireFeature(pick func(*ChannelFeatures) bool, next http.HandlerFunc) htt
 func channelIfRequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ch := channelFromCtx(r)
-		if ch != nil && ch.Features.RequireAuth {
+		if ch != nil && ch.ViewersOnly {
+			if enforceViewersOnly(w, r, ch) {
+				next.ServeHTTP(w, r)
+			}
+		} else if ch != nil && ch.Features.RequireAuth {
 			checkLogin(next).ServeHTTP(w, r)
 		} else {
 			next.ServeHTTP(w, r)

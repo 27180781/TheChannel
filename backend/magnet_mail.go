@@ -254,7 +254,7 @@ func ticketMailChannel(ctx context.Context, t *SupportTicket) *ChannelData {
 	if err != nil || ch == nil {
 		return nil
 	}
-	if !ch.Features.Disabled && !ch.Features.RequireAuth {
+	if !ch.Features.Disabled && !ch.isPrivate() {
 		return ch
 	}
 	if !t.Authenticated {

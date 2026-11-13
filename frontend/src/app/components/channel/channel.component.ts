@@ -246,6 +246,19 @@ export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
     return this.channelStatus.disabledSlug();
   }
 
+  /**
+   * Slug of a channel locked to authorized viewers that this signed-in
+   * account is not on the list of. Null otherwise.
+   */
+  get channelRestricted(): string | null {
+    return this.channelStatus.restrictedSlug();
+  }
+
+  /** Disabled or restricted: either way only a card renders, not the channel. */
+  get channelBlocked(): boolean {
+    return !!this.channelDisabled || !!this.channelRestricted;
+  }
+
   /** Slug that answered 404 on /info — no such channel. Null otherwise. */
   get channelNotFound(): string | null {
     return this.channelStatus.notFoundSlug();
@@ -311,7 +324,7 @@ export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
     // one — but the guard's own /info probe may already have answered for THIS
     // slug (not found / disabled); wiping that would mount the chat shell for
     // one round trip and request everything again before the card appears.
-    if (slug === null || (this.channelStatus.notFoundSlug() !== slug && this.channelStatus.disabledSlug() !== slug)) {
+    if (slug === null || (this.channelStatus.notFoundSlug() !== slug && this.channelStatus.disabledSlug() !== slug && this.channelStatus.restrictedSlug() !== slug)) {
       this.channelStatus.reset();
     }
     // Run change detection now so the @if (slugReady) block actually destroys
@@ -384,7 +397,8 @@ export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
     // of the channel's is fetched for it. The session still is — the card's
     // buttons ("לערוצים שלי", "פנייה לתמיכה", logout) depend on it, and
     // /api/user-info is not a request for the missing channel.
-    const flagged = this.channelStatus.notFoundSlug() === slug || this.channelStatus.disabledSlug() === slug;
+    const flagged = this.channelStatus.notFoundSlug() === slug || this.channelStatus.disabledSlug() === slug
+      || this.channelStatus.restrictedSlug() === slug;
 
     if (!flagged) {
       this.adsService.getAds().then(ad => {
@@ -443,6 +457,19 @@ export class ChannelComponent implements OnInit, AfterViewChecked, OnDestroy {
     // the chat shell appear for a frame and fire its requests for the missing
     // channel on the way out. initChannel() resets a stale flag on arrival.
     this.router.navigate(['/']).then(() => this.channelStatus.reset());
+  }
+
+  /**
+   * The restricted card: sign out and come back here after signing in with
+   * the account that is on the list.
+   */
+  async switchAccount(): Promise<void> {
+    try {
+      localStorage.setItem('returnUrl', this.router.url);
+    } catch {
+      // Without storage the visitor lands on their channels; still usable.
+    }
+    await this.logout();
   }
 
   async logout(): Promise<void> {

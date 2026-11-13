@@ -109,7 +109,7 @@ func lookupPageChannel(ctx context.Context, slug string) (*ChannelData, channelV
 	if err != nil {
 		return nil, channelUnknown
 	}
-	if ch.Features.Disabled || ch.Features.RequireAuth {
+	if ch.Features.Disabled || ch.isPrivate() {
 		return nil, channelHidden
 	}
 	return ch, channelPublic

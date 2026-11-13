@@ -11,6 +11,12 @@ import { ChannelUser } from '../models/channel-user.model';
 
 export type { ChannelUser };
 
+export interface ChannelViewers {
+  /** On: only the emails below (and the channel's staff) can read it. */
+  enabled: boolean;
+  emails: string[];
+}
+
 export type EditMsg = {
   new?: boolean;
   isScheduling?: boolean;
@@ -90,6 +96,15 @@ export class AdminService {
 
   setChannelUsers(users: ChannelUser[]): Promise<ResponseResult> {
     return firstValueFrom(this.http.post<ResponseResult>(`/api/channel/${this.slug}/admin/users/set`, { users }));
+  }
+
+  // Who may read a channel locked to authorized viewers (viewers.go).
+  getViewers(): Promise<ChannelViewers> {
+    return firstValueFrom(this.http.get<ChannelViewers>(`/api/channel/${this.slug}/admin/viewers/get`));
+  }
+
+  setViewers(body: ChannelViewers): Promise<ChannelViewers> {
+    return firstValueFrom(this.http.post<ChannelViewers>(`/api/channel/${this.slug}/admin/viewers/set`, body));
   }
 
   setTags(tags: ChannelTag[]) {

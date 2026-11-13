@@ -252,6 +252,9 @@ func main() {
 				r.Post("/settings/set", protectedWithChannelRole(RoleOwner, setSettings))
 				r.Get("/users/get", protectedWithChannelRole(RoleOwner, getChannelUsers))
 				r.Post("/users/set", protectedWithChannelRole(RoleOwner, setChannelUsers))
+				// Channel locked to a list of emails (viewers.go).
+				r.Get("/viewers/get", protectedWithChannelRole(RoleOwner, getChannelViewers))
+				r.Post("/viewers/set", protectedWithChannelRole(RoleOwner, setChannelViewers))
 				r.Get("/storage", protectedWithChannelRole(RoleOwner, getChannelStorageInfo))
 				r.Post("/storage/auto-cleanup", protectedWithChannelRole(RoleOwner, setChannelAutoCleanup))
 				// The channel's own Magnet numbers. Owner level like the
