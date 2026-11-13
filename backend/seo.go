@@ -244,6 +244,13 @@ func buildPageMeta(ctx context.Context, origin, siteName, p string) pageMeta {
 		m.StructuredData = homeStructuredData(origin, siteName)
 		m.Body = homeStaticBody(siteName)
 
+	case p == publicChannelsPath || p == publicChannelsPath+"/":
+		m.Title = publicChannelsTitle + " · " + siteName
+		m.Description = publicChannelsLead
+		m.Canonical = publicChannelsPath
+		cards, _ := listPublicChannels(ctx)
+		m.Body = publicChannelsStaticBody(siteName, cards)
+
 	case postPagePathRe.MatchString(p):
 		sm := postPagePathRe.FindStringSubmatch(p)
 		m = buildPostPageMeta(ctx, origin, siteName, m, sm[1], sm[2])

@@ -53,10 +53,16 @@ interface LandingFeature {
         <span class="brand-mark" aria-hidden="true"><nb-icon aria-hidden="true" icon="radio-outline"></nb-icon></span>
         הערוץ
       </span>
-      <a nbButton ghost status="primary" size="small" [routerLink]="['/login']">
-        <nb-icon aria-hidden="true" icon="log-in-outline"></nb-icon>
-        התחברות
-      </a>
+      <span class="topbar__links">
+        <a nbButton ghost status="basic" size="small" [routerLink]="['/channels']">
+          <nb-icon aria-hidden="true" icon="compass-outline"></nb-icon>
+          ערוצים ציבוריים
+        </a>
+        <a nbButton ghost status="primary" size="small" [routerLink]="['/login']">
+          <nb-icon aria-hidden="true" icon="log-in-outline"></nb-icon>
+          התחברות
+        </a>
+      </span>
     </nav>
 
     <!-- Hero -->
@@ -240,6 +246,8 @@ interface LandingFeature {
       <span>&copy; {{ year }}</span>
       <span class="footer__sep" aria-hidden="true">·</span>
       <a class="footer__link" [routerLink]="['/login']">התחברות</a>
+      <span class="footer__sep" aria-hidden="true">·</span>
+      <a class="footer__link" [routerLink]="['/channels']">ערוצים ציבוריים</a>
       <span class="footer__sep" aria-hidden="true">·</span>
       <!-- Server-rendered pages, outside the app: plain links, full load. -->
       <a class="footer__link" href="/open-channel">מדריך לפתיחת ערוץ</a>

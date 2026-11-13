@@ -1,7 +1,7 @@
 import { uploadErrorMessage } from '../../../services/upload-error';
 import { Component, OnInit } from '@angular/core';
 import {
-  NbButtonModule, NbCardModule, NbIconModule, NbInputModule, NbSpinnerModule, NbToastrService, NbTooltipModule,
+  NbButtonModule, NbCardModule, NbCheckboxModule, NbIconModule, NbInputModule, NbSpinnerModule, NbToastrService, NbTooltipModule,
 } from '@nebular/theme';
 import { FormsModule } from '@angular/forms';
 import { HttpEventType } from '@angular/common/http';
@@ -22,6 +22,7 @@ import { NetfreeRequestComponent } from '../../shared/netfree-request.component'
   imports: [
     FormsModule,
     NbCardModule,
+    NbCheckboxModule,
     NbButtonModule,
     NbSpinnerModule,
     NbInputModule,
@@ -78,9 +79,18 @@ export class ChannelInfoFormComponent implements OnInit {
       || (a.description ?? '') !== (b.description ?? '')
       || (a.logoUrl ?? '') !== (b.logoUrl ?? '')
       || (a.contact_us ?? '') !== (b.contact_us ?? '')
+      || !!a.public_listed !== !!b.public_listed
       || !!a.seo_hidden !== !!b.seo_hidden
       || (a.seo_title ?? '') !== (b.seo_title ?? '')
       || (a.seo_description ?? '') !== (b.seo_description ?? '');
+  }
+
+  /** A private or locked channel is never in the public directory either. */
+  get directoryBlockedReason(): string {
+    if (this.channel.viewers_only) return 'הערוץ נעול למורשים בלבד, ולכן לא יופיע ברשימה הציבורית בכל מקרה.';
+    return this.channel.require_auth
+      ? 'הערוץ פרטי (כניסה חובה לצפייה), ולכן לא יופיע ברשימה הציבורית בכל מקרה.'
+      : '';
   }
 
   /** A private channel never reaches search, whatever its toggle says. */
@@ -122,12 +132,14 @@ export class ChannelInfoFormComponent implements OnInit {
       seoTitle: (this.channel.seo_title || '').trim(),
       seoDescription: (this.channel.seo_description || '').trim(),
     };
-    this.chatService.editChannelInfo(name, description, logoUrl, contactUs, seo).subscribe({
+    const publicListed = !!this.channel.public_listed;
+    this.chatService.editChannelInfo(name, description, logoUrl, contactUs, seo, publicListed).subscribe({
       next: () => {
         this.isSending = false;
         this.toastrService.success("", "פרטי הערוץ נשמרו");
         this.saved = {
           ...this.channel, name, description, logoUrl, contact_us: contactUs,
+          public_listed: publicListed,
           seo_hidden: seo.seoHidden, seo_title: seo.seoTitle, seo_description: seo.seoDescription,
         };
         this.channel = { ...this.saved };

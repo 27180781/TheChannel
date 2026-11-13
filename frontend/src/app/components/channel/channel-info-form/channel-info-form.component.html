@@ -57,6 +57,20 @@
           <input id="channel-contact" type="text" nbInput fullWidth dir="ltr" [(ngModel)]="channel.contact_us"
                  placeholder="https://wa.me/972… או mailto:me@example.com" autocomplete="off" inputmode="url">
         </div>
+
+        <div class="field field--directory">
+          <nb-checkbox [(ngModel)]="channel.public_listed" [disabled]="!!directoryBlockedReason">
+            הצגה ברשימת הערוצים הציבוריים
+          </nb-checkbox>
+          <p class="field__hint">
+            @if (directoryBlockedReason) {
+              {{ directoryBlockedReason }}
+            } @else {
+              כשמסומן, הערוץ מופיע בעמוד <a href="/channels" target="_blank" rel="noopener">הערוצים הציבוריים</a> של האתר,
+              עם השם, התיאור, הלוגו וקישור לכניסה. אפשר להסיר את הסימון בכל רגע.
+            }
+          </p>
+        </div>
       }
     </nb-card-body>
   </nb-card>

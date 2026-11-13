@@ -27,6 +27,8 @@ export interface Channel {
   seo_hidden?: boolean;
   seo_title?: string;
   seo_description?: string;
+  // Listed in the public channels directory (backend/public_channels.go).
+  public_listed?: boolean;
 }
 
 /** The search part of a channel edit, as the backend's request names it. */

@@ -16,6 +16,11 @@ export const routes: Routes = [
     path: '',
     loadComponent: () => import('./components/landing/landing-page.component').then(m => m.LandingPageComponent),
   },
+  // The public channels directory (backend/public_channels.go).
+  {
+    path: 'channels',
+    loadComponent: () => import('./components/public-channels/public-channels.component').then(m => m.PublicChannelsComponent),
+  },
   {
     path: 'login',
     loadComponent: () => import('./components/login/login.component').then(m => m.LoginComponent),

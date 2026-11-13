@@ -51,6 +51,9 @@ type ChannelData struct {
 	SeoDescription string `json:"seoDescription"`
 	// ViewersOnly locks the channel to its allowlist of emails (viewers.go).
 	ViewersOnly bool `json:"viewersOnly"`
+	// PublicListed: the managers asked for the channel to appear in the
+	// public channels directory (public_channels.go). Absent means no.
+	PublicListed bool `json:"publicListed"`
 }
 
 type ctxKey string
@@ -348,6 +351,8 @@ func deleteChannel(w http.ResponseWriter, r *http.Request) {
 	// exists, where it would sit and pick up the events of whatever tenant
 	// re-creates the slug. Now that the channel is gone, reconnects meet 404.
 	sseStopHub(streamKey)
+	// A deleted channel leaves the sitemap and the public directory now.
+	resetSitemapCache()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(Response{Success: true})

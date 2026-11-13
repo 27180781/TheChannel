@@ -36,6 +36,8 @@ type Channel struct {
 	SeoHidden      bool   `json:"seo_hidden"`
 	SeoTitle       string `json:"seo_title"`
 	SeoDescription string `json:"seo_description"`
+	// In the public channels directory (public_channels.go).
+	PublicListed bool `json:"public_listed"`
 }
 
 func getChannelInfo(w http.ResponseWriter, r *http.Request) {
@@ -65,6 +67,7 @@ func getChannelInfo(w http.ResponseWriter, r *http.Request) {
 		channel.SeoHidden = ch.SeoHidden
 		channel.SeoTitle = ch.SeoTitle
 		channel.SeoDescription = ch.SeoDescription
+		channel.PublicListed = ch.PublicListed
 		channel.Features = PublicFeatures{
 			Reactions:         ch.Features.Reactions,
 			FileUploads:       ch.Features.FileUploads,
@@ -134,6 +137,8 @@ func editChannelInfo(w http.ResponseWriter, r *http.Request) {
 		Description *string `json:"description"`
 		LogoUrl     *string `json:"logoUrl"`
 		ContactUs   *string `json:"contactUs"`
+		// The public channels directory opt-in (public_channels.go).
+		PublicListed *bool `json:"publicListed"`
 		channelSeoRequest
 	}
 
@@ -192,6 +197,13 @@ func editChannelInfo(w http.ResponseWriter, r *http.Request) {
 	if req.ContactUs != nil {
 		args = append(args, "contactUs", *req.ContactUs)
 	}
+	if req.PublicListed != nil {
+		v := "0"
+		if *req.PublicListed {
+			v = "1"
+		}
+		args = append(args, "publicListed", v)
+	}
 	seoArgs, err := req.channelSeoRequest.hashArgs()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -211,7 +223,7 @@ func editChannelInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	// The sitemap is cached for a quarter of an hour; a channel taken out of
 	// search must leave it now, not when the cache happens to expire.
-	if len(seoArgs) > 0 {
+	if len(seoArgs) > 0 || req.PublicListed != nil {
 		resetSitemapCache()
 	}
 
