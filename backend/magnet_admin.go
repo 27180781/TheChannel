@@ -48,6 +48,16 @@ var (
 	magnetAdminOperatorCtxKey = &struct{ name string }{"magnet-operator"}
 )
 
+// The boot log says whether the door is open, so a deploy whose variable was
+// not applied shows in the CapRover log at once, not on the first click.
+func init() {
+	if magnetAdminSecret == "" {
+		log.Println("magnet admin: MAGNET_ADMIN_SECRET is not set at boot — the Magnet admin tab is off")
+	} else {
+		log.Println("magnet admin: door enabled")
+	}
+}
+
 // magnetOperator is who in Magnet made this request, or false when the request
 // did not come through the Magnet admin door.
 func magnetOperator(r *http.Request) (string, bool) {
