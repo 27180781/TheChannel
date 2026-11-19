@@ -595,6 +595,11 @@ func addViewsToMessages(ctx context.Context, slug string, countViews bool, messa
 	for _, m := range messages {
 		pipe.HIncrBy(ctx, fmt.Sprintf("channel:%s:messages:%d", slug, m.ID), "views", 1)
 	}
+	// The channel's running total beside the per-post counters, so the views
+	// chart reads one key per channel instead of every post (channel_views.go).
+	if len(messages) > 0 {
+		pipe.IncrBy(ctx, messageViewsKey(slug), int64(len(messages)))
+	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		log.Printf("addViewsToMessages: %s: recording %d views failed: %v\n", slug, len(messages), err)
 	}
@@ -1500,6 +1505,8 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 	// Step 1d: monthly SSE statistics keys have no index; enumerate the possible
 	// month/year combinations instead of running a SCAN across the keyspace.
 	statsKeys := sseStatisticsKeysFor(p)
+	// Step 1e: the audience counters and daily visitor sketches (channel_views.go).
+	statsKeys = append(statsKeys, viewsKeysFor(p)...)
 
 	// Step 2: delete all known fixed keys in one pipeline
 	fixedKeys := []string{
@@ -1548,6 +1555,10 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 	}
 	pipe.ZRem(ctx, "channels:list", slug)
 	pipe.ZRem(ctx, "scheduled:due_channels", slug)
+	// A slug created again starts without views; its old posts are gone, so
+	// the one-time backfill has nothing to add, and leaving the claim would
+	// only keep a deleted slug in the set.
+	pipe.SRem(ctx, messageViewsBackfilledKey, slug)
 	if _, err := pipe.Exec(ctx); err != nil {
 		return err
 	}

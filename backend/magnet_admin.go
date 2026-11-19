@@ -147,6 +147,7 @@ func mountSuperAdminRoutes(r chi.Router) {
 	r.Get("/channels/{slug}/storage", getSuperAdminChannelStorage)
 	r.Put("/channels/{slug}/storage", setSuperAdminChannelStorage)
 	r.Post("/statistics/reset", resetStatistics)
+	r.Get("/views", getChannelsViews)
 	r.Get("/support/tickets", adminListSupportTickets)
 	r.Get("/support/summary", adminSupportSummary)
 	r.Post("/support/tickets/{id}/reply", adminReplySupportTicket)

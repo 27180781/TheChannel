@@ -112,6 +112,12 @@ func getMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Audience for the super admin's views chart (channel_views.go). Counted
+	// before the ETag short-circuit so a 304 is still a visit.
+	if !isAdmin && isFeedVisit(r) && !isCrawler(r) {
+		go recordChannelVisit(slug, clientKey(r))
+	}
+
 	// ETag: skip expensive query if content hasn't changed since client's copy.
 	// The body varies by viewer (admins see real authors), so the validator
 	// has to carry those inputs and the response must never be reused across
