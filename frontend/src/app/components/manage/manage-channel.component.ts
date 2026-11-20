@@ -3,6 +3,7 @@ import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { Title } from '@angular/platform-browser';
 import {
   NbAccordionModule,
+  NbAlertModule,
   NbButtonModule,
   NbCardModule,
   NbIconModule,
@@ -11,7 +12,8 @@ import {
   NbSpinnerModule,
   NbTooltipModule,
 } from '@nebular/theme';
-import { Subscription } from 'rxjs';
+import { HttpClient } from '@angular/common/http';
+import { Subscription, firstValueFrom } from 'rxjs';
 import { SlugService } from '../../services/slug.service';
 import { ChatService } from '../../services/chat.service';
 import { AuthService } from '../../services/auth.service';
@@ -70,6 +72,7 @@ type LoadError = '' | 'notfound' | 'forbidden' | 'network';
     NbSpinnerModule,
     NbTooltipModule,
     NbAccordionModule,
+    NbAlertModule,
     ChannelInfoFormComponent,
     SettingsComponent,
     PrivilegDashboardComponent,
@@ -93,6 +96,12 @@ export class ManageChannelComponent implements OnInit, OnDestroy {
 
   loading = true;
   loadError: LoadError = '';
+  /**
+   * Set from 80 % storage use up, for owners, while no storage-increase request
+   * is waiting: every tab then shows a strip pointing to the request in "אחסון".
+   */
+  storageAlert: { percent: number; critical: boolean } | null = null;
+
   /** Set when the open tab's endpoint answered 403: the role changed under us. */
   accessDenied = false;
 
@@ -188,6 +197,7 @@ export class ManageChannelComponent implements OnInit, OnDestroy {
     private notificationsService: NotificationsService,
     private myChannels: MyChannelsService,
     private titleService: Title,
+    private http: HttpClient,
   ) {}
 
   /** Follows the channel info, so a rename in the "פרטי הערוץ" tab shows at once. */
@@ -236,6 +246,7 @@ export class ManageChannelComponent implements OnInit, OnDestroy {
         this.notificationsService.reset();
         this.loadChannel();
         this.buildMenu();
+        this.loadStorageAlert();
         this.loadSwitcher();
       }
       if (!tab) {
@@ -243,7 +254,10 @@ export class ManageChannelComponent implements OnInit, OnDestroy {
         return;
       }
       if (tab !== this.tab) this.accessDenied = false;
+      // Leaving "אחסון" re-reads the state: a request sent there hides the strip.
+      const leftStorage = this.tab === 'storage' && tab !== 'storage';
       this.tab = tab;
+      if (leftStorage) this.loadStorageAlert();
       this.updateTitle();
       this.revealActiveTab();
     });
@@ -287,6 +301,25 @@ export class ManageChannelComponent implements OnInit, OnDestroy {
         this.loadError = status === 404 ? 'notfound' : (status === 401 || status === 403) ? 'forbidden' : 'network';
       })
       .finally(() => { if (slug === this.slug) this.loading = false; });
+  }
+
+  /** Quiet on any failure: the strip is a nudge, the storage tab has the real state. */
+  private loadStorageAlert(): void {
+    this.storageAlert = null;
+    if (!this.canAccess('owner')) return;
+    const slug = this.slug;
+    firstValueFrom(this.http.get<{
+      quotaBytes: number; usedPercent: number; level: string; increaseRequest?: unknown;
+    }>(`/api/channel/${slug}/admin/storage`))
+      .then(info => {
+        if (slug !== this.slug || !info?.quotaBytes || info.increaseRequest) return;
+        if (info.level !== 'warning' && info.level !== 'critical') return;
+        this.storageAlert = {
+          percent: Math.min(100, Math.round(info.usedPercent)),
+          critical: info.level === 'critical',
+        };
+      })
+      .catch(() => { /* no strip */ });
   }
 
   private loadSwitcher(): void {

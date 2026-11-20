@@ -8,6 +8,8 @@ import {
 import {
   SupportService, SupportStatus, SupportTicket,
 } from '../../../services/support.service';
+import { SuperAdminService } from '../../../services/super-admin.service';
+import { formatBytes } from '../../../utils/storage-format';
 
 /**
  * The operator's inbox: every ticket from every channel, plus the ones sent
@@ -33,6 +35,10 @@ export class SupportInboxComponent implements OnInit {
   busy = false;
   openId = '';
   replyBody = '';
+  /** The quota field on an open storage-increase ticket. */
+  quotaGb: number | null = null;
+  quotaUsage = '';
+  quotaLoading = false;
 
   filter: 'all' | SupportStatus = 'open';
   readonly filters: { value: 'all' | SupportStatus; label: string }[] = [
@@ -45,6 +51,7 @@ export class SupportInboxComponent implements OnInit {
   constructor(
     private support: SupportService,
     private toastr: NbToastrService,
+    private superAdmin: SuperAdminService,
   ) {}
 
   ngOnInit(): void {
@@ -92,6 +99,46 @@ export class SupportInboxComponent implements OnInit {
   toggle(id: string): void {
     this.openId = this.openId === id ? '' : id;
     this.replyBody = '';
+    const t = this.tickets.find(x => x.id === this.openId);
+    if (t?.topic === 'storage_increase' && t.channelSlug) this.loadQuota(t.channelSlug);
+  }
+
+  private async loadQuota(slug: string): Promise<void> {
+    this.quotaLoading = true;
+    this.quotaGb = null;
+    this.quotaUsage = '';
+    try {
+      const cfg = await this.superAdmin.getChannelStorage(slug);
+      if (this.tickets.find(x => x.id === this.openId)?.channelSlug !== slug) return;
+      const info = cfg?.storageInfo;
+      // The field starts at the quota in force, the default included, so
+      // raising it is one edit rather than a lookup.
+      this.quotaGb = info?.quotaBytes ? Math.round(info.quotaBytes / (1024 ** 3) * 100) / 100 : (cfg?.quotaGb ?? 0);
+      if (info) {
+        this.quotaUsage = info.quotaBytes
+          ? `${formatBytes(info.usedBytes)} / ${formatBytes(info.quotaBytes)} (${Math.round(info.usedPercent)}%)`
+          : `${formatBytes(info.usedBytes)} (∞)`;
+      }
+    } catch {
+      this.quotaGb = null;
+      this.toastr.danger('', 'מכסת הערוץ לא נטענה');
+    } finally {
+      this.quotaLoading = false;
+    }
+  }
+
+  async saveQuota(t: SupportTicket): Promise<void> {
+    if (!t.channelSlug || this.quotaGb === null || this.quotaGb < 0) return;
+    this.busy = true;
+    try {
+      await this.superAdmin.setChannelStorage(t.channelSlug, Number(this.quotaGb));
+      this.toastr.success('', 'מכסת האחסון של הערוץ עודכנה');
+      await this.loadQuota(t.channelSlug);
+    } catch {
+      this.toastr.danger('', 'עדכון המכסה לא הצליח, נסו שוב');
+    } finally {
+      this.busy = false;
+    }
   }
 
   async reply(t: SupportTicket): Promise<void> {

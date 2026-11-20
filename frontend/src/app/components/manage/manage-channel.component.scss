@@ -381,3 +381,25 @@
     font-size: 1.35rem;
   }
 }
+
+.storage-strip {
+  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.storage-strip__text {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  line-height: 1.5;
+}
+
+.storage-strip__btn {
+  flex-shrink: 0;
+}

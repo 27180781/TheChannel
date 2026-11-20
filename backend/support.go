@@ -97,6 +97,10 @@ type SupportTicket struct {
 	// Set when the ticket was opened from a channel's admin panel, so the
 	// operator knows which tenant is asking.
 	ChannelSlug string `json:"channelSlug,omitempty"`
+	// Topic marks a ticket the system opened for a known request, so the
+	// operator's inbox can tag it and offer the matching action. Empty for an
+	// ordinary ticket. Only set server side (storage_request.go).
+	Topic string `json:"topic,omitempty"`
 	// True when the sender had a session. A ticket from a signed-in user has a
 	// trustworthy email; an anonymous one carries whatever was typed.
 	Authenticated bool `json:"authenticated"`

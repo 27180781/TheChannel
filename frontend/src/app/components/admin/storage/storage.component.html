@@ -47,17 +47,54 @@
             @if (info.autoCleanup) {
               הניקוי האוטומטי דלוק, כך שהעלאות חדשות ימשיכו לעבוד על חשבון קבצים ישנים.
             } @else {
-              בקרוב העלאות חדשות ייכשלו. הפעילו ניקוי אוטומטי, או בקשו מהנהלת המערכת להגדיל את המכסה.
+              בקרוב העלאות חדשות ייכשלו. הפעילו ניקוי אוטומטי, או בקשו מהנהלת המערכת להגדיל את המכסה (בכרטיס למטה).
             }
           </nb-alert>
         } @else if (!unlimited && info.level === 'warning') {
           <nb-alert status="warning" class="storage-alert">
-            האחסון מתמלא ({{ percentDisplay() }}%). כדאי להחליט כבר עכשיו מה קורה כשהוא נגמר.
+            האחסון מתמלא ({{ percentDisplay() }}%). כדאי להחליט כבר עכשיו מה קורה כשהוא נגמר, או לבקש מקום נוסף.
           </nb-alert>
         }
       }
     </nb-card-body>
   </nb-card>
+
+  @if (!loading && info && !unlimited) {
+    <nb-card class="request-card" [class.request-card--urgent]="info.level !== 'ok'" id="storage-request">
+      <nb-card-header class="card-head">
+        <nb-icon icon="plus-circle-outline"></nb-icon>
+        <h2>צריכים יותר מקום?</h2>
+        @if (info.increaseRequest) { <span class="pill pill--wait">הבקשה ממתינה לטיפול</span> }
+      </nb-card-header>
+      <nb-card-body>
+        @if (info.increaseRequest; as req) {
+          <p class="request__text">
+            שלחתם בקשה להגדלת האחסון ב-<span class="ltr-figure">{{ formatDate(req.createdAt) }}</span>.
+            הנהלת המערכת קיבלה אותה, והתשובה תופיע בלשונית "פנייה לתמיכה".
+          </p>
+          <a nbButton ghost status="primary" size="small" [routerLink]="['/channel', slug, 'manage', 'support']">
+            <nb-icon icon="message-circle-outline"></nb-icon> לפניות שלי
+          </a>
+        } @else {
+          <p class="request__text">
+            אפשר לבקש מהנהלת המערכת להגדיל את מכסת האחסון של הערוץ. הבקשה נשלחת עם נתוני השימוש הנוכחיים,
+            והתשובה תופיע בלשונית "פנייה לתמיכה".
+          </p>
+          <label class="request__label" for="storage-request-note">הערה להנהלה (לא חובה)</label>
+          <textarea nbInput fullWidth id="storage-request-note" rows="3" maxlength="1000"
+                    [value]="note" (input)="note = $any($event.target).value"
+                    placeholder="למשל: כמה מקום צריך, או למה"></textarea>
+          <div class="request__actions">
+            <button nbButton [status]="info.level === 'ok' ? 'basic' : 'primary'" size="small" type="button"
+                    (click)="requestIncrease()" [disabled]="requesting">
+              <nb-icon icon="paper-plane-outline"></nb-icon>
+              {{ requesting ? 'שולחים…' : 'שליחת בקשה להגדלת אחסון' }}
+            </button>
+          </div>
+        }
+      </nb-card-body>
+    </nb-card>
+  }
 
   @if (!loading && info) {
     <nb-card>

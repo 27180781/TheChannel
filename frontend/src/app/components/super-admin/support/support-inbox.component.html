@@ -62,6 +62,9 @@
                     {{ t.name }} · <span class="sa-ltr">{{ t.email }}</span>
                   </span>
                   <span class="ticket__tags">
+                    @if (t.topic === 'storage_increase') {
+                      <span class="sa-chip sa-chip--warning">בקשת הגדלת אחסון</span>
+                    }
                     @if (t.source === 'email') {
                       <span class="sa-chip sa-chip--info">התקבל במייל</span>
                     } @else if (!t.authenticated) {
@@ -95,6 +98,31 @@
                       </li>
                     }
                   </ol>
+
+                  @if (t.topic === 'storage_increase' && t.channelSlug) {
+                    <div class="quota">
+                      <div class="sa-field">
+                        <label class="sa-field__label" [for]="'quota-' + t.id">מכסת אחסון לערוץ (GB)</label>
+                        @if (quotaLoading) {
+                          <p class="sa-field__hint">טוען את המכסה הנוכחית…</p>
+                        } @else {
+                          <div class="quota__row">
+                            <input nbInput type="number" min="0" step="0.5" [id]="'quota-' + t.id" name="quotaGb"
+                                   [(ngModel)]="quotaGb" class="quota__input">
+                            <button nbButton size="small" status="primary" type="button"
+                                    [disabled]="busy || quotaGb === null || quotaGb < 0" (click)="saveQuota(t)">
+                              <nb-icon icon="hard-drive-outline"></nb-icon>
+                              עדכון המכסה
+                            </button>
+                          </div>
+                          @if (quotaUsage) {
+                            <p class="sa-field__hint">בשימוש כרגע: <span class="sa-ltr">{{ quotaUsage }}</span></p>
+                          }
+                          <p class="sa-field__hint">0 מחזיר את הערוץ למכסת ברירת המחדל של המערכת. העדכון לא שולח תשובה לפונה, כתבו לו למטה.</p>
+                        }
+                      </div>
+                    </div>
+                  }
 
                   <form class="reply" (ngSubmit)="reply(t)" novalidate>
                     <div class="sa-field">

@@ -19,6 +19,9 @@ type StorageInfo struct {
 	AutoCleanup bool    `json:"autoCleanup"`
 	// Warning levels: "ok" | "warning" (>80%) | "critical" (>90%)
 	Level string `json:"level"`
+	// The owner's storage-increase request that is still waiting, if any
+	// (storage_request.go). Only on the owner's own endpoint.
+	IncreaseRequest *StorageIncreaseRequest `json:"increaseRequest,omitempty"`
 }
 
 // gbToBytes converts a GB quota to bytes, reporting whether the value is usable.
@@ -85,6 +88,7 @@ func getChannelStorageInfo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
+	info.IncreaseRequest = pendingStorageIncrease(ctx, slug)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(info)

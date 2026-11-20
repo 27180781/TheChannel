@@ -132,3 +132,21 @@
   line-height: 1.6;
   color: var(--text-basic-color);
 }
+
+.quota {
+  margin: 0 0 1rem;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  background: var(--background-basic-color-2);
+}
+
+.quota__row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.quota__input {
+  max-width: 8rem;
+}
