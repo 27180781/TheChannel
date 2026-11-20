@@ -199,7 +199,9 @@ func addMessage(w http.ResponseWriter, r *http.Request) {
 	recordAuthorID(ctx, user)
 
 	message.Type = body.Type
-	message.Author = sessionDisplayName(user)
+	// Signed with the name the writer chose for this channel (author_names.go),
+	// "מנהל" until they choose one.
+	message.Author = channelAuthorName(ctx, slug, user)
 	message.AuthorId = user.ID
 	// An operator posting is the platform speaking, and the post is served to
 	// the channel's staff, its webhook and the event stream: none of them may

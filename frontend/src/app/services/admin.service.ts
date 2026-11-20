@@ -17,6 +17,19 @@ export interface ChannelViewers {
   emails: string[];
 }
 
+/** The name a writer's posts are signed with on this channel (seen by the channel's staff). */
+export interface AuthorName {
+  mode: 'custom' | 'registered';
+  /** The custom name; empty when mode is 'registered'. */
+  name: string;
+  /** The name the account registered with. */
+  registeredName: string;
+  /** What a writer is signed with until they choose ("מנהל"). */
+  defaultName: string;
+  /** A super admin: always signed "ניהול", nothing to choose. */
+  operator?: boolean;
+}
+
 export type EditMsg = {
   new?: boolean;
   isScheduling?: boolean;
@@ -63,6 +76,14 @@ export class AdminService {
 
   getEditMessage(): EditMsg | undefined {
     return this.messageEdit.value;
+  }
+
+  getAuthorName(): Promise<AuthorName> {
+    return firstValueFrom(this.http.get<AuthorName>(`/api/channel/${this.slug}/admin/author-name`));
+  }
+
+  setAuthorName(body: { mode: 'custom' | 'registered'; name?: string }): Promise<AuthorName> {
+    return firstValueFrom(this.http.post<AuthorName>(`/api/channel/${this.slug}/admin/author-name`, body));
   }
 
   getStatistics(): Promise<Statistics> {

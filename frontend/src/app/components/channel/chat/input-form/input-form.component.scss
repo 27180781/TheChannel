@@ -560,3 +560,65 @@
     font-size: 0.8rem;
   }
 }
+
+/* ---------- signature chip + picker ---------- */
+
+.name-chip {
+  // Shrinks (with an ellipsis) before the tool icons do on a narrow phone.
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 11rem;
+
+  @media (max-width: 400px) {
+    max-width: 7rem;
+  }
+
+  nb-icon {
+    flex: 0 0 auto;
+    font-size: 0.95rem;
+  }
+}
+
+.name-chip__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.name-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.85rem;
+  width: min(88vw, 20rem);
+  font-size: 0.88rem;
+  color: var(--text-basic-color);
+}
+
+.name-pick__opt {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2rem;
+  cursor: pointer;
+
+  input {
+    margin: 0;
+    accent-color: var(--color-primary-500);
+  }
+}
+
+.name-pick__input {
+  margin-inline-start: 1.4rem;
+  width: calc(100% - 1.4rem);
+}
+
+.name-pick__error {
+  font-size: 0.8rem;
+  color: var(--color-danger-600);
+}
+
+.name-pick__actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}

@@ -201,6 +201,17 @@
         </button>
       }
       <span class="tb-spacer"></span>
+      @if (authorName && !authorName.operator) {
+        <!-- Who the post is signed as for the channel's staff. Readers always see the channel's name. -->
+        <button type="button" class="enter-chip name-chip" [nbPopover]="nameTpl" nbPopoverTrigger="click"
+                nbPopoverPlacement="top" #namePop="nbPopover" (nbPopoverShowStateChange)="onNamePickerState($event.isShown)"
+                aria-haspopup="dialog" [attr.aria-expanded]="namePickerShown"
+                [attr.aria-label]="'מפרסמים בשם: ' + signedAs + ' — לחיצה לשינוי'"
+                nbTooltip="השם שיופיע על ההודעה לצוות הערוץ">
+          <nb-icon icon="person-outline" aria-hidden="true"></nb-icon>
+          <span class="name-chip__text">בשם: {{ signedAs }}</span>
+        </button>
+      }
       <!-- The Enter preference, shrunk from a full toggle to a small chip that says what Enter does now. -->
       <button type="button" class="enter-chip" [class.enter-chip--on]="enterSendsMessage"
               (click)="setEnterSendsMessage(!enterSendsMessage)" [attr.aria-pressed]="enterSendsMessage"
@@ -262,5 +273,34 @@
         ללא תגית
       </button>
     }
+  </div>
+</ng-template>
+
+<!-- Signature picker: the name this writer's posts carry for the channel's staff. -->
+<ng-template #nameTpl>
+  <div class="name-pick" role="dialog" aria-label="השם שלך בהודעות" (keydown.escape)="closeNamePicker()">
+    <strong class="tag-pick__title">השם שלך בהודעות</strong>
+    <span class="tag-pick__hint">קוראי הערוץ רואים תמיד את שם הערוץ. השם הזה מופיע לצוות הערוץ על ההודעות שתפרסמו מעכשיו.</span>
+
+    <label class="name-pick__opt">
+      <input type="radio" name="author-name-mode" value="custom" [(ngModel)]="nameMode">
+      <span>שם מותאם אישית</span>
+    </label>
+    <input nbInput fullWidth fieldSize="small" class="name-pick__input" [(ngModel)]="nameDraft"
+           [maxlength]="maxAuthorNameLength" [disabled]="nameMode !== 'custom' || nameSaving"
+           aria-label="השם המותאם אישית" placeholder="למשל: מנהל" (keydown.enter)="saveAuthorName()">
+
+    <label class="name-pick__opt">
+      <input type="radio" name="author-name-mode" value="registered" [(ngModel)]="nameMode">
+      <span>השם הרשום במערכת: <strong>{{ authorName?.registeredName }}</strong></span>
+    </label>
+
+    @if (nameError) {
+      <span class="name-pick__error" role="alert">{{ nameError }}</span>
+    }
+    <div class="name-pick__actions">
+      <button nbButton size="small" status="primary" type="button" (click)="saveAuthorName()" [disabled]="nameSaving">שמירה</button>
+      <button nbButton ghost size="small" status="basic" type="button" (click)="closeNamePicker()" [disabled]="nameSaving">ביטול</button>
+    </div>
   </div>
 </ng-template>

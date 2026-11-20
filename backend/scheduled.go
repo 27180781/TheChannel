@@ -435,7 +435,7 @@ func updateScheduledMessages(w http.ResponseWriter, r *http.Request) {
 	superAdmin := isSuperAdmin(r)
 	for i := range messages {
 		if messages[i].Author == "" {
-			messages[i].Author = sessionDisplayName(user)
+			messages[i].Author = channelAuthorName(ctx, slug, user)
 			messages[i].AuthorId = user.ID
 			if superAdmin {
 				messages[i].Author, messages[i].AuthorId = operatorName, operatorAuthorId
