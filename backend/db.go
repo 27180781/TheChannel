@@ -1537,6 +1537,7 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 	}
 	fixedKeys = append(fixedKeys, tagIndexKeysFor(ctx, p)...)
 	fixedKeys = append(fixedKeys, channelTagsKey(p))
+	fixedKeys = append(fixedKeys, authorNamesKey(p))
 	allKeys := append(fixedKeys, messageKeys...)
 	allKeys = append(allKeys, reactionKeys...)
 	allKeys = append(allKeys, reporterKeys...)

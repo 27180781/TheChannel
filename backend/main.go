@@ -227,6 +227,8 @@ func main() {
 				// Writer level
 				r.Post("/new", protectedWithChannelRole(RoleWriter, addMessage))
 				r.Post("/edit-message", protectedWithChannelRole(RoleWriter, updateMessage))
+				r.Get("/author-name", protectedWithChannelRole(RoleWriter, getAuthorName))
+				r.Post("/author-name", protectedWithChannelRole(RoleWriter, setAuthorName))
 				// DELETE only. The GET alias that used to sit here was a CSRF
 				// hole: the session cookie is SameSite=Lax, which deliberately
 				// still rides along on a top-level GET navigation, so merely

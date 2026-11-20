@@ -18,7 +18,7 @@ import {
 import { MarkdownComponent } from "ngx-markdown";
 import { NgIconsModule } from "@ng-icons/core";
 import { Attachment, ChatFile, ChatMessage, ChatService } from '../../../../services/chat.service';
-import { AdminService, EditMsg } from '../../../../services/admin.service';
+import { AdminService, AuthorName, AuthorNameMode, EditMsg } from '../../../../services/admin.service';
 import { AutosizeModule } from "ngx-autosize";
 import { TimePickerComponent } from './time-picker/time-picker.component';
 import { MessageTimePipe } from '../../../../pipes/message-time.pipe';
@@ -77,6 +77,7 @@ export class InputFormComponent implements OnInit, AfterViewInit, OnDestroy {
   @ViewChild('inputTextArea') inputTextArea!: ElementRef<HTMLTextAreaElement>;
   @ViewChild('helpPop') private helpPop?: NbPopoverDirective;
   @ViewChild('tagPop') private tagPop?: NbPopoverDirective;
+  @ViewChild('namePop') private namePop?: NbPopoverDirective;
 
   @Output() inputHeightChanged = new EventEmitter<number>();
 
@@ -131,6 +132,7 @@ export class InputFormComponent implements OnInit, AfterViewInit, OnDestroy {
     if (this.message) {
       this.input = this.message.text || '';
     }
+    this.loadAuthorName();
 
     this.subscription = this.adminService.messageEditObservable.subscribe((edit?: EditMsg) => {
       if (!edit) {
@@ -142,6 +144,8 @@ export class InputFormComponent implements OnInit, AfterViewInit, OnDestroy {
         this.tag = '';
         this.attachments = [];
         this.schedulingMessage = undefined;
+        // A channel switch: the signature is per channel.
+        this.loadAuthorName();
         return;
       }
       if (edit.isScheduling) {
@@ -385,6 +389,71 @@ export class InputFormComponent implements OnInit, AfterViewInit, OnDestroy {
 
   /** The tag picker popover is open. */
   tagPickerShown = false;
+
+  /** How this writer's posts are signed on the channel; undefined until loaded. */
+  authorName?: AuthorName;
+  /** The signature picker's draft, edited in the popover and saved on demand. */
+  nameMode: AuthorNameMode = 'channel';
+  nameDraft = '';
+  nameSaving = false;
+  nameError = '';
+  namePickerShown = false;
+  protected readonly maxAuthorNameLength = 40;
+  private authorNameLoad = 0;
+
+  /** The name the next post goes out with, as the chip shows it. */
+  get signedAs(): string {
+    const a = this.authorName;
+    if (!a) return '';
+    if (a.mode === 'registered') return a.registeredName;
+    if (a.mode === 'custom') return a.name;
+    return a.channelName;
+  }
+
+  async loadAuthorName() {
+    const seq = ++this.authorNameLoad;
+    try {
+      const a = await this.adminService.getAuthorName();
+      if (seq === this.authorNameLoad) this.authorName = a;
+    } catch {
+      // Not shown when it cannot be read; posting is unaffected.
+      if (seq === this.authorNameLoad) this.authorName = undefined;
+    }
+  }
+
+  onNamePickerState(shown: boolean) {
+    this.namePickerShown = shown;
+    if (shown && this.authorName) {
+      this.nameMode = this.authorName.mode;
+      this.nameDraft = this.authorName.mode === 'custom' ? this.authorName.name : this.authorName.defaultCustomName;
+      this.nameError = '';
+    }
+  }
+
+  closeNamePicker() {
+    this.namePop?.hide();
+  }
+
+  async saveAuthorName() {
+    if (this.nameSaving) return;
+    const name = this.nameDraft.trim();
+    if (this.nameMode === 'custom' && !name) {
+      this.nameError = 'יש לכתוב שם';
+      return;
+    }
+    this.nameSaving = true;
+    this.nameError = '';
+    try {
+      this.authorName = await this.adminService.setAuthorName(
+        this.nameMode === 'custom' ? { mode: 'custom', name } : { mode: this.nameMode });
+      this.namePop?.hide();
+      this.toastrService.success('', 'השם נשמר. ההודעות הבאות שלך יפורסמו בשם: ' + this.signedAs);
+    } catch (err: any) {
+      this.nameError = err?.error?.error || 'השמירה נכשלה, נסו שוב';
+    } finally {
+      this.nameSaving = false;
+    }
+  }
 
   removeAttachment(attachment: Attachment) {
     this.attachments = this.attachments.filter((file) => file !== attachment);
