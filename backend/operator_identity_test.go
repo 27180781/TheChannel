@@ -171,8 +171,9 @@ func TestOperatorPostIsSignedAsManagement(t *testing.T) {
 
 	ownerPost := post(owner, "from the owner")
 	// An ordinary author signs with the name they chose for the channel
-	// (author_names.go), the default until they choose one, and keeps their id.
-	if ownerPost.Author != defaultAuthorName || ownerPost.AuthorId != owner.ID {
+	// (author_names.go), the channel's name until they choose one, and keeps
+	// their id.
+	if ownerPost.Author != channelDisplayName(ctx, slug) || ownerPost.Author == "Channel Owner" || ownerPost.AuthorId != owner.ID {
 		t.Errorf("an ordinary author must sign with their channel name, got %q/%q", ownerPost.Author, ownerPost.AuthorId)
 	}
 

@@ -8,14 +8,16 @@ import (
 	"testing"
 )
 
-// A writer posts as "מנהל" until they choose otherwise, can switch to their
-// registered name or any name they type, and an operator stays "ניהול".
+// A writer posts under the channel's name until they choose otherwise, can
+// switch to their registered name or any name they type, and an operator
+// stays "ניהול".
 func TestAuthorNameSignsPosts(t *testing.T) {
 	useTestSessionStore(t)
 	const slug = "author-name-post"
 	operator, owner := operatorFixture(t, slug, "owner.alias@example.com")
 	ctx := supportCtx(t)
-	t.Cleanup(func() { rdb.Del(ctx, authorNamesKey(slug)) })
+	rdb.HSet(ctx, "channel:"+slug, "name", "ערוץ הבדיקה")
+	t.Cleanup(func() { rdb.Del(ctx, authorNamesKey(slug)); rdb.HDel(ctx, "channel:"+slug, "name") })
 
 	post := func(sess Session) Message {
 		t.Helper()
@@ -48,10 +50,10 @@ func TestAuthorNameSignsPosts(t *testing.T) {
 		return a
 	}
 
-	if a := get(owner); a.Mode != authorNameCustom || a.Name != defaultAuthorName || a.RegisteredName != "Channel Owner" {
+	if a := get(owner); a.Mode != authorNameChannel || a.Name != "" || a.ChannelName != "ערוץ הבדיקה" || a.RegisteredName != "Channel Owner" || a.DefaultCustomName != "מנהל" {
 		t.Errorf("default = %+v", a)
 	}
-	if m := post(owner); m.Author != defaultAuthorName {
+	if m := post(owner); m.Author != "ערוץ הבדיקה" {
 		t.Errorf("default post signed %q", m.Author)
 	}
 
@@ -67,6 +69,15 @@ func TestAuthorNameSignsPosts(t *testing.T) {
 	}
 	if m := post(owner); m.Author != "Channel Owner" {
 		t.Errorf("registered post signed %q", m.Author)
+	}
+
+	// Back to the channel's name, which follows a rename.
+	if w := set(owner, `{"mode":"channel","name":"ignored"}`); w.Code != http.StatusOK {
+		t.Fatalf("set channel: %d", w.Code)
+	}
+	rdb.HSet(ctx, "channel:"+slug, "name", "שם חדש")
+	if m := post(owner); m.Author != "שם חדש" {
+		t.Errorf("channel-name post signed %q", m.Author)
 	}
 
 	for _, bad := range []string{`{"mode":"custom","name":"   "}`, `{"mode":"custom","name":"` + strings.Repeat("א", 41) + `"}`, `{"mode":"other"}`, `{"mode":"custom","name":"a‎b"}`} {

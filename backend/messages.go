@@ -200,7 +200,7 @@ func addMessage(w http.ResponseWriter, r *http.Request) {
 
 	message.Type = body.Type
 	// Signed with the name the writer chose for this channel (author_names.go),
-	// "מנהל" until they choose one.
+	// the channel's own name until they choose one.
 	message.Author = channelAuthorName(ctx, slug, user)
 	message.AuthorId = user.ID
 	// An operator posting is the platform speaking, and the post is served to

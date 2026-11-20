@@ -18,7 +18,7 @@ import {
 import { MarkdownComponent } from "ngx-markdown";
 import { NgIconsModule } from "@ng-icons/core";
 import { Attachment, ChatFile, ChatMessage, ChatService } from '../../../../services/chat.service';
-import { AdminService, AuthorName, EditMsg } from '../../../../services/admin.service';
+import { AdminService, AuthorName, AuthorNameMode, EditMsg } from '../../../../services/admin.service';
 import { AutosizeModule } from "ngx-autosize";
 import { TimePickerComponent } from './time-picker/time-picker.component';
 import { MessageTimePipe } from '../../../../pipes/message-time.pipe';
@@ -393,7 +393,7 @@ export class InputFormComponent implements OnInit, AfterViewInit, OnDestroy {
   /** How this writer's posts are signed on the channel; undefined until loaded. */
   authorName?: AuthorName;
   /** The signature picker's draft, edited in the popover and saved on demand. */
-  nameMode: 'custom' | 'registered' = 'custom';
+  nameMode: AuthorNameMode = 'channel';
   nameDraft = '';
   nameSaving = false;
   nameError = '';
@@ -405,7 +405,9 @@ export class InputFormComponent implements OnInit, AfterViewInit, OnDestroy {
   get signedAs(): string {
     const a = this.authorName;
     if (!a) return '';
-    return a.mode === 'registered' ? a.registeredName : a.name;
+    if (a.mode === 'registered') return a.registeredName;
+    if (a.mode === 'custom') return a.name;
+    return a.channelName;
   }
 
   async loadAuthorName() {
@@ -423,7 +425,7 @@ export class InputFormComponent implements OnInit, AfterViewInit, OnDestroy {
     this.namePickerShown = shown;
     if (shown && this.authorName) {
       this.nameMode = this.authorName.mode;
-      this.nameDraft = this.authorName.mode === 'custom' ? this.authorName.name : this.authorName.defaultName;
+      this.nameDraft = this.authorName.mode === 'custom' ? this.authorName.name : this.authorName.defaultCustomName;
       this.nameError = '';
     }
   }
@@ -443,7 +445,7 @@ export class InputFormComponent implements OnInit, AfterViewInit, OnDestroy {
     this.nameError = '';
     try {
       this.authorName = await this.adminService.setAuthorName(
-        this.nameMode === 'custom' ? { mode: 'custom', name } : { mode: 'registered' });
+        this.nameMode === 'custom' ? { mode: 'custom', name } : { mode: this.nameMode });
       this.namePop?.hide();
       this.toastrService.success('', 'השם נשמר. ההודעות הבאות שלך יפורסמו בשם: ' + this.signedAs);
     } catch (err: any) {

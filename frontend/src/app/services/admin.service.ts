@@ -18,14 +18,19 @@ export interface ChannelViewers {
 }
 
 /** The name a writer's posts are signed with on this channel (seen by the channel's staff). */
+export type AuthorNameMode = 'channel' | 'custom' | 'registered';
+
 export interface AuthorName {
-  mode: 'custom' | 'registered';
-  /** The custom name; empty when mode is 'registered'. */
+  /** 'channel' (the default) signs with the channel's own name. */
+  mode: AuthorNameMode;
+  /** The custom name; empty unless mode is 'custom'. */
   name: string;
   /** The name the account registered with. */
   registeredName: string;
-  /** What a writer is signed with until they choose ("מנהל"). */
-  defaultName: string;
+  /** The channel's current name. */
+  channelName: string;
+  /** Prefills the custom-name field ("מנהל"). */
+  defaultCustomName: string;
   /** A super admin: always signed "ניהול", nothing to choose. */
   operator?: boolean;
 }
@@ -82,7 +87,7 @@ export class AdminService {
     return firstValueFrom(this.http.get<AuthorName>(`/api/channel/${this.slug}/admin/author-name`));
   }
 
-  setAuthorName(body: { mode: 'custom' | 'registered'; name?: string }): Promise<AuthorName> {
+  setAuthorName(body: { mode: AuthorNameMode; name?: string }): Promise<AuthorName> {
     return firstValueFrom(this.http.post<AuthorName>(`/api/channel/${this.slug}/admin/author-name`, body));
   }
 

@@ -283,6 +283,11 @@
     <span class="tag-pick__hint">קוראי הערוץ רואים תמיד את שם הערוץ. השם הזה מופיע לצוות הערוץ על ההודעות שתפרסמו מעכשיו.</span>
 
     <label class="name-pick__opt">
+      <input type="radio" name="author-name-mode" value="channel" [(ngModel)]="nameMode">
+      <span>שם הערוץ: <strong>{{ authorName?.channelName }}</strong></span>
+    </label>
+
+    <label class="name-pick__opt">
       <input type="radio" name="author-name-mode" value="custom" [(ngModel)]="nameMode">
       <span>שם מותאם אישית</span>
     </label>

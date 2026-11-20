@@ -19,10 +19,9 @@ import (
 // Readers never see who wrote a post: the feed shows them the channel's name
 // (the /messages Lua masks the author). The signature is what the channel's
 // own staff see on a post, and what goes out with it to the webhook and the
-// event stream. A writer who does not want the rest of the staff to know it
-// was them signs with a name of their choosing, and that is the default: until
-// they change it, every writer posts as defaultAuthorName. They may switch to
-// the name they registered with, or to any other name.
+// event stream. By default a writer signs with the channel's own name, so the
+// rest of the staff do not learn who wrote what either. A writer may switch to
+// the name they registered with, or to any name they type.
 //
 // An operator (super admin) is not covered: their posts are always signed
 // operatorName, whatever is stored here.
@@ -34,14 +33,18 @@ import (
 // changing it does not re-sign posts that are already out.
 
 const (
-	defaultAuthorName   = "מנהל"
-	maxAuthorNameRunes  = 40
-	authorNameCustom    = "custom"
-	authorNameRegistrar = "registered"
+	// defaultCustomAuthorName is what the custom-name field offers before the
+	// writer types anything.
+	defaultCustomAuthorName = "מנהל"
+	maxAuthorNameRunes      = 40
+	authorNameChannel       = "channel"
+	authorNameCustom        = "custom"
+	authorNameRegistrar     = "registered"
 )
 
 type AuthorName struct {
-	// Mode is authorNameCustom (sign with Name) or authorNameRegistrar (sign
+	// Mode is authorNameChannel (sign with the channel's current name, the
+	// default), authorNameCustom (sign with Name) or authorNameRegistrar (sign
 	// with the name the account registered with).
 	Mode string `json:"mode"`
 	Name string `json:"name,omitempty"`
@@ -60,7 +63,7 @@ func authorNameField(s Session) string {
 
 // dbGetAuthorName returns the writer's stored choice, or the default.
 func dbGetAuthorName(ctx context.Context, slug string, s Session) (AuthorName, error) {
-	def := AuthorName{Mode: authorNameCustom, Name: defaultAuthorName}
+	def := AuthorName{Mode: authorNameChannel}
 	raw, err := rdb.HGet(ctx, authorNamesKey(slug), authorNameField(s)).Result()
 	if err == redis.Nil {
 		return def, nil
@@ -72,27 +75,47 @@ func dbGetAuthorName(ctx context.Context, slug string, s Session) (AuthorName, e
 	if json.Unmarshal([]byte(raw), &a) != nil {
 		return def, nil
 	}
-	if a.Mode != authorNameRegistrar {
-		a.Mode = authorNameCustom
+	switch a.Mode {
+	case authorNameRegistrar, authorNameChannel:
+		a.Name = ""
+	case authorNameCustom:
 		if strings.TrimSpace(a.Name) == "" {
-			a.Name = defaultAuthorName
+			return def, nil
 		}
+	default:
+		return def, nil
 	}
 	return a, nil
 }
 
+// channelDisplayName is the channel's name as readers see it, or its slug
+// when it has none.
+func channelDisplayName(ctx context.Context, slug string) string {
+	name, err := rdb.HGet(ctx, "channel:"+slug, "name").Result()
+	if err != nil && err != redis.Nil {
+		log.Printf("channelDisplayName(%s): %v", slug, err)
+	}
+	if name = strings.TrimSpace(name); name != "" {
+		return name
+	}
+	return slug
+}
+
 // channelAuthorName is the name a post by s on slug is signed with. A read
-// that fails signs with the default rather than the real name, since the
-// default is what hides the writer.
+// that fails signs with the channel's name rather than the real name, since
+// that is what hides the writer.
 func channelAuthorName(ctx context.Context, slug string, s Session) string {
 	a, err := dbGetAuthorName(ctx, slug, s)
 	if err != nil {
 		log.Printf("channelAuthorName(%s): %v", slug, err)
 	}
-	if a.Mode == authorNameRegistrar {
+	switch a.Mode {
+	case authorNameRegistrar:
 		return sessionDisplayName(s)
+	case authorNameCustom:
+		return a.Name
 	}
-	return a.Name
+	return channelDisplayName(ctx, slug)
 }
 
 // normaliseAuthorName validates a name a writer typed: trimmed, inner runs of
@@ -121,20 +144,23 @@ type authorNameResponse struct {
 	Mode           string `json:"mode"`
 	Name           string `json:"name"`
 	RegisteredName string `json:"registeredName"`
-	DefaultName    string `json:"defaultName"`
+	ChannelName    string `json:"channelName"`
+	// DefaultCustomName prefills the custom-name field.
+	DefaultCustomName string `json:"defaultCustomName"`
 	// Operator is set for a super admin, whose posts are always signed
 	// operatorName and who has nothing to choose.
 	Operator bool `json:"operator,omitempty"`
 }
 
-func writeAuthorName(w http.ResponseWriter, a AuthorName, s Session) {
+func writeAuthorName(ctx context.Context, w http.ResponseWriter, slug string, a AuthorName, s Session) {
 	resp := authorNameResponse{
-		Mode:           a.Mode,
-		Name:           a.Name,
-		RegisteredName: sessionDisplayName(s),
-		DefaultName:    defaultAuthorName,
+		Mode:              a.Mode,
+		Name:              a.Name,
+		RegisteredName:    sessionDisplayName(s),
+		ChannelName:       channelDisplayName(ctx, slug),
+		DefaultCustomName: defaultCustomAuthorName,
 	}
-	if resp.Mode == authorNameRegistrar {
+	if resp.Mode != authorNameCustom {
 		resp.Name = ""
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -148,7 +174,7 @@ func getAuthorName(w http.ResponseWriter, r *http.Request) {
 
 	if isSuperAdmin(r) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(authorNameResponse{Mode: authorNameCustom, Name: operatorName, DefaultName: defaultAuthorName, Operator: true})
+		json.NewEncoder(w).Encode(authorNameResponse{Mode: authorNameCustom, Name: operatorName, Operator: true})
 		return
 	}
 	session, _ := store.Get(r, cookieName)
@@ -157,17 +183,19 @@ func getAuthorName(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	a, err := dbGetAuthorName(ctx, channelSlugFromCtx(r), user)
+	slug := channelSlugFromCtx(r)
+	a, err := dbGetAuthorName(ctx, slug, user)
 	if err != nil {
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
-	writeAuthorName(w, a, user)
+	writeAuthorName(ctx, w, slug, a, user)
 }
 
 // POST /api/channel/{slug}/admin/author-name (writer and up)
 //
-// Body: {"mode":"custom","name":"..."} or {"mode":"registered"}. Each writer
+// Body: {"mode":"channel"}, {"mode":"registered"} or
+// {"mode":"custom","name":"..."}. Each writer
 // sets their own name only.
 func setAuthorName(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -191,7 +219,7 @@ func setAuthorName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch req.Mode {
-	case authorNameRegistrar:
+	case authorNameRegistrar, authorNameChannel:
 		req.Name = ""
 	case authorNameCustom:
 		name, err := normaliseAuthorName(req.Name)
@@ -207,11 +235,12 @@ func setAuthorName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	slug := channelSlugFromCtx(r)
 	raw, _ := json.Marshal(req)
-	if err := rdb.HSet(ctx, authorNamesKey(channelSlugFromCtx(r)), authorNameField(user), raw).Err(); err != nil {
+	if err := rdb.HSet(ctx, authorNamesKey(slug), authorNameField(user), raw).Err(); err != nil {
 		log.Printf("setAuthorName: %v", err)
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
-	writeAuthorName(w, req, user)
+	writeAuthorName(ctx, w, slug, req, user)
 }
