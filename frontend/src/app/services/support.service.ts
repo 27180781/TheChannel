@@ -19,6 +19,8 @@ export interface SupportTicket {
   name: string;
   email: string;
   channelSlug?: string;
+  /** Set by the server for a ticket it opened for a known request. */
+  topic?: 'storage_increase';
   authenticated: boolean;
   status: SupportStatus;
   messages: SupportMessage[];

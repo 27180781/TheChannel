@@ -3,7 +3,9 @@ import { formatBytes, storageLevelStatus } from '../../../utils/storage-format';
 import {
   NbCardModule, NbButtonModule, NbToggleModule,
   NbProgressBarModule, NbToastrService, NbAlertModule, NbIconModule, NbSpinnerModule,
+  NbInputModule,
 } from '@nebular/theme';
+import { RouterLink } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { ConfirmService } from '../../../services/confirm.service';
@@ -14,6 +16,8 @@ interface StorageInfo {
   usedPercent: number;
   autoCleanup: boolean;
   level: 'ok' | 'warning' | 'critical';
+  /** A request for more storage that the operator has not answered yet. */
+  increaseRequest?: { ticketId: string; status: string; createdAt: string };
 }
 
 /**
@@ -29,6 +33,7 @@ interface StorageInfo {
   imports: [
     NbCardModule, NbButtonModule, NbToggleModule,
     NbProgressBarModule, NbAlertModule, NbIconModule, NbSpinnerModule,
+    NbInputModule, RouterLink,
   ],
   templateUrl: './storage.component.html',
   styleUrl: './storage.component.scss',
@@ -48,6 +53,9 @@ export class StorageComponent implements OnInit {
   loading = true;
   loadFailed = false;
   saving = false;
+  /** The owner's optional note on a storage-increase request. */
+  note = '';
+  requesting = false;
 
   constructor(
     private http: HttpClient,
@@ -148,6 +156,43 @@ export class StorageComponent implements OnInit {
     // Before info loads there is no level yet; keep the neutral colour.
     if (!this.info) return 'primary';
     return storageLevelStatus(this.info.level);
+  }
+
+  /**
+   * Sends a storage-increase request: the server opens a support ticket with
+   * the usage figures, or hands back the one still waiting.
+   */
+  async requestIncrease() {
+    if (!this.info || this.requesting) return;
+    this.requesting = true;
+    try {
+      const res = await firstValueFrom(this.http.post<{ ticketId: string; existing: boolean }>(
+        `/api/channel/${this.slug}/admin/storage/request-increase`,
+        { note: this.note.trim() },
+      ));
+      this.toastr.success('', res?.existing
+        ? 'כבר יש בקשה שממתינה לטיפול — לא נשלחה בקשה נוספת'
+        : 'הבקשה נשלחה להנהלת המערכת');
+      this.note = '';
+      this.info = {
+        ...this.info,
+        increaseRequest: this.info.increaseRequest
+          ?? { ticketId: res.ticketId, status: 'open', createdAt: new Date().toISOString() },
+      };
+    } catch (err: any) {
+      this.toastr.danger('', err?.status === 429
+        ? 'נשלחו יותר מדי פניות — נסו שוב מאוחר יותר'
+        : err?.status === 403 || err?.status === 401
+          ? 'רק בעלי הערוץ יכולים לבקש הגדלת אחסון'
+          : 'הבקשה לא נשלחה — נסו שוב');
+    } finally {
+      this.requesting = false;
+    }
+  }
+
+  formatDate(iso: string): string {
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? '' : d.toLocaleDateString('he-IL');
   }
 
   formatBytes = formatBytes;

@@ -1529,6 +1529,7 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 		fmt.Sprintf("channel:%s:storage:used_bytes", p),
 		fmt.Sprintf("channel:%s:storage:quota_bytes", p),
 		fmt.Sprintf("channel:%s:storage:auto_cleanup", p),
+		storageIncreaseTicketKey(p),
 		fmt.Sprintf("channel:%s:files", p),
 		fmt.Sprintf("channel:%s:sse_connections", p),
 		fmt.Sprintf("channel:%s:events", p),

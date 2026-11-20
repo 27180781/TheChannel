@@ -261,6 +261,7 @@ func main() {
 				r.Post("/viewers/set", protectedWithChannelRole(RoleOwner, setChannelViewers))
 				r.Get("/storage", protectedWithChannelRole(RoleOwner, getChannelStorageInfo))
 				r.Post("/storage/auto-cleanup", protectedWithChannelRole(RoleOwner, setChannelAutoCleanup))
+				r.Post("/storage/request-increase", protectedWithChannelRole(RoleOwner, requestStorageIncrease))
 				// The channel's own Magnet numbers. Owner level like the
 				// magnet tab itself; refused outright on a locked channel.
 				r.Get("/magnet/stats-key", protectedWithChannelRole(RoleOwner, getChannelMagnetStatsKey))
