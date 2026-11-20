@@ -31,6 +31,9 @@ const ENTER_SENDS_MESSAGE_KEY = 'enterSendsMessage';
 // Whether the writer keeps the formatting row open (same per-browser preference).
 const SHOW_FORMATTING_KEY = 'composerShowFormatting';
 
+import { ActivityService } from '../../../../services/activity.service';
+import { SlugService } from '../../../../services/slug.service';
+
 @Component({
   selector: 'app-input-form',
   imports: [
@@ -93,6 +96,8 @@ export class InputFormComponent implements OnInit, AfterViewInit, OnDestroy {
     private dialogService: NbDialogService,
     protected chatService: ChatService,
     private host: ElementRef<HTMLElement>,
+    private activity: ActivityService,
+    private slugService: SlugService,
   ) { }
 
   ngAfterViewInit(): void {
@@ -275,6 +280,7 @@ export class InputFormComponent implements OnInit, AfterViewInit, OnDestroy {
 
       const scheduled = !!this.schedulingMessage;
       let result: boolean;
+      const isNew = !scheduled && !this.message;
       result = scheduled ? await this.saveSchedulingMessage() : this.message ? await this.updateMessage() : await this.sendNewMessage();
 
       if (!result) {
@@ -283,6 +289,8 @@ export class InputFormComponent implements OnInit, AfterViewInit, OnDestroy {
 
       this.toastrService.success("", scheduled ? "ההודעה תוזמנה בהצלחה" : "הודעה פורסמה בהצלחה");
       this.clearInputs();
+      // A new post may be the channel's first, or its 100th: cheer it.
+      if (isNew) this.activity.afterPost(this.slugService.slug, this.chatService.channelInfo?.name ?? '');
     } catch (error) {
       this.toastrService.danger("", "שגיאה בפרסום הודעה");
     } finally {

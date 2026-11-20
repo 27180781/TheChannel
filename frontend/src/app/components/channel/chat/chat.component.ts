@@ -40,6 +40,8 @@ type ScrollOpt = {
   mark?: boolean;
 }
 
+import { ChannelMomentumComponent } from '../momentum/channel-momentum.component';
+
 @Component({
   selector: 'app-chat',
   standalone: true,
@@ -49,7 +51,8 @@ type ScrollOpt = {
     NbListModule,
     NbTooltipModule,
     MessageComponent,
-    MagnetAdSlotComponent
+    MagnetAdSlotComponent,
+    ChannelMomentumComponent,
   ],
   templateUrl: './chat.component.html',
   styleUrl: './chat.component.scss'
@@ -189,6 +192,17 @@ export class ChatComponent implements OnInit, OnDestroy {
     if (user.globalRole === 'super_admin') return true;
     const role = user.channelRoles?.[this.slugService.slug];
     return role === 'owner' || role === 'moderator';
+  }
+
+  /** Owner (or super admin): the momentum card offers staff and mail actions. */
+  get isOwner(): boolean {
+    const user = this.userInfo;
+    if (!user) return false;
+    return user.globalRole === 'super_admin' || user.channelRoles?.[this.slugService.slug] === 'owner';
+  }
+
+  get currentSlug(): string {
+    return this.slugService.slug;
   }
 
   /** Empty state, writers: the first thing an owner wants is readers. */

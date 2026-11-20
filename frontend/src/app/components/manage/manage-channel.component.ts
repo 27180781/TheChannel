@@ -32,6 +32,7 @@ import { StorageComponent } from '../admin/storage/storage.component';
 import { ReportsComponent } from '../admin/reports/reports.component';
 import { GuideComponent } from '../admin/guide/guide.component';
 import { SupportBoxComponent } from '../support/support-box.component';
+import { ChannelMomentumComponent } from '../channel/momentum/channel-momentum.component';
 
 type Access = 'moderator' | 'owner';
 
@@ -85,6 +86,7 @@ type LoadError = '' | 'notfound' | 'forbidden' | 'network';
     ReportsComponent,
     GuideComponent,
     SupportBoxComponent,
+    ChannelMomentumComponent,
   ],
   templateUrl: './manage-channel.component.html',
   styleUrl: './manage-channel.component.scss',
@@ -211,6 +213,11 @@ export class ManageChannelComponent implements OnInit, OnDestroy {
 
   get initial(): string {
     return (this.channelName || '?').trim().charAt(0).toUpperCase();
+  }
+
+  /** Owner or super admin: sees the reminder-mail switch. */
+  get canOwn(): boolean {
+    return this.canAccess('owner');
   }
 
   get section(): ManageSection | undefined {

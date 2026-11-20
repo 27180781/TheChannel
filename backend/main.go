@@ -63,6 +63,7 @@ func main() {
 	}
 	startPrivilegesRefresh()
 	startGlobalSettingsRefresh()
+	startNudges()
 
 	// The session store is built before the migrations run: a misconfiguration
 	// here is fatal, and failing after a one-shot migration has been marked
@@ -137,6 +138,8 @@ func main() {
 	r.Get("/sitemap.xml", getSitemap)
 	// The public channels directory (public_channels.go).
 	r.Get("/api/public/channels", getPublicChannels)
+	// The one-click "stop the reminders" link in a channel_nudge mail (activity.go).
+	r.Get("/api/channel-reminders/off", channelRemindersOff)
 	r.Get("/sitemap-pages.xml", getSitemapPages)
 	r.Get("/sitemap-channels-{n:[0-9]+}.xml", getSitemapChannels)
 	for _, p := range contentPages {
@@ -246,6 +249,8 @@ func main() {
 				// Moderator level
 				r.Post("/edit-channel-info", protectedWithChannelRole(RoleModerator, editChannelInfo))
 				r.Get("/statistics", protectedWithChannelRole(RoleModerator, getStatistics))
+				r.Get("/activity", protectedWithChannelRole(RoleModerator, getChannelActivity))
+				r.Post("/activity/mails", protectedWithChannelRole(RoleOwner, setChannelNudgeMails))
 				r.Post("/set-emojis", protectedWithChannelRole(RoleModerator, setEmojis))
 				r.Post("/tags/set", protectedWithChannelRole(RoleModerator, setTags))
 				r.Get("/reports/get", protectedWithChannelRole(RoleModerator, getReports))

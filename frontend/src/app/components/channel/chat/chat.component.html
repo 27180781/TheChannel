@@ -5,6 +5,11 @@
   </div>
 }
 
+<!-- Next steps toward an active channel, for its managers (channel-momentum). -->
+@if (canManage && !isOffline && !initialLoadFailed) {
+  <app-channel-momentum [slug]="currentSlug" mode="feed" [isOwner]="isOwner"></app-channel-momentum>
+}
+
 <!-- Tag filter: pinned under the header for every viewer, shown once the
      channel's managers defined at least one tag. -->
 @if (tags.length) {

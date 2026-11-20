@@ -167,7 +167,10 @@
                  instead of being mounted, answering 403 and claiming their
                  role "changed". -->
             @switch (section ? tab : '') {
-              @case ('info') { <app-channel-info-form></app-channel-info-form> }
+              @case ('info') {
+                <app-channel-momentum [slug]="slug" mode="panel" [isOwner]="canOwn"></app-channel-momentum>
+                <app-channel-info-form></app-channel-info-form>
+              }
               @case ('settings') { <app-settings (accessDenied)="onAccessDenied()"></app-settings> }
               @case ('users') { <app-privileg-dashboard (accessDenied)="onAccessDenied()"></app-privileg-dashboard> }
               @case ('viewers') { <app-channel-viewers (accessDenied)="onAccessDenied()"></app-channel-viewers> }

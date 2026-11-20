@@ -18,6 +18,8 @@ function normalizeEmail(email: string | undefined): string {
 // Deliberately loose: one '@' with something on both sides and a dot after it.
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+import { ActivityService } from '../../../services/activity.service';
+
 @Component({
   selector: 'app-privileg-dashboard',
   imports: [
@@ -43,6 +45,7 @@ export class PrivilegDashboardComponent implements OnInit {
     public authService: AuthService,
     private slugService: SlugService,
     private confirm: ConfirmService,
+    private activity: ActivityService,
   ) { }
 
   usersList: ChannelUser[] = [];
@@ -142,12 +145,14 @@ export class PrivilegDashboardComponent implements OnInit {
     const granted = new Set(this.usersList.map(u => normalizeEmail(u.email)));
     const removals = this.removedUsers.filter(u => !granted.has(normalizeEmail(u.email)));
     this.saving = true;
+    const added = this.usersList.filter(u => this.pending.has(normalizeEmail(u.email)) && u.role !== 'owner');
     this.adminService.setChannelUsers([...removals, ...this.usersList])
       .then(() => {
+        if (added.length) this.celebrateAdded(added);
         this.removedUsers = [];
         this.pending.clear();
         this.snapshot = JSON.stringify(this.usersList);
-        this.toastService.success('', 'הצוות עודכן');
+        if (!added.length) this.toastService.success('', 'הצוות עודכן');
       })
       .catch((err) => {
         const text = typeof err?.error === 'string' ? err.error : '';
@@ -160,6 +165,23 @@ export class PrivilegDashboardComponent implements OnInit {
         }
       })
       .finally(() => this.saving = false);
+  }
+
+  /** "הידד!" for new teammates, with what happens next for them. */
+  private celebrateAdded(added: ChannelUser[]): void {
+    const one = added.length === 1;
+    const roleWord = added.every(u => u.role === 'writer') ? (one ? 'כותב' : 'כותבים')
+      : added.every(u => u.role === 'moderator') ? (one ? 'מנהל' : 'מנהלים') : 'אנשים';
+    this.activity.celebrate({
+      emoji: '🙌',
+      title: one ? `הידד! הוספת ${roleWord} לצוות` : `הידד! הוספת ${added.length} ${roleWord} לצוות`,
+      text: one
+        ? `${added[0].email} יוכל לפרסם ברגע שיתחבר לאתר עם חשבון הגוגל של הכתובת הזו. כדאי לשלוח לו את הקישור לערוץ.`
+        : 'הם יוכלו לפרסם ברגע שיתחברו לאתר עם חשבון הגוגל של הכתובות האלה. כדאי לשלוח להם את הקישור לערוץ.',
+      action: { kind: 'share', label: 'שליחת הקישור לערוץ', icon: 'share-outline' },
+      slug: this.slugService.slug,
+      channelName: '',
+    });
   }
 
   async deleteUser(index: number) {

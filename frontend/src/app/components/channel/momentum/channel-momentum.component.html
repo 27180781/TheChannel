@@ -1,0 +1,109 @@
+<ng-template #stepList>
+  <ol class="steps">
+    @for (s of steps; track s.id) {
+      <li class="step" [class.is-done]="s.done" [class.is-next]="s === nextStep">
+        <span class="step__mark" aria-hidden="true">
+          @if (s.done) { <nb-icon icon="checkmark-outline"></nb-icon> } @else { {{ $index + 1 }} }
+        </span>
+        <span class="step__body">
+          <span class="step__title">{{ s.title }}<span class="visually-hidden">{{ s.done ? ' — בוצע' : '' }}</span></span>
+          @if (!s.done) {
+            <span class="step__hint">{{ s.hint }}</span>
+            <span class="step__actions">
+              @switch (s.id) {
+                @case ('post') {
+                  <span class="step__note">כותבים בתיבה שבתחתית הערוץ.</span>
+                }
+                @case ('profile') {
+                  <a nbButton size="tiny" status="primary" appearance="outline" [routerLink]="manageLink('info')">לפרטי הערוץ</a>
+                }
+                @case ('share') {
+                  <button nbButton size="tiny" status="primary" type="button" (click)="shareLink()">
+                    <nb-icon icon="share-outline"></nb-icon> שיתוף הקישור
+                  </button>
+                  <a nbButton size="tiny" status="success" appearance="outline" [href]="whatsappUrl()" target="_blank" rel="noopener">וואטסאפ</a>
+                }
+                @case ('team') {
+                  @if (isOwner) {
+                    <a nbButton size="tiny" status="primary" appearance="outline" [routerLink]="manageLink('users')">
+                      <nb-icon icon="person-add-outline"></nb-icon> הוספה לצוות
+                    </a>
+                  }
+                }
+              }
+            </span>
+          }
+        </span>
+      </li>
+    }
+  </ol>
+</ng-template>
+
+@if (mode === 'feed') {
+  @if (showInFeed) {
+    <section class="momentum momentum--feed" [class.is-open]="open" [class.is-quiet]="quietDays !== null && !nextStep"
+             aria-label="הצעדים הבאים לערוץ">
+      <button type="button" class="momentum__head" (click)="toggleOpen()" [attr.aria-expanded]="open">
+        <span class="momentum__ring" [style.--p]="progress" aria-hidden="true">
+          <span>{{ doneCount }}/{{ steps.length }}</span>
+        </span>
+        <span class="momentum__summary">
+          @if (quietDays !== null) {
+            <strong>עברו {{ quietDays }} ימים מההודעה האחרונה</strong>
+            <span>הקוראים מחכים — עדכון קצר מחזיר אותם.</span>
+          } @else if (nextStep) {
+            <strong>הצעד הבא: {{ nextStep.title }}</strong>
+            <span>{{ doneCount }} מתוך {{ steps.length }} צעדים לערוץ פעיל</span>
+          }
+        </span>
+        <nb-icon [icon]="open ? 'chevron-up-outline' : 'chevron-down-outline'" class="momentum__chev"></nb-icon>
+      </button>
+      @if (open) {
+        <div class="momentum__body">
+          <ng-container *ngTemplateOutlet="stepList"></ng-container>
+          <div class="momentum__foot">
+            <button nbButton ghost size="tiny" status="basic" type="button" (click)="dismiss()">לא עכשיו</button>
+          </div>
+        </div>
+      }
+    </section>
+  }
+} @else if (activity) {
+  <section class="momentum momentum--panel" aria-label="מצב הערוץ">
+    <header class="panel__head">
+      <div>
+        <h3 class="panel__title">
+          @if (!nextStep && quietDays === null) { הערוץ פעיל — כל הכבוד! 🎉 } @else { הצעדים הבאים לערוץ פעיל }
+        </h3>
+        <p class="panel__sub">
+          @if (quietDays !== null) { עברו {{ quietDays }} ימים מההודעה האחרונה. עדכון קצר מחזיר את הקוראים. }
+          @else if (nextStep) { {{ doneCount }} מתוך {{ steps.length }} צעדים הושלמו. }
+          @else { כל הצעדים הושלמו. המשיכו לפרסם בקביעות. }
+        </p>
+      </div>
+      <span class="momentum__ring momentum__ring--lg" [style.--p]="progress" aria-hidden="true">
+        <span>{{ progress }}%</span>
+      </span>
+    </header>
+
+    <dl class="stats">
+      <div class="stat"><dt>מנויים</dt><dd>{{ activity.subscribers.toLocaleString('he-IL') }}</dd></div>
+      <div class="stat"><dt>הודעות</dt><dd>{{ activity.messages.toLocaleString('he-IL') }}</dd></div>
+      <div class="stat"><dt>בצוות</dt><dd>{{ (activity.team + activity.owners).toLocaleString('he-IL') }}</dd></div>
+      <div class="stat"><dt>הודעה אחרונה</dt><dd>{{ lastPostLabel }}</dd></div>
+    </dl>
+
+    @if (nextStep) {
+      <ng-container *ngTemplateOutlet="stepList"></ng-container>
+    }
+
+    @if (isOwner) {
+      <div class="mails">
+        <nb-toggle [checked]="!activity.mailsOff" [disabled]="savingMails" (checkedChange)="setMails($event)" status="primary">
+          תזכורות במייל כשהערוץ שקט
+        </nb-toggle>
+        <span class="mails__hint">מייל קצר ונדיר כשלא פורסם כלום, כשעוד אין קוראים, או אחרי שבועיים בלי עדכון.</span>
+      </div>
+    }
+  </section>
+}
