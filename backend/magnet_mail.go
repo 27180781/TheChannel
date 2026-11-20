@@ -90,6 +90,7 @@ type magnetMailEvent struct {
 	ContactURL     string                 `json:"contact_url"`
 	Ticket         *magnetMailTicket      `json:"ticket,omitempty"`
 	Support        *magnetSupportActivity `json:"support,omitempty"`
+	Nudge          *magnetMailNudge       `json:"nudge,omitempty"`
 }
 
 // magnetMailEnabled reports whether both halves of the configuration are

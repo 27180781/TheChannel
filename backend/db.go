@@ -1518,6 +1518,7 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 		fmt.Sprintf("channel:%s:subscriptions", p),
 		fmt.Sprintf("channel:%s:registered_emails", p),
 		allowedViewersKey(p),
+		nudgesKey(p),
 		fmt.Sprintf("channel:%s:emojis:list", p),
 		fmt.Sprintf("channel:%s:reports:list", p),
 		fmt.Sprintf("channel:%s:reports:open", p),

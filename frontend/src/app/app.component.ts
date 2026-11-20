@@ -2,6 +2,7 @@ import { Component, OnInit } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
 import { NbCardModule, NbLayoutModule } from "@nebular/theme";
 import { NotificationsService } from './services/notifications.service';
+import { CelebrationComponent } from './components/shared/celebration.component';
 
 @Component({
   selector: 'app-root',
@@ -9,6 +10,7 @@ import { NotificationsService } from './services/notifications.service';
     RouterOutlet,
     NbLayoutModule,
     NbCardModule,
+    CelebrationComponent,
 ],
   templateUrl: './app.component.html',
   styleUrl: './app.component.scss'

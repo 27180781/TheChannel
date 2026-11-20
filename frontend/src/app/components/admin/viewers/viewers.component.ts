@@ -22,6 +22,9 @@ const MAX_VIEWERS = 5000;
  * account signed in with one of them (or the channel's staff) can read it;
  * the link alone, or any other sign-in, is refused by the server.
  */
+import { ActivityService } from '../../../services/activity.service';
+import { SlugService } from '../../../services/slug.service';
+
 @Component({
   selector: 'app-channel-viewers',
   standalone: true,
@@ -55,6 +58,8 @@ export class ViewersComponent implements OnInit {
     private authService: AuthService,
     private chatService: ChatService,
     private toast: NbToastrService,
+    private activity: ActivityService,
+    private slugService: SlugService,
   ) {}
 
   get dirty(): boolean {
@@ -127,6 +132,7 @@ export class ViewersComponent implements OnInit {
   save(): void {
     if (this.saving) return;
     this.saving = true;
+    const added = this.pending.size;
     this.adminService.setViewers({ enabled: this.enabled, emails: this.emails })
       .then(v => {
         this.apply(v.enabled, v.emails ?? []);
@@ -134,7 +140,20 @@ export class ViewersComponent implements OnInit {
         if (this.chatService.channelInfo) {
           this.chatService.channelInfo.viewers_only = v.enabled;
         }
-        this.toast.success('', v.enabled ? 'הערוץ נעול למורשים בלבד' : 'ההגדרות נשמרו');
+        if (added > 0) {
+          this.activity.celebrate({
+            emoji: '🎉',
+            title: added === 1 ? 'הידד! הוספת צופה מורשה' : `הידד! הוספת ${added} צופים מורשים`,
+            text: v.enabled
+              ? 'מי שברשימה נכנס לערוץ כשהוא מתחבר עם הכתובת שלו. שלחו להם את הקישור, כדי שידעו שהם מוזמנים.'
+              : 'הרשימה נשמרה. היא תיכנס לתוקף כשתנעלו את הערוץ למורשים בלבד.',
+            action: v.enabled ? { kind: 'share', label: 'שליחת הקישור לערוץ', icon: 'share-outline' } : undefined,
+            slug: this.slugService.slug,
+            channelName: this.chatService.channelInfo?.name,
+          });
+        } else {
+          this.toast.success('', v.enabled ? 'הערוץ נעול למורשים בלבד' : 'ההגדרות נשמרו');
+        }
       })
       .catch(err => {
         const text = typeof err?.error === 'string' ? err.error : '';
