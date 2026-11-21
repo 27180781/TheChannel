@@ -117,7 +117,7 @@ func addNewPost(w http.ResponseWriter, r *http.Request) {
 	// not a push.
 	go SendWebhook(context.Background(), slug, "create", &message)
 	if time.Since(message.Timestamp) < time.Hour {
-		go pushFcmMessage(slug, &message)
+		go pushFcmMessageOrHold(slug, &message)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

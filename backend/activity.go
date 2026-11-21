@@ -460,6 +460,11 @@ func nudgeTick() {
 	if err != nil || !ok {
 		return
 	}
+	// Not on Shabbat or Yom Tov (quiet.go). A reminder is not urgent: the
+	// first hourly pass after the window picks it up.
+	if isQuietNow() {
+		return
+	}
 	if n := runNudges(ctx); n > 0 {
 		log.Printf("nudges: %d reminder mails sent", n)
 	}

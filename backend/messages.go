@@ -223,7 +223,7 @@ func addMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go SendWebhook(context.Background(), slug, "create", &message)
-	go pushFcmMessage(slug, &message)
+	go pushFcmMessageOrHold(slug, &message)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(message)
