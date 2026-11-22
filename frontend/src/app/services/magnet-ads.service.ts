@@ -21,6 +21,24 @@ export interface MagnetSettings {
 /** Lifetime of a channel's Magnet viewer id (see viewerId). */
 const VIEWER_ID_TTL_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Gap between one ad frame finishing its load and the next one starting
+ * (see queueFrame). Magnet counts two calls of one viewer less than 2 s
+ * apart as a double call, so the gap sits above that with some margin.
+ */
+const FRAME_SPACING_MS = 2500;
+
+/** A frame whose load event never comes still frees the queue after this. */
+const FRAME_LOAD_CAP_MS = 10000;
+
+/** A slot's place in the frame queue (see queueFrame). */
+export interface FrameTurn {
+  /** The frame has loaded: the next slot may start after the spacing. */
+  loaded(): void;
+  /** The slot is gone: drop its turn, or free the queue if it was running. */
+  cancel(): void;
+}
+
 @Injectable({ providedIn: 'root' })
 export class MagnetAdsService {
   private settings: MagnetSettings | null = null;
@@ -41,6 +59,8 @@ export class MagnetAdsService {
   private decisions = new Map<number, boolean>();
   private decisionsSlug: string | undefined;
   private viewerIds = new Map<string, { id: string; t: number }>();
+  /** Settles when the last queued frame's turn is over (see queueFrame). */
+  private frameChain: Promise<void> = Promise.resolve();
 
   constructor(private slugService: SlugService) {}
 
@@ -106,6 +126,53 @@ export class MagnetAdsService {
     }
     this.viewerIds.set(key, entry);
     return entry.id;
+  }
+
+  /**
+   * Starts ad frames one at a time. Every slot is its own sandboxed frame
+   * running its own copy of Magnet's widget, and each copy calls serve-ad
+   * as soon as it loads. Slots that came near the screen together (three on
+   * a first load, more on a scroll) all called within the same second, and
+   * each widget then rotated its ad every minute from that moment, so the
+   * calls kept arriving in bursts: Magnet measured 132 of 238 calls as the
+   * same viewer twice within 2 s (median 0.6 s, 20.11.2026). The widget
+   * already sends one request at a time on a normal page, but frames cannot
+   * see each other's queue, so the host keeps it: `start` runs when this
+   * slot's turn comes, and the next slot starts FRAME_SPACING_MS after this
+   * frame reports `loaded` (its widget has sent the request by then). The
+   * spacing then carries over to the widgets' rotation clocks.
+   */
+  queueFrame(start: (turn: FrameTurn) => void): FrameTurn {
+    let state: 'waiting' | 'running' | 'over' = 'waiting';
+    let release: () => void = () => {};
+    let cap: ReturnType<typeof setTimeout> | undefined;
+    const finish = (spacing: number) => {
+      if (state !== 'running') return;
+      state = 'over';
+      if (cap) clearTimeout(cap);
+      if (spacing > 0) setTimeout(release, spacing); else release();
+    };
+    const turn: FrameTurn = {
+      loaded: () => finish(FRAME_SPACING_MS),
+      cancel: () => {
+        if (state === 'waiting') state = 'over';
+        // A frame torn down mid-load may already have sent its request.
+        else finish(FRAME_SPACING_MS);
+      },
+    };
+    const run = () => new Promise<void>((resolve) => {
+      release = resolve;
+      if (state === 'over') { resolve(); return; }
+      state = 'running';
+      cap = setTimeout(() => finish(0), FRAME_LOAD_CAP_MS);
+      try {
+        start(turn);
+      } catch {
+        finish(0);
+      }
+    });
+    this.frameChain = this.frameChain.then(run, run);
+    return turn;
   }
 
   /**

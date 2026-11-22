@@ -7,7 +7,7 @@ import {
   OnDestroy,
   ViewChild,
 } from '@angular/core';
-import { MagnetAdsService } from '../../../../services/magnet-ads.service';
+import { FrameTurn, MagnetAdsService } from '../../../../services/magnet-ads.service';
 import { ChatService } from '../../../../services/chat.service';
 
 /**
@@ -83,6 +83,8 @@ export class MagnetAdSlotComponent implements AfterViewInit, OnDestroy {
   private rendered = false;
   private collapseTimer?: any;
   private frame?: HTMLIFrameElement;
+  /** This slot's place in the service's frame queue (queueFrame). */
+  private turn?: FrameTurn;
   private reportedHeight: number | null = null;
   private readonly onMessage = (event: MessageEvent) => this.handleMessage(event);
   collapsed = false;
@@ -120,6 +122,7 @@ export class MagnetAdSlotComponent implements AfterViewInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.observer?.disconnect();
+    this.turn?.cancel();
     if (this.collapseTimer) clearTimeout(this.collapseTimer);
     window.removeEventListener('message', this.onMessage);
   }
@@ -138,6 +141,16 @@ export class MagnetAdSlotComponent implements AfterViewInit, OnDestroy {
 
     const host = this.hostRef.nativeElement;
     host.innerHTML = '';
+    // The frame waits for its turn (MagnetAdsService.queueFrame); the space
+    // it will take is held meanwhile, so the feed does not jump when it comes.
+    host.style.minHeight = `${INITIAL_FRAME_HEIGHT}px`;
+    this.turn = this.magnet.queueFrame((turn) => this.startFrame(snippet, turn));
+  }
+
+  /** Creates the frame, once this slot's turn in the frame queue has come. */
+  private startFrame(snippet: string, turn: FrameTurn): void {
+    const host = this.hostRef.nativeElement;
+    host.style.minHeight = '';
 
     // The snippet is channel-owner content, and any signed-in user can own a
     // channel. It used to be injected into this document with its scripts
@@ -162,7 +175,12 @@ export class MagnetAdSlotComponent implements AfterViewInit, OnDestroy {
 
     this.frame = frame;
     window.addEventListener('message', this.onMessage);
-    frame.addEventListener('load', () => this.armCollapse(EMPTY_SLOT_GRACE_MS), { once: true });
+    frame.addEventListener('load', () => {
+      // The widget inside has sent its serve-ad request by now (async
+      // scripts run before load), so the next slot's frame may start.
+      turn.loaded();
+      this.armCollapse(EMPTY_SLOT_GRACE_MS);
+    }, { once: true });
     host.appendChild(frame);
     this.armCollapse(EMPTY_SLOT_MAX_WAIT_MS);
   }
@@ -256,6 +274,7 @@ export class MagnetAdSlotComponent implements AfterViewInit, OnDestroy {
   /** Nothing to render at all: hide the slot and drop the frame. */
   private collapse(): void {
     this.collapsed = true;
+    this.hostRef.nativeElement.style.minHeight = '';
     window.removeEventListener('message', this.onMessage);
     this.frame = undefined;
     const host = this.hostRef.nativeElement;
