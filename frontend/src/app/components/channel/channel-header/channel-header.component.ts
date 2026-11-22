@@ -26,6 +26,7 @@ import { NotificationsService } from '../../../services/notifications.service';
 import { SlugService } from '../../../services/slug.service';
 import { MyChannelsService } from '../../../services/my-channels.service';
 import { ShareService } from '../../../services/share.service';
+import { FaviconService } from '../../../services/favicon.service';
 import { SupportBoxComponent } from '../../support/support-box.component';
 import { User } from '../../../models/user.model';
 import { MyChannel } from '../../../models/my-channel.model';
@@ -202,6 +203,7 @@ export class ChannelHeaderComponent implements OnInit, AfterViewInit, AfterViewC
     private shareService: ShareService,
     private hostRef: ElementRef<HTMLElement>,
     private zone: NgZone,
+    private favicon: FaviconService,
   ) {
     this.shareMenu = [
       { title: 'העתקת הקישור', ariaRole: 'menuitem', icon: 'copy-outline', data: { action: 'copy' } as MenuData },
@@ -289,13 +291,22 @@ export class ChannelHeaderComponent implements OnInit, AfterViewInit, AfterViewC
         : 'badge';
   }
 
+  /** Set on destroy, so a late /info answer cannot touch the tab icon. */
+  private destroyed = false;
+
   ngOnInit() {
+    const slug = this._slugService.slug;
     this.chatService.updateChannelInfo()
       // The search title its managers wrote, when there is one: the server
       // sends it as the page's <title>, and Google reads the title after
       // the app has run, so the tab must not swap it back for the name.
       // A single post's page keeps the post's own title from the server.
       .then(() => {
+        // The tab shows the channel's profile picture (the server's default
+        // when it has none), also after moving here from another channel.
+        if (!this.destroyed && slug === this._slugService.slug) {
+          this.favicon.setChannel(slug, this.chatService.channelInfo?.logoUrl);
+        }
         if (this.route.snapshot.paramMap.has('postId')) return;
         this.titleService.setTitle(
           this.chatService.channelInfo?.seo_title?.trim() || this.chatService.channelInfo?.name || 'הערוץ');
@@ -311,6 +322,8 @@ export class ChannelHeaderComponent implements OnInit, AfterViewInit, AfterViewC
   }
 
   ngOnDestroy() {
+    this.destroyed = true;
+    this.favicon.reset();
     this.menuSub?.unsubscribe();
     this.creditObserver?.disconnect();
     if (this.creditFrame) cancelAnimationFrame(this.creditFrame);

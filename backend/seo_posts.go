@@ -309,6 +309,7 @@ func buildPostPageMeta(ctx context.Context, origin, siteName string, m pageMeta,
 		m.Description = channelSearchDescription(ch, name)
 	}
 	m.ImageAlt = name
+	m.Icon = channelIconPath(ch)
 	if !ch.Features.RequireAuthFiles {
 		if p.Image != "" {
 			m.Image = absoluteURL(origin, p.Image)

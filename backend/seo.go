@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"html"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -155,6 +157,48 @@ func jsonLD(v any) string {
 	return `<script type="application/ld+json">` + string(b) + `</script>` + "\n"
 }
 
+// iconLinkRe matches the tab-icon links index.html ships: the .ico, the SVG
+// and the home-screen icon.
+var iconLinkRe = regexp.MustCompile(`<link rel="(?:icon|apple-touch-icon)"[^>]*>\s*`)
+
+// channelIconPath is the tab icon of a channel's pages: its profile picture,
+// through getFavicon, which itself answers with the platform icon when the
+// picture may not be shown anonymously or cannot be served. "" when the
+// channel has no picture. The picture's file id versions the address, so a
+// new picture is not hidden behind the browser's cached copy of the old one.
+func channelIconPath(ch *ChannelData) string {
+	logo := strings.TrimSpace(ch.LogoUrl)
+	if logo == "" || ch.Features.RequireAuthFiles {
+		return ""
+	}
+	q := url.Values{"slug": {ch.Slug}}
+	if v := path.Base(strings.SplitN(logo, "?", 2)[0]); v != "" && v != "/" && v != "." && len(v) <= 64 {
+		q.Set("v", v)
+	}
+	return "/favicon.ico?" + q.Encode()
+}
+
+// replaceIconLinks swaps the platform's icon links for the channel's. The SVG
+// link goes rather than being repointed: browsers prefer an SVG icon over any
+// other, so leaving it would keep the platform icon on the tab. No type is
+// given, since the picture may be a PNG or a JPEG.
+func replaceIconLinks(content []byte, icon string) []byte {
+	if !iconLinkRe.Match(content) {
+		return content
+	}
+	href := html.EscapeString(icon)
+	repl := `<link rel="icon" href="` + href + `">` + "\n" +
+		`  <link rel="apple-touch-icon" href="` + href + `">` + "\n  "
+	done := false
+	return iconLinkRe.ReplaceAllFunc(content, func([]byte) []byte {
+		if done {
+			return nil
+		}
+		done = true
+		return []byte(repl)
+	})
+}
+
 // pageMeta is everything the server says about one page before any script
 // runs: the head tags crawlers and link previews read, the status code, and
 // the readable content shown until the app starts.
@@ -168,7 +212,10 @@ type pageMeta struct {
 	NoIndex   bool
 	Image     string
 	ImageAlt  string
-	Card      string
+	// Icon replaces the platform's tab icon (a path, see channelIconPath);
+	// empty keeps the default.
+	Icon string
+	Card string
 	// StructuredData are complete <script type="application/ld+json"> blocks.
 	StructuredData []string
 	// Body is server-rendered HTML placed inside <app-root>.
@@ -269,6 +316,7 @@ func buildPageMeta(ctx context.Context, origin, siteName, p string) pageMeta {
 			m.Title = channelSearchTitle(ch, name, siteName)
 			m.Description = channelSearchDescription(ch, name)
 			m.ImageAlt = name
+			m.Icon = channelIconPath(ch)
 			// A logo behind the files gate is unreachable for a crawler; the
 			// platform card is better than a broken image.
 			if logo := strings.TrimSpace(ch.LogoUrl); logo != "" && !ch.Features.RequireAuthFiles {
@@ -335,6 +383,10 @@ func injectHeadTags(content []byte, origin, siteName, path string, m pageMeta, c
 	if m.Description != "" {
 		content = descriptionMetaRe.ReplaceAllLiteral(content,
 			[]byte(`<meta name="description" content="`+html.EscapeString(m.Description)+`">`))
+	}
+
+	if m.Icon != "" {
+		content = replaceIconLinks(content, m.Icon)
 	}
 
 	var tags strings.Builder
