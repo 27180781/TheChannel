@@ -21,7 +21,8 @@ const FIRST_READERS = 3;
  *
  *  - `feed`: a small card pinned under the channel header. It names the next
  *    step (or how long the channel has been quiet), opens into the full list,
- *    and can be put away for a few days. It disappears once every step is
+ *    and can be put away for a few days ("לא עכשיו") or marked "ראיתי",
+ *    which hides it until the next step changes. It disappears once every step is
  *    done and the channel is posting.
  *  - `panel`: the same steps at the top of the manage page, with the numbers
  *    and the owner's switch for the reminder mails.
@@ -61,6 +62,7 @@ export class ChannelMomentumComponent implements OnChanges, OnDestroy {
   ngOnChanges(changes: SimpleChanges): void {
     if (changes['slug'] && this.slug) {
       this.hidden = this.mode === 'feed' && this.activityService.isDismissed(this.slug);
+      this.seenKey = this.activityService.seenKey(this.slug);
       void this.reload();
       clearInterval(this.refreshTimer);
       // New readers arrive while the owner sits on the feed; a slow poll is
@@ -109,8 +111,21 @@ export class ChannelMomentumComponent implements OnChanges, OnDestroy {
     if (this.hidden || !this.activity) return false;
     // An empty channel already has its own "הערוץ מוכן!" invitation in the feed.
     if (this.activity.messages === 0) return false;
-    return !!this.nextStep || this.quietDays !== null;
+    const key = this.cardKey;
+    return !!key && key !== this.seenKey;
   }
+
+  /**
+   * What the collapsed card is about right now. "ראיתי" remembers it, so the
+   * card comes back only when there is something new: the next step changed,
+   * or the channel went quiet again after a newer post.
+   */
+  get cardKey(): string | undefined {
+    if (this.quietDays !== null) return `quiet:${this.activity?.lastMessageAt ?? ''}`;
+    return this.nextStep ? `step:${this.nextStep.id}` : undefined;
+  }
+
+  seenKey?: string;
 
   async reload(): Promise<void> {
     const slug = this.slug;
@@ -152,6 +167,14 @@ export class ChannelMomentumComponent implements OnChanges, OnDestroy {
   dismiss(): void {
     this.activityService.dismiss(this.slug, 3);
     this.hidden = true;
+  }
+
+  markSeen(): void {
+    const key = this.cardKey;
+    if (!key) return;
+    this.activityService.markSeen(this.slug, key);
+    this.seenKey = key;
+    this.open = false;
   }
 
   async shareLink(): Promise<void> {
