@@ -43,6 +43,7 @@
   @if (showInFeed) {
     <section class="momentum momentum--feed" [class.is-open]="open" [class.is-quiet]="quietDays !== null && !nextStep"
              aria-label="הצעדים הבאים לערוץ">
+      <div class="momentum__bar">
       <button type="button" class="momentum__head" (click)="toggleOpen()" [attr.aria-expanded]="open">
         <span class="momentum__ring" [style.--p]="progress" aria-hidden="true">
           <span>{{ doneCount }}/{{ steps.length }}</span>
@@ -58,11 +59,17 @@
         </span>
         <nb-icon [icon]="open ? 'chevron-up-outline' : 'chevron-down-outline'" class="momentum__chev"></nb-icon>
       </button>
+      <button type="button" class="momentum__close" (click)="markSeen()" title="ראיתי, להסתיר עד הצעד הבא"
+              aria-label="ראיתי, להסתיר את ההודעה עד הצעד הבא">
+        <nb-icon icon="close-outline"></nb-icon>
+      </button>
+      </div>
       @if (open) {
         <div class="momentum__body">
           <ng-container *ngTemplateOutlet="stepList"></ng-container>
           <div class="momentum__foot">
             <button nbButton ghost size="tiny" status="basic" type="button" (click)="dismiss()">לא עכשיו</button>
+            <button nbButton ghost size="tiny" status="primary" type="button" (click)="markSeen()">ראיתי</button>
           </div>
         </div>
       }

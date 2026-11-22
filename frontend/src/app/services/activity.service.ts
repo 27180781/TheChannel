@@ -50,6 +50,8 @@ interface SeenRecord {
   team: number;
   /** Epoch ms until which the next-steps card stays folded away. */
   dismissedUntil?: number;
+  /** The card content the manager marked "ראיתי"; it stays hidden until that changes. */
+  seenKey?: string;
 }
 
 /** The highest milestone in `list` that `now` reached and `before` did not, or 0. */
@@ -173,6 +175,16 @@ export class ActivityService {
     this.writeSeen(slug, { ...seen, dismissedUntil: Date.now() + days * 86_400_000 });
   }
 
+  /** What the manager last marked as seen on the next-steps card, if anything. */
+  seenKey(slug: string): string | undefined {
+    return this.readSeen(slug)?.seenKey;
+  }
+
+  markSeen(slug: string, key: string): void {
+    const seen = this.readSeen(slug) ?? { subs: 0, msgs: 0, team: 0 };
+    this.writeSeen(slug, { ...seen, seenKey: key });
+  }
+
   private key(slug: string): string {
     return `channel-momentum:${slug}`;
   }
@@ -183,7 +195,8 @@ export class ActivityService {
       if (!raw) return undefined;
       const v = JSON.parse(raw);
       if (typeof v?.subs !== 'number' || typeof v?.msgs !== 'number') return undefined;
-      return { subs: v.subs, msgs: v.msgs, team: typeof v.team === 'number' ? v.team : 0, dismissedUntil: v.dismissedUntil };
+      return { subs: v.subs, msgs: v.msgs, team: typeof v.team === 'number' ? v.team : 0, dismissedUntil: v.dismissedUntil,
+        seenKey: typeof v.seenKey === 'string' ? v.seenKey : undefined };
     } catch {
       return undefined;
     }
