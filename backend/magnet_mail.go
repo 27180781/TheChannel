@@ -1,12 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -312,6 +310,14 @@ func deliverMagnetMail(ctx context.Context, ev *magnetMailEvent) error {
 	if err != nil {
 		return err
 	}
+	// Shabbat and Yom Tov (quiet.go): a mail is held for the window's end, not
+	// sent and not dropped. support_activity is not a mail to anyone outside;
+	// Magnet queues it for its own staff and holds that queue itself.
+	if ev.Event != magnetMailEventSupportActivity {
+		if until, quiet := quietUntil(quietNow()); quiet {
+			return holdMagnetMail(ctx, payload, until)
+		}
+	}
 	var lastErr error
 	for attempt := 0; attempt < magnetMailAttempts; attempt++ {
 		if attempt > 0 {
@@ -322,7 +328,11 @@ func deliverMagnetMail(ctx context.Context, ev *magnetMailEvent) error {
 			case <-time.After(wait):
 			}
 		}
-		status, err := postMagnetMail(ctx, payload)
+		status, body, err := postMagnetMail(ctx, payload)
+		if until, quiet := quietRefusal(status, body); quiet {
+			// Magnet's calendar says it is Shabbat even if ours did not.
+			return holdMagnetMail(ctx, payload, until)
+		}
 		switch {
 		case err != nil:
 			lastErr = err
@@ -341,29 +351,17 @@ func deliverMagnetMail(ctx context.Context, ev *magnetMailEvent) error {
 	return fmt.Errorf("gave up after %d attempts: %v", magnetMailAttempts, lastErr)
 }
 
-func postMagnetMail(ctx context.Context, payload []byte) (int, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, magnetMailURL, bytes.NewReader(payload))
-	if err != nil {
-		// The URL is operator configuration, not a secret, but the error text
-		// is kept generic so a malformed value never echoes a pasted secret.
-		return 0, errors.New("request build failed — check MAGNET_MAIL_URL")
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("x-channels-secret", magnetMailSecret)
-
-	resp, err := magnetMailClient.Do(req)
+func postMagnetMail(ctx context.Context, payload []byte) (int, []byte, error) {
+	status, body, err := postMagnet(ctx, payload)
 	if err != nil {
 		// *url.Error names the URL; the cause alone is enough to act on.
 		var uerr *url.Error
 		if errors.As(err, &uerr) {
-			return 0, uerr.Err
+			return 0, nil, uerr.Err
 		}
-		return 0, err
+		return 0, nil, err
 	}
-	defer resp.Body.Close()
-	// Drained (bounded) so the connection can be reused; the body is not
-	// logged, since an error page might quote request headers back.
-	io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-	return resp.StatusCode, nil
+	// The body is never logged, since an error page might quote request
+	// headers back; it is read only for Magnet's quiet_window answer.
+	return status, body, nil
 }

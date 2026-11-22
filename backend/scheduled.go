@@ -165,6 +165,12 @@ func runScheduledMessages() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// Not on Shabbat or Yom Tov (quiet.go): due posts stay due and are
+	// published by the first tick after the window closes.
+	if isQuietNow() {
+		return
+	}
+
 	now := float64(time.Now().Unix())
 
 	// Get all channels with at least one message due by now
@@ -293,7 +299,7 @@ func runScheduledMessages() {
 			postCancel()
 
 			go SendWebhook(context.Background(), slug, "create", &m)
-			go pushFcmMessage(slug, &m)
+			go pushFcmMessageOrHold(slug, &m)
 		}
 
 		// The messages above are already posted; if this save fails they stay in
