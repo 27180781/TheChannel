@@ -3,6 +3,7 @@ import { RouterOutlet } from '@angular/router';
 import { NbCardModule, NbLayoutModule } from "@nebular/theme";
 import { NotificationsService } from './services/notifications.service';
 import { CelebrationComponent } from './components/shared/celebration.component';
+import { OfflineBannerComponent } from './components/shared/offline-banner.component';
 
 @Component({
   selector: 'app-root',
@@ -11,6 +12,7 @@ import { CelebrationComponent } from './components/shared/celebration.component'
     NbLayoutModule,
     NbCardModule,
     CelebrationComponent,
+    OfflineBannerComponent,
 ],
   templateUrl: './app.component.html',
   styleUrl: './app.component.scss'
