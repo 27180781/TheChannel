@@ -10,7 +10,7 @@
     } @else {
       <span class="ch__logo ch__logo--plain" aria-hidden="true">{{ channelInitial }}</span>
     }
-    @if (creditVariant === 'badge') {
+    @if (creditVariant === 'badge' && !creditHidden) {
       <app-platform-attribution variant="badge" class="ch__credit-badge"></app-platform-attribution>
     }
   </span>
@@ -22,6 +22,8 @@
          invisibly so pickCreditVariant can measure it (see there). -->
     <div class="ch__title" #titleRow>
       <h1 class="ch__name" #nameEl>{{ channelName || 'טוען את הערוץ…' }}</h1>
+      <!-- The owner paid to leave the credit out (no_credit add-on). -->
+      @if (!creditHidden) {
       <app-platform-attribution variant="full" #creditFull
                                 class="ch__credit" [class.ch__credit--off]="creditVariant !== 'full'"
                                 [attr.aria-hidden]="creditVariant !== 'full' ? 'true' : null"
@@ -30,6 +32,7 @@
                                 class="ch__credit" [class.ch__credit--off]="creditVariant !== 'short'"
                                 [attr.aria-hidden]="creditVariant !== 'short' ? 'true' : null"
                                 [attr.inert]="creditVariant !== 'short' ? '' : null"></app-platform-attribution>
+      }
     </div>
     <!-- Its visible text is its accessible name. No nbTooltip next to nbPopover:
          both directives provide the same overlay handler on their host, and the

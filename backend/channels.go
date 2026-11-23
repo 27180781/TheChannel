@@ -54,6 +54,10 @@ type ChannelData struct {
 	// PublicListed: the managers asked for the channel to appear in the
 	// public channels directory (public_channels.go). Absent means no.
 	PublicListed bool `json:"publicListed"`
+	// Paid add-ons (channel_addons.go): until when Magnet says each is paid.
+	// Zero means never paid; a past moment means it ran out.
+	NoCreditUntil time.Time `json:"noCreditUntil"`
+	NoAdsUntil    time.Time `json:"noAdsUntil"`
 }
 
 type ctxKey string

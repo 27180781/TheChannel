@@ -24,6 +24,11 @@ type AdsSettings struct {
 
 // isChannelAdsLocked returns true if the super admin has locked ads settings for this channel.
 func isChannelAdsLocked(globalAds *GlobalAdsConfig, ch *ChannelData) bool {
+	// A channel that pays for no_ads is never served the platform's frame ad
+	// (channel_addons.go): its own settings apply, as on an unlocked channel.
+	if channelNoAds(ch) {
+		return false
+	}
 	if globalAds.LockAll {
 		return true
 	}
@@ -183,6 +188,11 @@ type MagnetAdsSettings struct {
 
 // isChannelMagnetLocked returns true if the super admin has locked magnet settings for this channel.
 func isChannelMagnetLocked(globalMagnet *GlobalMagnetConfig, ch *ChannelData) bool {
+	// Same for the Magnet embed the super admin locks in: no_ads hands the
+	// channel back its own Magnet settings.
+	if channelNoAds(ch) {
+		return false
+	}
 	if globalMagnet.LockAll {
 		return true
 	}

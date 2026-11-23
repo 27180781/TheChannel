@@ -40,8 +40,13 @@ type OwnerConsent struct {
 }
 
 func currentTermsVersion() string {
+	return legalRevised("/terms")
+}
+
+// legalRevised is the Revised date of one legal page.
+func legalRevised(path string) string {
 	for _, p := range legalPages {
-		if p.Path == "/terms" {
+		if p.Path == path {
 			return p.Revised
 		}
 	}

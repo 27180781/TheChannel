@@ -1,0 +1,216 @@
+<div class="addons-page">
+  <nb-card>
+    <nb-card-header class="card-head">
+      <nb-icon icon="star-outline"></nb-icon>
+      <h2>שדרוגים לערוץ</h2>
+    </nb-card-header>
+    <nb-card-body>
+      @if (loading && !status) {
+        <div class="addons-loading" [nbSpinner]="true" nbSpinnerStatus="primary" nbSpinnerMessage="טוענים…"></div>
+      } @else if (loadFailed && !status) {
+        <div class="addons-empty">
+          <nb-icon icon="wifi-off-outline"></nb-icon>
+          <strong>{{ loadError }}</strong>
+          <button nbButton status="primary" size="small" type="button" (click)="load()">
+            <nb-icon icon="refresh-outline"></nb-icon> ניסיון נוסף
+          </button>
+        </div>
+      } @else if (status) {
+        @switch (step) {
+          @case ('choose') {
+            <p class="lead">
+              סמנו את השדרוג שאתם רוצים, אחד מהם או את שניהם. כל שדרוג עולה {{ formatIls(price) }} לחודש.
+            </p>
+
+            <div class="options" role="group" aria-label="בחירת שדרוגים">
+              @for (a of addons; track a.id) {
+                <div class="option" [class.option--on]="selected[a.id] && canBuy(a.id)" [class.option--owned]="!canBuy(a.id)"
+                     (click)="toggle(a.id)">
+                  <nb-checkbox [checked]="selected[a.id] && canBuy(a.id)" (checkedChange)="selected[a.id] = $event"
+                               (click)="$event.stopPropagation()" [disabled]="!canBuy(a.id)" status="primary"
+                               [attr.aria-label]="a.title + ', ' + formatIls(price) + ' לחודש'"></nb-checkbox>
+                  <nb-icon [icon]="a.icon" class="option__icon"></nb-icon>
+                  <span class="option__body">
+                    <span class="option__title">{{ a.title }}</span>
+                    <span class="option__text">{{ a.text }}</span>
+                    @if (renewing(a.id); as sub) {
+                      <span class="pill pill--on">פעיל · מתחדש כל חודש@if (sub.next_charge_date) {, החיוב הבא ב-{{ formatDate(sub.next_charge_date) }}}</span>
+                    } @else if (activeUntil(a.id); as until) {
+                      <span class="pill pill--wait">פעיל עד {{ formatDate(until) }}, לא מתחדש</span>
+                    }
+                  </span>
+                  <span class="option__price">{{ formatIls(price) }}<small>לחודש</small></span>
+                </div>
+              }
+            </div>
+
+            @if (chosen.length) {
+              <div class="details">
+                <h3 class="details__title">פרטי בעל הכרטיס</h3>
+                <div class="grid">
+                  <label class="field">
+                    <span class="field__label">תעודת זהות של בעל הכרטיס</span>
+                    <input nbInput fullWidth inputmode="numeric" maxlength="9" [(ngModel)]="zeout" autocomplete="off"
+                           [status]="touched && !zeoutOk ? 'danger' : 'basic'">
+                    @if (touched && !zeoutOk) { <span class="field__error">מספר תעודת הזהות לא תקין</span> }
+                  </label>
+                  <label class="field">
+                    <span class="field__label">טלפון</span>
+                    <input nbInput fullWidth type="tel" inputmode="tel" [(ngModel)]="phone" autocomplete="tel" dir="ltr"
+                           [status]="touched && !phoneOk ? 'danger' : 'basic'">
+                    @if (touched && !phoneOk) { <span class="field__error">מספר הטלפון לא תקין</span> }
+                  </label>
+                  <label class="field">
+                    <span class="field__label">שם לקבלה (לא חובה)</span>
+                    <input nbInput fullWidth [(ngModel)]="payerName" maxlength="100" autocomplete="name">
+                  </label>
+                  <label class="field">
+                    <span class="field__label">ח.פ. או עוסק מורשה לחשבונית (לא חובה)</span>
+                    <input nbInput fullWidth inputmode="numeric" maxlength="9" [(ngModel)]="taxId"
+                           [status]="touched && !taxIdOk ? 'danger' : 'basic'">
+                  </label>
+                  @if (need.address) {
+                    <label class="field">
+                      <span class="field__label">רחוב ומספר</span>
+                      <input nbInput fullWidth [(ngModel)]="street" maxlength="50" autocomplete="street-address"
+                             [status]="touched && !street.trim() ? 'danger' : 'basic'">
+                    </label>
+                    <label class="field">
+                      <span class="field__label">עיר</span>
+                      <input nbInput fullWidth [(ngModel)]="city" maxlength="30" autocomplete="address-level2"
+                             [status]="touched && !city.trim() ? 'danger' : 'basic'">
+                    </label>
+                  }
+                </div>
+
+                <div class="summary">
+                  <div class="summary__row">
+                    <span>{{ chosen.length === 2 ? 'שני השדרוגים' : title[chosen[0]] }}</span>
+                    <strong>{{ formatIls(total) }} לחודש</strong>
+                  </div>
+                  <p class="summary__note">
+                    <nb-icon icon="sync-outline"></nb-icon>
+                    <span><strong>חיוב חודשי מתחדש</strong> בהוראת קבע, עד שתבטלו. כל תשלום נותן לפחות 30 יום שלמים.
+                      אפשר לבטל בכל עת תחת "המנויים שלי" בעמוד הזה, והשדרוג ימשיך עד סוף 30 הימים ששולמו.</span>
+                  </p>
+                </div>
+
+                <div class="terms" [class.terms--missing]="touched && !acceptedTerms">
+                  <nb-checkbox [(ngModel)]="acceptedTerms" status="primary">
+                    קראתי ואני מסכים/ה ל<a href="/upgrade-terms" target="_blank" rel="noopener">תקנון השדרוגים</a>,
+                    כולל החיוב החודשי המתחדש, תנאי הביטול והגבלת האחריות.
+                    <span class="terms__req">(חובה)</span>
+                  </nb-checkbox>
+                </div>
+                @if (touched && !acceptedTerms) {
+                  <p class="field__error" role="alert">כדי להמשיך צריך לאשר את תקנון השדרוגים.</p>
+                }
+
+                <div class="actions">
+                  <button nbButton status="primary" type="button" (click)="start()" [disabled]="starting">
+                    @if (starting) { <nb-icon icon="loader-outline" class="spin"></nb-icon> פותחים את התשלום… }
+                    @else { <nb-icon icon="credit-card-outline"></nb-icon> מעבר לתשלום מאובטח }
+                  </button>
+                </div>
+              </div>
+            }
+          }
+
+          @case ('pay') {
+            <div class="pay">
+              <div class="pay__head">
+                <strong>{{ formatIls(session?.amountGross ?? total) }} לחודש</strong>
+                <span>חיוב חודשי מתחדש עד ביטול</span>
+                <button nbButton ghost size="small" status="basic" type="button" (click)="backToChoose()">
+                  <nb-icon icon="arrow-forward-outline"></nb-icon> חזרה
+                </button>
+              </div>
+              <div class="pay__frame">
+                <iframe #payFrame [src]="frameSrc" title="תשלום מאובטח בנדרים פלוס" allow="payment" scrolling="no"
+                        [style.height.px]="frameHeight"></iframe>
+                @if (!frameReady) {
+                  <div class="pay__loading" [nbSpinner]="true" nbSpinnerStatus="primary"></div>
+                }
+              </div>
+              @if (hint) { <p class="pay__hint" role="status">{{ hint }}</p> }
+              <p class="pay__secure"><nb-icon icon="lock-outline"></nb-icon> פרטי הכרטיס נמסרים ישירות לנדרים פלוס, ולא נשמרים אצלנו.</p>
+            </div>
+          }
+
+          @case ('processing') {
+            <div class="addons-empty">
+              <div class="addons-loading" [nbSpinner]="true" nbSpinnerStatus="primary" nbSpinnerMessage="מאשרים את המנוי…"></div>
+            </div>
+          }
+
+          @case ('done') {
+            <div class="addons-empty addons-empty--ok">
+              <nb-icon icon="checkmark-circle-2-outline"></nb-icon>
+              <strong>המנוי הופעל, תודה!</strong>
+              <span>השדרוג כבר פועל בערוץ (בטעינה הבאה של הערוץ). הקבלה תישלח למייל שלכם.</span>
+              <button nbButton status="primary" size="small" type="button" (click)="finish()">סיום</button>
+            </div>
+          }
+
+          @case ('pending') {
+            <div class="addons-empty">
+              <nb-icon icon="clock-outline"></nb-icon>
+              <strong>התשלום התקבל ועדיין לא אושר אצלנו</strong>
+              <span>זה לוקח לפעמים כמה דקות. השדרוג יופעל מעצמו כשהאישור יגיע.</span>
+              <button nbButton status="primary" size="small" type="button" (click)="finish()">בדיקה מחדש</button>
+            </div>
+          }
+        }
+      }
+    </nb-card-body>
+  </nb-card>
+
+  @if (status && status.subscriptions.length) {
+    <section class="subs">
+      <button type="button" class="subs__toggle" (click)="showSubs = !showSubs" [attr.aria-expanded]="showSubs">
+        <nb-icon [icon]="showSubs ? 'chevron-up-outline' : 'chevron-down-outline'"></nb-icon>
+        המנויים שלי
+      </button>
+      @if (showSubs) {
+        <ul class="subs__list">
+          @for (s of status.subscriptions; track s.id) {
+            <li class="sub">
+              <div class="sub__head">
+                <strong>{{ subTitle(s) }}</strong>
+                <span class="sub__state">{{ subState(s) }}</span>
+              </div>
+              <div class="sub__meta">
+                @if (s.source === 'owner') { <span>{{ formatIls(s.monthly_gross) }} לחודש</span> }
+                @if (s.card_last4) { <span>כרטיס <span class="ltr-figure">****{{ s.card_last4 }}</span></span> }
+                @if (s.status === 'active' && s.next_charge_date) { <span>החיוב הבא ב-{{ formatDate(s.next_charge_date) }}</span> }
+                @if (s.status !== 'active' && periodEndText(s)) { <span>השדרוג פעיל עד {{ periodEndText(s) }}</span> }
+                @if (s.source === 'comp' && s.status === 'active' && periodEndText(s)) { <span>עד {{ periodEndText(s) }}</span> }
+              </div>
+              @if (s.charges.length) {
+                <ul class="sub__charges">
+                  @for (c of s.charges; track c.charged_on + c.amount_gross) {
+                    <li>
+                      <span>{{ formatDate(c.charged_on) }}</span>
+                      <span>{{ formatIls(c.amount_gross) }}</span>
+                      @if (c.document_url) {
+                        <a [href]="c.document_url" target="_blank" rel="noopener">קבלה{{ c.document_number ? ' ' + c.document_number : '' }}</a>
+                      } @else {
+                        <span class="sub__wait">הקבלה בהכנה</span>
+                      }
+                    </li>
+                  }
+                </ul>
+              }
+              @if (s.source === 'owner' && s.status === 'active') {
+                <button nbButton ghost size="tiny" status="basic" type="button" class="sub__cancel"
+                        (click)="cancel(s)" [disabled]="cancelling === s.id">
+                  {{ cancelling === s.id ? 'מבטלים…' : 'ביטול המנוי' }}
+                </button>
+              }
+            </li>
+          }
+        </ul>
+      }
+    </section>
+  }
+</div>

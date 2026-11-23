@@ -1295,6 +1295,9 @@ func channelFromRecords(slug string, h map[string]string, featuresJSON string, h
 		ViewersOnly:    h["viewersOnly"] == "1",
 
 		PublicListed: h["publicListed"] == "1",
+
+		NoCreditUntil: parseAddonTime(h[addonHashNoCredit]),
+		NoAdsUntil:    parseAddonTime(h[addonHashNoAds]),
 	}
 	if h["slug"] == "" {
 		channel.Slug = slug

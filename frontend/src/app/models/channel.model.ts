@@ -29,6 +29,8 @@ export interface Channel {
   seo_description?: string;
   // Listed in the public channels directory (backend/public_channels.go).
   public_listed?: boolean;
+  /** Paid add-ons in force (backend/channel_addons.go). */
+  addons?: { no_credit?: boolean; no_ads?: boolean };
 }
 
 /** The search part of a channel edit, as the backend's request names it. */
