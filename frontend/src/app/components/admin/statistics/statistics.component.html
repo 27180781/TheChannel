@@ -26,9 +26,9 @@
       <nb-card class="kpi">
         <nb-card-body>
           <nb-icon icon="activity-outline" class="kpi__icon kpi__icon--live"></nb-icon>
-          <span class="kpi__value">{{ s.connectedUsersAmount || 0 }}</span>
+          <span class="kpi__value">{{ s.connectedPeopleAmount || 0 }}</span>
           <span class="kpi__label">מחוברים עכשיו</span>
-          <span class="kpi__hint">חלונות של הערוץ שפתוחים ברגע זה ומקבלים עדכונים חיים — כולל אורחים.</span>
+          <span class="kpi__hint">{{ s.connectedPeopleAmount || 0 }} אנשים · {{ s.connectedUsersAmount || 0 }} חיבורים. {{ connectedHint(s) }}</span>
         </nb-card-body>
       </nb-card>
       <nb-card class="kpi">
@@ -36,11 +36,11 @@
           <nb-icon icon="trending-up-outline" class="kpi__icon"></nb-icon>
           @if (s.peakSSEConnections && s.peakSSEConnections.value) {
             <span class="kpi__value">{{ s.peakSSEConnections.value }}</span>
-            <span class="kpi__label">שיא מחוברים בו-זמנית</span>
-            <span class="kpi__hint">נרשם ב-{{ s.peakSSEConnections.timestamp | messageTime }}.</span>
+            <span class="kpi__label">שיא חיבורים בו-זמנית</span>
+            <span class="kpi__hint">נרשם ב-{{ s.peakSSEConnections.timestamp | messageTime }}. חיבורים ולא אנשים: כל לשונית ומכשיר נספרים בנפרד.</span>
           } @else {
             <span class="kpi__value">—</span>
-            <span class="kpi__label">שיא מחוברים בו-זמנית</span>
+            <span class="kpi__label">שיא חיבורים בו-זמנית</span>
             <span class="kpi__hint">עדיין לא נרשם שיא — הוא יופיע עם הכניסה הראשונה.</span>
           }
         </nb-card-body>
@@ -53,8 +53,8 @@
         <dt>משתתפים</dt>
         <dd>קוראים שפתחו את הערוץ כשהם מחוברים לגוגל, אי פעם — המספר שמוצג בכותרת הערוץ. אורחים לא נספרים.</dd>
         <dt>מחוברים עכשיו</dt>
-        <dd>חלונות של הערוץ שפתוחים ברגע זה ומקבלים עדכונים חיים — כולל אורחים.</dd>
-        <dt>שיא מחוברים בו-זמנית</dt>
+        <dd>{{ s.connectedPeopleAmount || 0 }} אנשים · {{ s.connectedUsersAmount || 0 }} חיבורים. {{ connectedHint(s) }}</dd>
+        <dt>שיא חיבורים בו-זמנית</dt>
         @if (s.peakSSEConnections && s.peakSSEConnections.value) {
           <dd>נרשם ב-{{ s.peakSSEConnections.timestamp | messageTime }}.</dd>
         } @else {

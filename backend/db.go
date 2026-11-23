@@ -1536,6 +1536,7 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 		storageIncreaseTicketKey(p),
 		fmt.Sprintf("channel:%s:files", p),
 		fmt.Sprintf("channel:%s:sse_connections", p),
+		sseViewersKey(p),
 		fmt.Sprintf("channel:%s:events", p),
 		fmt.Sprintf("channel:%s:last_modified", p),
 		channelMagnetStatsKeyKey(p),
