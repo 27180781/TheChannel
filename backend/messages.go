@@ -371,6 +371,9 @@ func deleteMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A deleted post cannot stay pinned: the bar would point at nothing.
+	unpinIfPinned(ctx, slug, id)
+
 	go SendWebhook(context.Background(), slug, "delete", &message)
 
 	response := Response{Success: true}

@@ -11,7 +11,7 @@ import {
 import { MessageComponent } from "./message/message.component";
 import { MagnetAdSlotComponent } from "./magnet-ad-slot/magnet-ad-slot.component";
 import { firstValueFrom, interval, Subscription } from 'rxjs';
-import { ChannelTag, ChatMessage, ChatService, FEED_PAGE_SIZE } from '../../../services/chat.service';
+import { ChannelTag, ChatMessage, ChatService, FEED_PAGE_SIZE, PinnedMessage } from '../../../services/chat.service';
 import { tagInk } from '../../../utils/tag-colors';
 import { AuthService } from '../../../services/auth.service';
 import { ActivatedRoute, Router } from '@angular/router';
@@ -129,6 +129,44 @@ export class ChatComponent implements OnInit, OnDestroy {
   @HostBinding('class.has-tag-bar')
   get hasTagBar(): boolean {
     return this.tags.length > 0;
+  }
+
+  /** The post pinned to the top of the feed, shown in a bar under the header. */
+  get pinned(): PinnedMessage | null {
+    return this.chatService.pinned;
+  }
+
+  @HostBinding('class.has-pin-bar')
+  get hasPinBar(): boolean {
+    return !!this.chatService.pinned;
+  }
+
+  private reloadPinned() {
+    this.chatService.loadPinned().catch(() => null);
+  }
+
+  /** The pin bar was tapped: bring the post into view, loading it when it is not. */
+  openPinned() {
+    const p = this.chatService.pinned;
+    if (!p) return;
+    // A tag filter can hide the post; show everything so the jump can land.
+    if (this.chatService.tagFilter) {
+      this.setTagFilter('').then(() => this.scrollToId({ messageId: p.id, smooth: true, mark: true }));
+      return;
+    }
+    this.scrollToId({ messageId: p.id, smooth: true, mark: true });
+  }
+
+  async unpin(event: Event) {
+    event.stopPropagation();
+    const p = this.chatService.pinned;
+    if (!p) return;
+    try {
+      await this.chatService.setPinned(p.id, false);
+      this.toastrService.success('', 'ההודעה כבר לא נעוצה');
+    } catch {
+      this.toastrService.danger('', 'לא הצלחנו לבטל את הנעיצה');
+    }
   }
 
   protected readonly ink = tagInk;
@@ -345,6 +383,7 @@ export class ChatComponent implements OnInit, OnDestroy {
 
     this.chatService.getEmojisList(true).catch(() => null);
     this.chatService.getTags(true).catch(() => null);
+    this.reloadPinned();
     // A tag tapped on a card; the bar above shows the filter and clears it.
     this.tagFilterSub = this.chatService.tagFilterRequests.subscribe(id => this.zone.run(() => this.setTagFilter(id)));
 
@@ -446,6 +485,8 @@ export class ChatComponent implements OnInit, OnDestroy {
         // Reconnect after a drop — fetch messages that arrived during the gap
         this.zone.run(() => { this.isOffline = false; });
         this.loadMissedMessages();
+        // A pin changed during the gap is not replayed if the stream trimmed it.
+        this.zone.run(() => this.reloadPinned());
         // The scheduled list is only refreshed by the dispatch event; one that
         // fell into the gap left a stale cache, and the writer's next save
         // re-posted the already-published entry from it.
@@ -481,6 +522,9 @@ export class ChatComponent implements OnInit, OnDestroy {
         case 'tags-updated':
           this.zone.run(() => this.reloadTags());
           break;
+        case 'pin-updated':
+          this.zone.run(() => this.reloadPinned());
+          break;
         case 'new-message':
           if (this.hasNewMessages) break;
           if (!this.matchesFilter(message.message)) break;
@@ -508,6 +552,11 @@ export class ChatComponent implements OnInit, OnDestroy {
           });
           break;
         case 'delete-message':
+          // The server drops the pin of a deleted post and says so with
+          // pin-updated; clear the bar now rather than wait for it.
+          if (this.chatService.pinned?.id === message.message.id) {
+            this.zone.run(() => { this.chatService.pinned = null; });
+          }
           // Dropped for every role: a writer who still saw the deleted post
           // (greyed out) took it for a delete that had not worked. Only with
           // "show deleted" on does it stay, marked, so it can be restored.
@@ -527,6 +576,8 @@ export class ChatComponent implements OnInit, OnDestroy {
           });
           break;
         case 'edit-message':
+          // The bar shows the pinned post's text: an edit changes it.
+          if (this.chatService.pinned?.id === message.message.id) this.zone.run(() => this.reloadPinned());
           this.zone.run(() => {
             const index = this.messages.findIndex(m => m.id === message.message.id);
             if (index !== -1 && !this.matchesFilter(message.message)) {

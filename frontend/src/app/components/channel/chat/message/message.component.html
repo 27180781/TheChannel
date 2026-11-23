@@ -30,6 +30,9 @@
         @if (message.is_ads) {
           <span class="msg__tag">פרסומת</span>
         }
+        @if (isPinned) {
+          <span class="msg__tag msg__tag--pin"><nb-icon icon="bookmark" aria-hidden="true"></nb-icon>נעוצה</span>
+        }
         @if (message.deleted) {
           <span class="msg__tag msg__tag--danger">מחוקה — מוסתרת מכולם</span>
         }
@@ -116,6 +119,12 @@
       <button type="button" role="menuitem" class="msg-actions__item msg-actions__item--danger" (click)="deleteMessage(message)">
         <nb-icon icon="trash-2-outline"></nb-icon>
         מחיקה
+      </button>
+    }
+    @if (message && canPin) {
+      <button type="button" role="menuitem" class="msg-actions__item" (click)="togglePin()">
+        <nb-icon [icon]="isPinned ? 'bookmark-outline' : 'bookmark'"></nb-icon>
+        {{ isPinned ? 'ביטול הנעיצה' : 'נעיצה בראש הערוץ' }}
       </button>
     }
     @if (message && canWrite && !isSchedulingMessage) {
