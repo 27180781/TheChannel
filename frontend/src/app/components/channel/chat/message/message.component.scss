@@ -148,6 +148,16 @@
   color: var(--color-danger-700);
 }
 
+.msg__tag--pin {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  background: var(--color-primary-100);
+  color: var(--color-primary-700);
+
+  nb-icon { font-size: 0.85rem; }
+}
+
 .msg__restore {
   flex: 0 0 auto;
   white-space: nowrap;

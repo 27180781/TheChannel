@@ -128,6 +128,37 @@ export class MessageComponent implements OnInit, AfterViewInit, OnDestroy {
     return role === 'owner' || role === 'moderator';
   }
 
+  /** This post is the one pinned to the top of the feed. */
+  get isPinned(): boolean {
+    return !!this.message?.id && this.chatService.pinned?.id === this.message.id && !this.isSchedulingMessage;
+  }
+
+  /** Managers (moderator and up) pin a live, published post. */
+  get canPin(): boolean {
+    return this.canModerate && !this.isSchedulingMessage && !!this.message?.id && !this.message.deleted;
+  }
+
+  async togglePin() {
+    this.closeActions();
+    const id = this.message?.id;
+    if (!id) return;
+    const unpin = this.isPinned;
+    if (!unpin && this.chatService.pinned) {
+      const ok = await this.confirm.ask({
+        title: 'להחליף את ההודעה הנעוצה?',
+        message: 'אפשר לנעוץ הודעה אחת בכל פעם. ההודעה הזו תחליף את זו שנעוצה עכשיו.',
+        confirmLabel: 'נעיצה',
+      });
+      if (!ok) return;
+    }
+    try {
+      await this.chatService.setPinned(id, !unpin);
+      this.toastrService.success('', unpin ? 'ההודעה כבר לא נעוצה' : 'ההודעה נעוצה בראש הערוץ');
+    } catch {
+      this.toastrService.danger('', unpin ? 'לא הצלחנו לבטל את הנעיצה' : 'לא הצלחנו לנעוץ את ההודעה');
+    }
+  }
+
   /** Whether the card shows the "add reaction" chip at all. */
   get canOfferReactions(): boolean {
     return this.chatService.reactionsEnabled && this.reacts.length > 0

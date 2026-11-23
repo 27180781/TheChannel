@@ -213,6 +213,7 @@ func main() {
 		r.With(channelIfRequireAuthFiles).Get("/files/{fileid}", serveFile)
 		r.Get("/emojis/list", getEmojisList)
 		r.Get("/tags/list", getTagsList)
+		r.Get("/pinned", getPinnedMessage)
 		r.Get("/notifications-config", getNotificationsConfig)
 		r.Get("/ads/settings", getAdsSettings)
 		r.Get("/ads/magnet", getMagnetAdsSettings)
@@ -253,6 +254,7 @@ func main() {
 				r.Post("/activity/mails", protectedWithChannelRole(RoleOwner, setChannelNudgeMails))
 				r.Post("/set-emojis", protectedWithChannelRole(RoleModerator, setEmojis))
 				r.Post("/tags/set", protectedWithChannelRole(RoleModerator, setTags))
+				r.Post("/pin-message", protectedWithChannelRole(RoleModerator, setPinnedMessage))
 				r.Get("/reports/get", protectedWithChannelRole(RoleModerator, getReports))
 				r.Post("/reports/set", protectedWithChannelRole(RoleModerator, setReports))
 

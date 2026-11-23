@@ -1536,6 +1536,7 @@ func dbDeleteChannel(ctx context.Context, slug string) error {
 		fmt.Sprintf("channel:%s:events", p),
 		fmt.Sprintf("channel:%s:last_modified", p),
 		channelMagnetStatsKeyKey(p),
+		channelPinnedKey(p),
 	}
 	fixedKeys = append(fixedKeys, tagIndexKeysFor(ctx, p)...)
 	fixedKeys = append(fixedKeys, channelTagsKey(p))

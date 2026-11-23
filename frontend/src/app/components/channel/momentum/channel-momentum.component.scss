@@ -80,7 +80,7 @@
 
 .momentum--feed {
   position: fixed;
-  top: calc(var(--chrome-height, 0px) + var(--tag-bar-height, 0px) + 0.6rem);
+  top: calc(var(--chrome-height, 0px) + var(--tag-bar-height, 0px) + var(--pin-bar-height, 0px) + 0.6rem);
   left: 50%;
   width: min(520px, calc(100vw - 1.5rem));
   transform: translateX(-50%);

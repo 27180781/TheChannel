@@ -16,14 +16,124 @@
 // there moves down by its height, and the top of the feed gets room for it.
 :host {
   --tag-bar-height: 0px;
+  --pin-bar-height: 0px;
 }
 
 :host(.has-tag-bar) {
   --tag-bar-height: 3.4rem;
+}
 
+:host(.has-pin-bar) {
+  --pin-bar-height: 3.6rem;
+}
+
+:host(.has-tag-bar),
+:host(.has-pin-bar) {
   .feed {
-    padding-top: var(--tag-bar-height);
+    padding-top: calc(var(--tag-bar-height) + var(--pin-bar-height));
   }
+}
+
+/* ---------- pinned post bar ---------- */
+
+.pin-bar {
+  position: fixed;
+  top: calc(var(--chrome-height, 0px) + var(--tag-bar-height));
+  // The desktop ad column sits on the left (RTL layout); leave it uncovered.
+  left: var(--ad-width, 0px);
+  right: 0;
+  z-index: 11;
+  height: var(--pin-bar-height);
+  display: flex;
+  align-items: center;
+  background: color-mix(in srgb, var(--background-basic-color-1) 90%, transparent);
+  backdrop-filter: saturate(1.4) blur(10px);
+  -webkit-backdrop-filter: saturate(1.4) blur(10px);
+  border-bottom: 1px solid var(--border-basic-color-3);
+  box-shadow: 0 6px 16px -12px rgba(0, 0, 0, 0.35);
+}
+
+.pin-bar__inner {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 0 0.5rem;
+  min-width: 0;
+  height: 100%;
+}
+
+.pin-bar__open {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+  height: 100%;
+  padding: 0 0.35rem;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  border-radius: 10px;
+
+  &:hover { background: var(--background-basic-color-2); }
+  &:focus-visible {
+    outline: 2px solid var(--color-primary-500);
+    outline-offset: -2px;
+  }
+}
+
+.pin-bar__icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: var(--color-primary-transparent-200, var(--background-basic-color-3));
+  color: var(--color-primary-600, var(--text-primary-color));
+
+  nb-icon { font-size: 1.05rem; }
+}
+
+.pin-bar__thumb {
+  flex: 0 0 auto;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--background-basic-color-3);
+}
+
+.pin-bar__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.pin-bar__label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--color-primary-600, var(--text-primary-color));
+}
+
+.pin-bar__preview {
+  font-size: 0.9rem;
+  color: var(--text-basic-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pin-bar__close {
+  flex: 0 0 auto;
 }
 
 /* ---------- tag filter bar ---------- */

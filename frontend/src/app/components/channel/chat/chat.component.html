@@ -38,6 +38,34 @@
   </nav>
 }
 
+<!-- The post the channel's managers pinned: under the header (and the tag
+     bar) for every viewer. Tapping it jumps to the post in the feed. -->
+@if (pinned; as p) {
+  <div class="pin-bar">
+    <div class="pin-bar__inner">
+      <button type="button" class="pin-bar__open" (click)="openPinned()"
+              aria-label="הודעה נעוצה. מעבר להודעה בערוץ">
+        <span class="pin-bar__icon" aria-hidden="true">
+          <nb-icon icon="bookmark"></nb-icon>
+        </span>
+        @if (p.image) {
+          <img class="pin-bar__thumb" [src]="p.image" alt="" width="40" height="40" loading="lazy" decoding="async">
+        }
+        <span class="pin-bar__text">
+          <span class="pin-bar__label">הודעה נעוצה</span>
+          <span class="pin-bar__preview">{{ p.preview || (p.image ? 'תמונה' : 'הודעה') }}</span>
+        </span>
+      </button>
+      @if (canManage) {
+        <button nbButton ghost shape="round" size="small" status="basic" type="button" class="pin-bar__close"
+                (click)="unpin($event)" aria-label="ביטול הנעיצה" nbTooltip="ביטול הנעיצה">
+          <nb-icon icon="close-outline"></nb-icon>
+        </button>
+      }
+    </div>
+  </div>
+}
+
 @if (initialLoadFailed) {
   <div class="feed-banner feed-banner--danger" role="alert">
     <nb-icon icon="alert-triangle-outline"></nb-icon>

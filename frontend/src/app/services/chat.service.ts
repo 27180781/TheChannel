@@ -26,6 +26,16 @@ export interface ChatMessage {
 }
 export type ChatResponse = ChatMessage[];
 
+/** The post the channel's managers pinned, as the bar under the header shows it. */
+export interface PinnedMessage {
+  id: number;
+  /** Plain text, markup removed and shortened by the server. */
+  preview: string;
+  /** The post's first picture, when it has one. */
+  image?: string;
+  timestamp?: string;
+}
+
 /** A label the channel's managers define; a post may carry one. */
 export interface ChannelTag {
   id: string;
@@ -87,6 +97,10 @@ export class ChatService {
   tagFilter = '';
   /** Asks the feed to switch filter, e.g. from a tag chip on a card. */
   readonly tagFilterRequests = new Subject<string>();
+
+  /** The pinned post, or null when the channel has none (or it is not loaded yet). */
+  pinned: PinnedMessage | null = null;
+  private pinnedSeq = 0;
 
   constructor(private http: HttpClient, private slugService: SlugService) { }
 
@@ -190,6 +204,8 @@ export class ChatService {
   clearCache(keepInfoFor?: string) {
     this.showDeleted = false;
     this.tagFilter = '';
+    this.pinned = null;
+    this.pinnedSeq++;
     this.tags.splice(0);
     this.tagsSlug = '';
     this.tagsRequest = undefined;
@@ -240,6 +256,27 @@ export class ChatService {
 
   tagById(id: string | undefined): ChannelTag | undefined {
     return id ? this.tags.find(t => t.id === id) : undefined;
+  }
+
+  /**
+   * Reloads the pinned post. Later calls win: a pin-updated event can land
+   * while an earlier request is still in flight, and its older answer must
+   * not overwrite the newer one.
+   */
+  async loadPinned(): Promise<PinnedMessage | null> {
+    const seq = ++this.pinnedSeq;
+    const requestedSlug = this.slug;
+    const res = await firstValueFrom(this.http.get<{ pinned: PinnedMessage | null }>(`/api/channel/${requestedSlug}/pinned`));
+    if (seq === this.pinnedSeq && requestedSlug === this.slug) this.pinned = res?.pinned ?? null;
+    return this.pinned;
+  }
+
+  /** Managers only (moderator and up): pins a post, or with `pinned` false takes its pin down. */
+  async setPinned(id: number, pinned: boolean): Promise<void> {
+    const seq = ++this.pinnedSeq;
+    const res = await firstValueFrom(this.http.post<{ success: boolean; pinned: PinnedMessage | null }>(
+      `/api/channel/${this.slug}/admin/pin-message`, { id, pinned }));
+    if (seq === this.pinnedSeq) this.pinned = res?.pinned ?? null;
   }
 
   reportMessage(messageId: number, reason: string): Promise<ResponseResult> {
