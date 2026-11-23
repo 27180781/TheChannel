@@ -1,0 +1,336 @@
+@use '../admin-shared' as *;
+
+:host {
+  display: block;
+}
+
+.addons-page {
+  @include admin-page;
+}
+
+.card-head {
+  @include admin-card-header;
+}
+
+.lead {
+  @include admin-lead;
+}
+
+.addons-loading {
+  min-height: 6rem;
+}
+
+.addons-empty {
+  @include admin-empty;
+
+  &--ok nb-icon {
+    color: var(--color-success-500);
+  }
+}
+
+.pill {
+  @include admin-pill(var(--background-basic-color-3), var(--text-hint-color));
+  align-self: flex-start;
+  margin-top: 0.35rem;
+  white-space: normal;
+
+  &--on {
+    background: var(--color-success-100);
+    color: var(--color-success-700);
+  }
+
+  &--wait {
+    background: var(--color-warning-100);
+    color: var(--color-warning-700);
+  }
+}
+
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.9rem 1rem;
+  border: 2px solid var(--border-basic-color-3);
+  border-radius: var(--card-border-radius);
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+
+  &--on {
+    border-color: var(--color-primary-500);
+    background: var(--color-primary-transparent-100);
+  }
+
+  &--owned {
+    cursor: default;
+  }
+}
+
+.option__icon {
+  font-size: 1.5rem;
+  color: var(--color-primary-600);
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+.option__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.option__title {
+  font-weight: 700;
+  color: var(--text-basic-color);
+}
+
+.option__text {
+  @include admin-hint;
+}
+
+.option__price {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-weight: 800;
+  font-size: 1.1rem;
+  white-space: nowrap;
+  color: var(--text-basic-color);
+
+  small {
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: var(--text-hint-color);
+  }
+}
+
+.details {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-basic-color-3);
+}
+
+.details__title {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 0.75rem 1rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.field__label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.field__error {
+  margin: 0.15rem 0 0;
+  font-size: 0.82rem;
+  color: var(--color-danger-600);
+}
+
+.summary {
+  margin: 1.25rem 0 0.75rem;
+  padding: 0.85rem 1rem;
+  border-radius: var(--card-border-radius);
+  background: var(--background-basic-color-2);
+}
+
+.summary__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 1.05rem;
+}
+
+.summary__note {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0.5rem 0 0;
+  font-size: 0.88rem;
+  line-height: 1.55;
+  color: var(--text-basic-color);
+
+  nb-icon {
+    flex-shrink: 0;
+    margin-top: 0.15rem;
+    color: var(--color-primary-600);
+  }
+}
+
+.terms {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid transparent;
+  border-radius: var(--card-border-radius);
+  font-size: 0.92rem;
+  line-height: 1.55;
+
+  &--missing {
+    border-color: var(--color-danger-500);
+  }
+}
+
+.terms__req {
+  color: var(--text-hint-color);
+  font-size: 0.82rem;
+}
+
+.actions {
+  margin-top: 1rem;
+  display: flex;
+  justify-content: flex-start;
+}
+
+.pay__head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+
+  span {
+    color: var(--text-hint-color);
+    font-size: 0.88rem;
+  }
+
+  button {
+    margin-inline-start: auto;
+  }
+}
+
+.pay__frame {
+  position: relative;
+  min-height: 320px;
+
+  iframe {
+    display: block;
+    width: 100%;
+    border: 0;
+  }
+}
+
+.pay__loading {
+  position: absolute;
+  inset: 0;
+  background: var(--background-basic-color-1);
+}
+
+.pay__hint {
+  margin: 0.5rem 0 0;
+  font-size: 0.9rem;
+}
+
+.pay__secure {
+  @include admin-hint;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.75rem;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+// "המנויים שלי": deliberately quiet, below the card.
+.subs {
+  padding: 0 0.25rem;
+}
+
+.subs__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 0.88rem;
+  color: var(--text-hint-color);
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text-basic-color);
+  }
+}
+
+.subs__list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.sub {
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border-basic-color-3);
+  border-radius: var(--card-border-radius);
+  background: var(--background-basic-color-1);
+  font-size: 0.88rem;
+}
+
+.sub__head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: space-between;
+}
+
+.sub__state,
+.sub__meta {
+  color: var(--text-hint-color);
+}
+
+.sub__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin-top: 0.25rem;
+}
+
+.sub__charges {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+
+  li {
+    display: flex;
+    gap: 1rem;
+    padding: 0.2rem 0;
+  }
+}
+
+.sub__wait {
+  color: var(--text-hint-color);
+}
+
+.sub__cancel {
+  margin-top: 0.5rem;
+}

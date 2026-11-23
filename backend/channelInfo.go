@@ -38,6 +38,14 @@ type Channel struct {
 	SeoDescription string `json:"seo_description"`
 	// In the public channels directory (public_channels.go).
 	PublicListed bool `json:"public_listed"`
+	// Paid add-ons in force (channel_addons.go). Public: the header needs
+	// no_credit to leave the platform credit out.
+	Addons ChannelAddonFlags `json:"addons"`
+}
+
+type ChannelAddonFlags struct {
+	NoCredit bool `json:"no_credit"`
+	NoAds    bool `json:"no_ads"`
 }
 
 func getChannelInfo(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +76,7 @@ func getChannelInfo(w http.ResponseWriter, r *http.Request) {
 		channel.SeoTitle = ch.SeoTitle
 		channel.SeoDescription = ch.SeoDescription
 		channel.PublicListed = ch.PublicListed
+		channel.Addons = ChannelAddonFlags{NoCredit: channelNoCredit(ch), NoAds: channelNoAds(ch)}
 		channel.Features = PublicFeatures{
 			Reactions:         ch.Features.Reactions,
 			FileUploads:       ch.Features.FileUploads,

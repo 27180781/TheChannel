@@ -29,6 +29,7 @@ import { EmojisComponent } from '../admin/emojis/emojis.component';
 import { TagsComponent } from '../admin/tags/tags.component';
 import { MagnetAdsComponent } from '../admin/magnet-ads/magnet-ads.component';
 import { StorageComponent } from '../admin/storage/storage.component';
+import { AddonsComponent } from '../admin/addons/addons.component';
 import { ReportsComponent } from '../admin/reports/reports.component';
 import { GuideComponent } from '../admin/guide/guide.component';
 import { SupportBoxComponent } from '../support/support-box.component';
@@ -82,7 +83,7 @@ type LoadError = '' | 'notfound' | 'forbidden' | 'network';
     EmojisComponent,
     TagsComponent,
     MagnetAdsComponent,
-    StorageComponent,
+    StorageComponent, AddonsComponent,
     ReportsComponent,
     GuideComponent,
     SupportBoxComponent,
@@ -168,6 +169,11 @@ export class ManageChannelComponent implements OnInit, OnDestroy {
       id: 'storage', title: 'אחסון', icon: 'hard-drive-outline', access: 'owner',
       nav: 'מקום לקבצים',
       description: 'כמה מקום הקבצים שהועלו לערוץ תופסים, ומה קורה כשהמקום נגמר.',
+    },
+    {
+      id: 'upgrades', title: 'שדרוגים', icon: 'star-outline', access: 'owner',
+      nav: 'בלי קרדיט ובלי פרסומות',
+      description: 'הסרת הקרדיט מראש הערוץ, וערוץ בלי הפרסומות של המערכת. מנוי חודשי שאפשר לבטל בכל עת.',
     },
     {
       id: 'reports', title: 'דיווחים', icon: 'alert-triangle-outline', access: 'moderator',

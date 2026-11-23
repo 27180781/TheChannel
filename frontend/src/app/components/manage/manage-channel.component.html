@@ -179,6 +179,7 @@
               @case ('tags') { <app-tags></app-tags> }
               @case ('magnet-ads') { <app-magnet-ads (accessDenied)="onAccessDenied()"></app-magnet-ads> }
               @case ('storage') { <app-channel-storage [slug]="slug" (accessDenied)="onAccessDenied()"></app-channel-storage> }
+              @case ('upgrades') { <app-channel-addons [slug]="slug" (accessDenied)="onAccessDenied()"></app-channel-addons> }
               @case ('reports') { <app-reports [status]="'open'" (accessDenied)="onAccessDenied()"></app-reports> }
               @case ('reports-closed') { <app-reports [status]="'closed'" (accessDenied)="onAccessDenied()"></app-reports> }
               @case ('reports-all') { <app-reports [status]="'all'" (accessDenied)="onAccessDenied()"></app-reports> }

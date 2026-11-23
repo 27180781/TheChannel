@@ -53,6 +53,7 @@ var reservedSlugs = map[string]struct{}{
 	"netfree-channel":      {},
 	"privacy":              {},
 	"terms":                {},
+	"upgrade-terms":        {},
 	"robots":               {},
 	"sitemap":              {},
 }

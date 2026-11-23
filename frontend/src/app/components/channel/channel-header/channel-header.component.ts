@@ -222,6 +222,11 @@ export class ChannelHeaderComponent implements OnInit, AfterViewInit, AfterViewC
   /** Which form of the platform credit the name's line has room for. */
   creditVariant: CreditVariant = 'badge';
 
+  /** The channel pays for the no_credit add-on: no platform credit at all. */
+  get creditHidden(): boolean {
+    return !!this.chatService.channelInfo?.addons?.no_credit;
+  }
+
   @ViewChild('titleRow') private titleRow?: ElementRef<HTMLElement>;
   @ViewChild('nameEl') private nameEl?: ElementRef<HTMLElement>;
   @ViewChild('creditFull') private creditFull?: PlatformAttributionComponent;

@@ -184,6 +184,9 @@ func main() {
 	r.Route("/api/integrations/magnet/admin", func(r chi.Router) {
 		r.Use(requireMagnetAdmin)
 		mountSuperAdminRoutes(r)
+		// Magnet's only, not the panel's: the paid-until dates come from
+		// Magnet's billing (channel_addons.go), never typed by hand.
+		r.Put("/channels/{slug}/addons", magnetSetChannelAddons)
 	})
 
 	// Support tickets. Creation and the thread view are deliberately outside
@@ -274,6 +277,11 @@ func main() {
 				r.Get("/magnet/stats-key", protectedWithChannelRole(RoleOwner, getChannelMagnetStatsKey))
 				r.Post("/magnet/stats-key", protectedWithChannelRole(RoleOwner, setChannelMagnetStatsKey))
 				r.Get("/magnet/stats", protectedWithChannelRole(RoleOwner, getChannelMagnetStats))
+				// Paid add-ons, relayed to Magnet's billing (channel_addons.go).
+				r.Get("/addons", protectedWithChannelRole(RoleOwner, getChannelAddons))
+				r.Get("/addons/buyer-form", protectedWithChannelRole(RoleOwner, getChannelAddonsBuyerForm))
+				r.Post("/addons/start", protectedWithChannelRole(RoleOwner, startChannelAddons))
+				r.Post("/addons/cancel", protectedWithChannelRole(RoleOwner, cancelChannelAddons))
 			})
 		})
 	})
