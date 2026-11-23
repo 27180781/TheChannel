@@ -455,6 +455,8 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 	// scheduled, leaving the counter one below where it started.
 	increaseCounterSSE(slug)
 	defer decreaseCounterSSE(slug)
+	viewerKey := sseViewerKey(viewerEmail, remoteHost(r.RemoteAddr))
+	touchSSEViewer(slug, viewerKey)
 
 	clientCtx := r.Context()
 	const heartbeatInterval = 25 * time.Second
@@ -551,6 +553,7 @@ func getEvents(w http.ResponseWriter, r *http.Request) {
 			if !sseViewerStillAllowed(clientCtx, slug, viewerEmail) {
 				return
 			}
+			touchSSEViewer(slug, viewerKey)
 			armWrite()
 			if _, err := fmt.Fprintf(w, "data: {\"type\": \"heartbeat\"}\n\n"); err != nil {
 				return

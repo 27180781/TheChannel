@@ -34,6 +34,18 @@ export class StatisticsComponent implements OnInit {
   @Output() accessDenied = new EventEmitter<void>();
 
   statistics: Statistics | null = null;
+
+  /**
+   * Why connections outnumber people, and who may be among them. A locked
+   * channel admits only its allowlist and staff, so it must never read
+   * "guests included" there: that line alone made an owner fear a leak.
+   */
+  connectedHint(s: Statistics): string {
+    const why = 'כל לשונית, מכשיר ואפליקציה הם חיבור נפרד, ובטלפון חיבור שנזנח ברקע נשאר כמה דקות.';
+    return s.viewersOnly
+      ? `${why} הערוץ נעול: רק מורשים וצוות הערוץ יכולים להתחבר, אורחים לא.`
+      : `${why} כולל אורחים, שנספרים לפי כתובת רשת.`;
+  }
   loading = true;
   loadFailed = false;
 

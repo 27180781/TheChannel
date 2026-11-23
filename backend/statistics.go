@@ -215,14 +215,21 @@ func getStatistics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ch := channelFromCtx(r)
+	viewersOnly := ch != nil && ch.ViewersOnly
+
 	response := struct {
 		UsersAmount           int64               `json:"usersAmount"`
 		ConnectedUsersAmount  int64               `json:"connectedUsersAmount"`
+		ConnectedPeople       int64               `json:"connectedPeopleAmount"`
+		ViewersOnly           bool                `json:"viewersOnly"`
 		PeakSSEConnections    *PeakSSEConnections `json:"peakSSEConnections"`
 		ConnectionsStatistics Statistics          `json:"connectionsStatistics"`
 	}{
 		UsersAmount:           amount,
 		ConnectedUsersAmount:  dbGetSSEConnectionCount(ctx, slug),
+		ConnectedPeople:       dbGetSSEViewerCount(ctx, slug),
+		ViewersOnly:           viewersOnly,
 		PeakSSEConnections:    peak,
 		ConnectionsStatistics: *s,
 	}
