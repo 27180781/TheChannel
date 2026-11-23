@@ -220,6 +220,9 @@ type pageMeta struct {
 	StructuredData []string
 	// Body is server-rendered HTML placed inside <app-root>.
 	Body string
+	// SiteName replaces the platform's name in og:site_name and
+	// application-name; a no_credit channel names itself there.
+	SiteName string
 }
 
 // siteVerificationTags are the ownership proofs Google Search Console and
@@ -329,7 +332,11 @@ func buildPageMeta(ctx context.Context, origin, siteName, p string) pageMeta {
 			if !ch.SeoHidden {
 				posts = latestSeoPosts(ctx, ch.Slug, channelPagePosts)
 			}
-			m.Body = channelStaticBody(siteName, name, ch.Description, ch.Slug, posts)
+			credit := !channelNoCredit(ch)
+			if !credit {
+				m.SiteName = name
+			}
+			m.Body = channelStaticBody(siteName, name, ch.Description, ch.Slug, posts, credit)
 			if ch.SeoHidden {
 				// Taken out of search by its managers: the page works as
 				// always, and a forwarded link still unfurls, but nothing
@@ -342,7 +349,10 @@ func buildPageMeta(ctx context.Context, origin, siteName, p string) pageMeta {
 			if t := cleanSeoText(ch.SeoTitle); t != "" {
 				pageName = t
 			}
-			m.StructuredData = channelStructuredData(origin, siteName, name, pageName, m.Description, m.Canonical, m.Image)
+			if credit {
+				// The platform is the page's website and breadcrumb root.
+				m.StructuredData = channelStructuredData(origin, siteName, name, pageName, m.Description, m.Canonical, m.Image)
+			}
 		case channelHidden:
 			m.NoIndex = true
 		case channelMissing:
@@ -400,6 +410,9 @@ func injectHeadTags(content []byte, origin, siteName, path string, m pageMeta, c
 	}
 	// The site name, for the app: the landing page builds its tab title from
 	// it so the rendered title matches what the server sent.
+	if m.SiteName != "" {
+		siteName = m.SiteName
+	}
 	tags.WriteString(metaName("application-name", siteName))
 	tags.WriteString(siteVerificationTags(cfg))
 
