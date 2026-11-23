@@ -89,6 +89,11 @@ func channelSearchTitle(ch *ChannelData, name, siteName string) string {
 	if t := cleanSeoText(ch.SeoTitle); t != "" {
 		return t
 	}
+	// A channel that pays to drop the platform credit (no_credit) is not
+	// branded with the platform's name either, here or in a link preview.
+	if channelNoCredit(ch) {
+		return name
+	}
 	return name + " · " + siteName
 }
 

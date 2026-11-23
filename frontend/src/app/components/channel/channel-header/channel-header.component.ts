@@ -113,7 +113,10 @@ export class ChannelHeaderComponent implements OnInit, AfterViewInit, AfterViewC
     // Every section of the manage page is moderator level or above, so a writer
     // would open it onto an empty sidebar.
     const canManageChannel = !!user && (isSuperAdmin || role === 'owner' || role === 'moderator');
-    const key = `${canManageChannel}|${isSuperAdmin}|${slug}|${this.myChannels.map(c => c.slug + ':' + c.name).join(',')}`;
+    // A channel that pays to drop the platform credit (no_credit) offers its
+    // readers no way to open a channel either: that is what the owner bought.
+    const offerCreate = !this.creditHidden;
+    const key = `${canManageChannel}|${isSuperAdmin}|${offerCreate}|${slug}|${this.myChannels.map(c => c.slug + ':' + c.name).join(',')}`;
 
     if (this._menuKey !== key) {
       this._menuKey = key;
@@ -140,12 +143,12 @@ export class ChannelHeaderComponent implements OnInit, AfterViewInit, AfterViewC
           icon: 'settings-2-outline',
           data: data('manage'),
         }] : []),
-        {
+        ...(offerCreate ? [{
           title: 'פתיחת ערוץ חדש',
           ariaRole: 'menuitem',
           icon: 'plus-outline',
           data: data('create'),
-        },
+        }] : []),
         ...(isSuperAdmin ? [{
           title: 'פאנל מנהל-על',
           ariaRole: 'menuitem',

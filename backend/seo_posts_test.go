@@ -169,3 +169,38 @@ func TestIsCrawler(t *testing.T) {
 		}
 	}
 }
+
+// A channel that pays to drop the platform credit (no_credit) is not branded
+// with the platform's name on its pages or in their link previews, and does
+// not invite readers to open a channel. Paid and unpaid, side by side.
+func TestNoCreditChannelPagesDropPlatform(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	withSpaFolder(t, "", "")
+	const paid, free = "seo-no-credit", "seo-with-credit"
+	seedPreviewChannel(t, ctx, paid, ChannelData{Name: "שיעורים", Features: defaultChannelFeatures()})
+	seedPreviewChannel(t, ctx, free, ChannelData{Name: "שיעורים", Features: defaultChannelFeatures()})
+	until := time.Now().Add(72 * time.Hour).UTC().Format(time.RFC3339)
+	if err := storeAddonDates(ctx, paid, addonDates{NoCreditUntil: &until}); err != nil {
+		t.Fatal(err)
+	}
+	paidPost := seedPost(t, ctx, paid, Message{Text: "שיעור היום בשעה שמונה"})
+	freePost := seedPost(t, ctx, free, Message{Text: "שיעור היום בשעה שמונה"})
+
+	for _, path := range []string{"/channel/" + paid, "/channel/" + paid + "/post/" + strconv.Itoa(paidPost)} {
+		page := spaPage(t, path)
+		mustContain(t, page, `<meta property="og:site_name" content="שיעורים">`)
+		for _, bad := range []string{"פתיחת ערוץ", "ערוץ עדכונים ב", " · " + defaultSiteName + "<", `content="` + defaultSiteName + `"`} {
+			if strings.Contains(page, bad) {
+				t.Errorf("%s contains %q", path, bad)
+			}
+		}
+	}
+	mustContain(t, spaPage(t, "/channel/"+paid), `<title>שיעורים</title>`)
+
+	mustContain(t, spaPage(t, "/channel/"+free),
+		`<title>שיעורים · `+defaultSiteName+`</title>`,
+		`<meta property="og:site_name" content="`+defaultSiteName+`">`,
+		"פתיחת ערוץ עדכונים משלכם")
+	mustContain(t, spaPage(t, "/channel/"+free+"/post/"+strconv.Itoa(freePost)), "פתיחת ערוץ עדכונים משלכם")
+}

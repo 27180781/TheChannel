@@ -218,7 +218,7 @@ func fallback(s, def string) string {
 }
 
 // postStaticBody is one post's page as a crawler that runs no script sees it.
-func postStaticBody(siteName, slug, channelName string, p seoPost, title string) string {
+func postStaticBody(siteName, slug, channelName string, p seoPost, title string, credit bool) string {
 	var b strings.Builder
 	b.WriteString(staticShellStyle)
 	b.WriteString(`<main class="ssr">`)
@@ -231,7 +231,11 @@ func postStaticBody(siteName, slug, channelName string, p seoPost, title string)
 	b.WriteString(postTextHTML(p.Text))
 	b.WriteString("</article>")
 	b.WriteString(`<p><a href="/channel/` + slug + `">לכל ההודעות בערוץ ` + html.EscapeString(channelName) + `</a></p>`)
-	b.WriteString(`<p><a href="/">פתיחת ערוץ עדכונים משלכם ב` + html.EscapeString(siteName) + `, בחינם</a></p>`)
+	// A no_credit channel (the owner paid to drop the credit) does not
+	// invite its readers to open a channel.
+	if credit {
+		b.WriteString(`<p><a href="/">פתיחת ערוץ עדכונים משלכם ב` + html.EscapeString(siteName) + `, בחינם</a></p>`)
+	}
 	b.WriteString("</main>")
 	return b.String()
 }
@@ -318,13 +322,19 @@ func buildPostPageMeta(ctx context.Context, origin, siteName string, m pageMeta,
 			m.Card = "summary"
 		}
 	}
-	m.Body = postStaticBody(siteName, ch.Slug, name, p, title)
+	credit := !channelNoCredit(ch)
+	if !credit {
+		m.SiteName = name
+	}
+	m.Body = postStaticBody(siteName, ch.Slug, name, p, title, credit)
 	if ch.SeoHidden || p.Text == "" {
 		m.NoIndex = true
 		return m
 	}
 	m.Canonical = postPath(ch.Slug, p.ID)
-	m.StructuredData = postStructuredData(origin, siteName, name, ch.Slug, p, title, m.Image)
+	if credit {
+		m.StructuredData = postStructuredData(origin, siteName, name, ch.Slug, p, title, m.Image)
+	}
 	return m
 }
 
