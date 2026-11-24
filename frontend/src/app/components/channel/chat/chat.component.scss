@@ -611,9 +611,26 @@ nb-list.hide-scheduled-messages nb-list-item.scheduled-message-item {
   align-items: center;
   justify-content: center;
   box-shadow: var(--shadow);
+  // Brand "sky blue" so the jump-to-latest control stands out against the
+  // feed. Nebular's status-basic colours win on specificity, hence !important.
+  background-color: #0099e6 !important;
+  border-color: #0099e6 !important;
+  color: #fff !important;
+
+  &:hover,
+  &:focus-visible {
+    background-color: #0077b8 !important;
+    border-color: #0077b8 !important;
+  }
+
+  &:active {
+    background-color: #00609a !important;
+    border-color: #00609a !important;
+  }
 
   nb-icon {
     font-size: 1.3rem;
+    color: #fff !important;
   }
 }
 
